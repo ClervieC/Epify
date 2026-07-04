@@ -105,3 +105,28 @@ create policy "Users manage their own list items"
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+create table if not exists public.user_movies (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  title text not null,
+  year integer,
+  watched_at timestamptz not null default now(),
+  times_watched integer not null default 1,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, title, year)
+);
+
+alter table public.user_movies enable row level security;
+
+create policy "Users manage their own movies"
+  on public.user_movies
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create trigger user_movies_set_updated_at
+  before update on public.user_movies
+  for each row
+  execute function public.set_updated_at();

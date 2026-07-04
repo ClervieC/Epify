@@ -1,4 +1,4 @@
-# TVTime
+# Epify
 
 App de suivi de séries (remplaçant TVTime) : à voir / en cours / vues / arrêtées, alimentée par l'API [TVmaze](https://www.tvmaze.com/api) et un compte Supabase pour la sauvegarde.
 

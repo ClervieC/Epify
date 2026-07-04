@@ -1,7 +1,8 @@
+import { useMemo } from "react";
 import { Tabs } from "expo-router";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { colors } from "../../lib/theme";
+import { useColors, Colors } from "../../lib/theme";
 
 interface TabBarProps {
   state: { routes: { key: string; name: string }[]; index: number };
@@ -23,6 +24,9 @@ const LABELS: Record<string, string> = {
 };
 
 function CustomTabBar({ state, navigation }: TabBarProps) {
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <View style={styles.bar}>
       {state.routes.map((route, index) => {
@@ -67,23 +71,25 @@ export default function TabsLayout() {
   );
 }
 
-const styles = StyleSheet.create({
-  bar: {
-    flexDirection: "row",
-    backgroundColor: colors.background,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: 8,
-    paddingBottom: 10,
-  },
-  item: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-});
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
+    bar: {
+      flexDirection: "row",
+      backgroundColor: colors.background,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingTop: 8,
+      paddingBottom: 10,
+    },
+    item: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 4,
+    },
+    label: {
+      fontSize: 11,
+      fontWeight: "600",
+    },
+  });
+}

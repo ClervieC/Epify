@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "TVTime",
-    "slug": "TVTime",
+    "name": "Epify",
+    "slug": "Epify",
     "version": "1.0.0",
-    "scheme": "tvtime",
+    "scheme": "epify",
     "orientation": "portrait",
     "newArchEnabled": true,
     "plugins": ["expo-router"],
@@ -17,7 +17,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0d1524",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -26,7 +26,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "output": "single"
+      "output": "single",
+      "splash": {
+        "image": "./assets/splash-icon.png",
+        "backgroundColor": "#0d1524",
+        "resizeMode": "contain"
+      }
     }
   }
 }

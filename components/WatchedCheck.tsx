@@ -1,7 +1,7 @@
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import { Animated, Pressable, StyleSheet, GestureResponderEvent, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { colors } from "../lib/theme";
+import { useColors, Colors } from "../lib/theme";
 import { useRewatchPrompt } from "../context/RewatchPromptContext";
 
 interface WatchedCheckProps {
@@ -16,6 +16,8 @@ interface WatchedCheckProps {
 export function WatchedCheck({ watched, timesWatched, onToggle, onRewatch, size = 30, light }: WatchedCheckProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const askRewatch = useRewatchPrompt();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   function bounce() {
     Animated.sequence([
@@ -61,14 +63,16 @@ export function WatchedCheck({ watched, timesWatched, onToggle, onRewatch, size 
   );
 }
 
-const styles = StyleSheet.create({
-  check: {
-    backgroundColor: colors.pillBg,
-    alignItems: "center",
-    justifyContent: "center",
-    alignSelf: "center",
-  },
-  checkOn: { backgroundColor: colors.green },
-  checkOnLight: { backgroundColor: "#a8dfa9" },
-  timesText: { color: "#fff", fontWeight: "800" },
-});
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
+    check: {
+      backgroundColor: colors.pillBg,
+      alignItems: "center",
+      justifyContent: "center",
+      alignSelf: "center",
+    },
+    checkOn: { backgroundColor: colors.green },
+    checkOnLight: { backgroundColor: colors.green },
+    timesText: { color: "#fff", fontWeight: "800" },
+  });
+}

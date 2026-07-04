@@ -1,9 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { fetchListItems, fetchLists, ListItem, ShowList } from "../../lib/userShows";
-import { colors } from "../../lib/theme";
+import { useColors, Colors } from "../../lib/theme";
 import { ShowCard } from "../../components/ShowCard";
 
 export default function ListDetailScreen() {
@@ -12,6 +12,8 @@ export default function ListDetailScreen() {
   const [list, setList] = useState<ShowList | null>(null);
   const [items, setItems] = useState<ListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   useFocusEffect(
     useCallback(() => {
@@ -60,18 +62,20 @@ export default function ListDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 12,
-  },
-  title: { fontSize: 17, fontWeight: "800", color: colors.text },
-  grid: { padding: 16, gap: 16 },
-  empty: { color: colors.textMuted, textAlign: "center", marginTop: 24 },
-});
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingTop: 16,
+      paddingBottom: 12,
+    },
+    title: { fontSize: 17, fontWeight: "800", color: colors.text },
+    grid: { padding: 16, gap: 16 },
+    empty: { color: colors.textMuted, textAlign: "center", marginTop: 24 },
+  });
+}

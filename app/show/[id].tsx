@@ -20,7 +20,7 @@ import {
   UserShow,
   WatchedEpisode,
 } from "../../lib/userShows";
-import { colors, radius } from "../../lib/theme";
+import { useColors, radius, Colors } from "../../lib/theme";
 import { WatchedCheck } from "../../components/WatchedCheck";
 
 function stripHtml(html: string | null) {
@@ -44,6 +44,8 @@ export default function ShowDetailScreen() {
   const [listPickerOpen, setListPickerOpen] = useState(false);
   const [lists, setLists] = useState<ShowList[]>([]);
   const [newListName, setNewListName] = useState("");
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const load = useCallback(async () => {
     const [showData, episodeData, userShows, watchedData] = await Promise.all([
@@ -430,7 +432,7 @@ export default function ShowDetailScreen() {
                 onChangeText={setNewListName}
               />
               <Pressable style={styles.newListBtn} onPress={handleCreateList}>
-                <Ionicons name="add" size={20} color={colors.black} />
+                <Ionicons name="add" size={20} color={colors.onAccent} />
               </Pressable>
             </View>
           </Pressable>
@@ -440,7 +442,8 @@ export default function ShowDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
   screen: { flex: 1 },
   container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
@@ -543,4 +546,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-});
+  });
+}

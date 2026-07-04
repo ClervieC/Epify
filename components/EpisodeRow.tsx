@@ -1,7 +1,8 @@
+import { useMemo } from "react";
 import { View, Text, Pressable, Image, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, radius } from "../lib/theme";
+import { useColors, radius, Colors } from "../lib/theme";
 import { WatchedCheck } from "./WatchedCheck";
 
 interface EpisodeRowProps {
@@ -50,6 +51,8 @@ export function EpisodeRow({
   onPress,
 }: EpisodeRowProps) {
   const router = useRouter();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const openEpisode =
     onPress ??
@@ -95,7 +98,7 @@ export function EpisodeRow({
             )}
             {isNew && (
               <View style={[styles.badge, { backgroundColor: colors.badgeNew }]}>
-                <Text style={[styles.badgeText, { color: colors.black }]}>NEW</Text>
+                <Text style={[styles.badgeText, { color: colors.onAccent }]}>NEW</Text>
               </View>
             )}
             {hasAired && (
@@ -132,49 +135,51 @@ export function EpisodeRow({
   );
 }
 
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    overflow: "hidden",
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  rowDimmed: { backgroundColor: "transparent", shadowOpacity: 0 },
-  thumb: { width: 88, alignSelf: "stretch", backgroundColor: colors.backgroundAlt },
-  thumbDimmed: { opacity: 0.45 },
-  thumbPlaceholder: { backgroundColor: colors.backgroundAlt },
-  info: { flex: 1, gap: 3, padding: 12 },
-  showPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: colors.black,
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    maxWidth: "100%",
-  },
-  showPillDimmed: { borderColor: colors.border },
-  textDimmed: { color: colors.textFaint },
-  showPillText: { fontSize: 10, fontWeight: "800", color: colors.text },
-  episodeCode: { fontWeight: "800", fontSize: 15, color: colors.text, marginTop: 2 },
-  extraEpisodes: { fontWeight: "400", color: colors.textMuted },
-  episodeTitle: { color: colors.textMuted, fontSize: 13 },
-  badgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.sm },
-  badgeText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.3 },
-  timeCol: { alignItems: "flex-end", justifyContent: "center", paddingRight: 12 },
-  time: { fontWeight: "700", fontSize: 12, color: colors.text },
-  network: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
-  daysAwayNumber: { fontWeight: "800", fontSize: 24, color: colors.text },
-  daysAwayLabel: { fontSize: 10, fontWeight: "700", color: colors.textMuted, marginTop: 1 },
-  checkCol: { justifyContent: "center", paddingRight: 12 },
-});
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
+    row: {
+      flexDirection: "row",
+      backgroundColor: colors.surface,
+      borderRadius: radius.md,
+      overflow: "hidden",
+      marginBottom: 12,
+      shadowColor: "#000",
+      shadowOpacity: 0.06,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 1,
+    },
+    rowDimmed: { backgroundColor: "transparent", shadowOpacity: 0 },
+    thumb: { width: 88, alignSelf: "stretch", backgroundColor: colors.backgroundAlt },
+    thumbDimmed: { opacity: 0.45 },
+    thumbPlaceholder: { backgroundColor: colors.backgroundAlt },
+    info: { flex: 1, gap: 3, padding: 12 },
+    showPill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      alignSelf: "flex-start",
+      borderWidth: 1,
+      borderColor: colors.black,
+      borderRadius: radius.pill,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      maxWidth: "100%",
+    },
+    showPillDimmed: { borderColor: colors.border },
+    textDimmed: { color: colors.textFaint },
+    showPillText: { fontSize: 10, fontWeight: "800", color: colors.text },
+    episodeCode: { fontWeight: "800", fontSize: 15, color: colors.text, marginTop: 2 },
+    extraEpisodes: { fontWeight: "400", color: colors.textMuted },
+    episodeTitle: { color: colors.textMuted, fontSize: 13 },
+    badgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
+    badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.sm },
+    badgeText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.3 },
+    timeCol: { alignItems: "flex-end", justifyContent: "center", paddingRight: 12 },
+    time: { fontWeight: "700", fontSize: 12, color: colors.text },
+    network: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+    daysAwayNumber: { fontWeight: "800", fontSize: 24, color: colors.text },
+    daysAwayLabel: { fontSize: 10, fontWeight: "700", color: colors.textMuted, marginTop: 1 },
+    checkCol: { justifyContent: "center", paddingRight: 12 },
+  });
+}

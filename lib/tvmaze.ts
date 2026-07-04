@@ -71,3 +71,12 @@ export function getShowsIndex(page = 0) {
 export function getEpisode(id: number) {
   return get<TVMazeEpisode>(`/episodes/${id}`);
 }
+
+export async function lookupShowByTvdbId(tvdbId: number): Promise<TVMazeShow | null> {
+  const res = await fetch(`${BASE_URL}/lookup/shows?thetvdb=${tvdbId}`);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`TVmaze request failed (${res.status}): /lookup/shows?thetvdb=${tvdbId}`);
+  }
+  return res.json() as Promise<TVMazeShow>;
+}

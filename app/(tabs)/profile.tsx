@@ -1,11 +1,14 @@
-import { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, TextInput } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert, ActivityIndicator, Platform } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as DocumentPicker from "expo-document-picker";
+import { File } from "expo-file-system";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../lib/supabase";
 import { createList, fetchAllListItems, fetchFavorites, fetchLists, fetchUserShows, ListItem, ShowList, UserShow } from "../../lib/userShows";
-import { colors, radius } from "../../lib/theme";
+import { importTvTimeCsv, importTvTimeJson, ImportProgress } from "../../lib/tvtimeImport";
+import { useColors, radius, Colors } from "../../lib/theme";
 import { ShowCard } from "../../components/ShowCard";
 
 const AVG_EPISODE_MINUTES = 42;
@@ -28,6 +31,10 @@ export default function ProfileScreen() {
   const [episodeCount, setEpisodeCount] = useState(0);
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const load = useCallback(() => {
     fetchUserShows().then(setShows);
@@ -54,6 +61,54 @@ export default function ProfileScreen() {
     fetchLists().then(setLists);
   }
 
+  async function handleImportTvTime() {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["text/csv", "text/comma-separated-values", "application/json", "*/*"],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled) return;
+
+    const asset = result.assets[0];
+    const name = asset.name.toLowerCase();
+    const isJson = name.endsWith(".json");
+    const isCsv = name.endsWith(".csv");
+    if (!isJson && !isCsv) {
+      Alert.alert("Fichier invalide", "Choisis un export CSV ou JSON de TV Time.");
+      return;
+    }
+
+    setImporting(true);
+    setImportProgress(null);
+    try {
+      let text: string;
+      if (Platform.OS === "web") {
+        if (!asset.file) throw new Error("Impossible de lire le fichier sélectionné.");
+        text = await asset.file.text();
+      } else {
+        text = await new File(asset.uri).text();
+      }
+      const summary = isJson ? await importTvTimeJson(text, setImportProgress) : await importTvTimeCsv(text, setImportProgress);
+      load();
+
+      const unmatchedNote =
+        summary.showsUnmatched.length > 0
+          ? `\n${summary.showsUnmatched.length} série(s) introuvable(s) sur TVmaze : ${summary.showsUnmatched
+              .slice(0, 5)
+              .join(", ")}${summary.showsUnmatched.length > 5 ? "…" : ""}`
+          : "";
+
+      Alert.alert(
+        "Import terminé",
+        `${summary.showsImported} série(s) importée(s), ${summary.episodesImported} épisode(s) marqué(s) comme vu(s), ${summary.moviesImported} film(s) importé(s).${unmatchedNote}`
+      );
+    } catch (e) {
+      Alert.alert("Échec de l'import", e instanceof Error ? e.message : "Erreur inconnue.");
+    } finally {
+      setImporting(false);
+      setImportProgress(null);
+    }
+  }
+
   const username = session?.user.email?.split("@")[0] ?? "Moi";
   const tvTime = formatTvTime(episodeCount * AVG_EPISODE_MINUTES);
 
@@ -61,7 +116,7 @@ export default function ProfileScreen() {
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <View style={styles.banner}>
         <Pressable style={styles.bell}>
-          <Ionicons name="notifications" size={20} color={colors.black} />
+          <Ionicons name="notifications" size={20} color={colors.onAccent} />
         </Pressable>
         <Pressable style={styles.menuDots}>
           <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
@@ -93,7 +148,7 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      <SectionHeader title="Stats" />
+      <SectionHeader title="Stats" styles={styles} colors={colors} />
       <View style={styles.statCards}>
         <View style={styles.statCard}>
           <View style={styles.statCardHeader}>
@@ -101,9 +156,9 @@ export default function ProfileScreen() {
             <Text style={styles.statCardTitle}>TV time</Text>
           </View>
           <View style={styles.tvTimeRow}>
-            <TvTimeUnit value={tvTime.months} label="MONTHS" />
-            <TvTimeUnit value={tvTime.days} label="DAYS" />
-            <TvTimeUnit value={tvTime.hours} label="HOUR" />
+            <TvTimeUnit value={tvTime.months} label="MONTHS" styles={styles} />
+            <TvTimeUnit value={tvTime.days} label="DAYS" styles={styles} />
+            <TvTimeUnit value={tvTime.hours} label="HOUR" styles={styles} />
           </View>
         </View>
         <View style={styles.statCard}>
@@ -115,7 +170,7 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      <SectionHeader title="Favorites" />
+      <SectionHeader title="Favorites" styles={styles} colors={colors} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
         {favorites.length === 0 ? (
           <Text style={styles.empty}>Aucun favori pour l'instant.</Text>
@@ -124,7 +179,7 @@ export default function ProfileScreen() {
         )}
       </ScrollView>
 
-      <SectionHeader title="Lists" />
+      <SectionHeader title="Lists" styles={styles} colors={colors} />
       {lists.map((list) => {
         const items = listItems.filter((i) => i.list_id === list.id);
         return (
@@ -158,7 +213,7 @@ export default function ProfileScreen() {
             autoFocus
           />
           <Pressable style={styles.newListBtn} onPress={handleCreateList}>
-            <Ionicons name="checkmark" size={20} color={colors.black} />
+            <Ionicons name="checkmark" size={20} color={colors.onAccent} />
           </Pressable>
         </View>
       ) : (
@@ -168,7 +223,7 @@ export default function ProfileScreen() {
         </Pressable>
       )}
 
-      <SectionHeader title="Shows" />
+      <SectionHeader title="Shows" styles={styles} colors={colors} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
         {shows.length === 0 ? (
           <Text style={styles.empty}>Aucune série pour l'instant.</Text>
@@ -179,6 +234,31 @@ export default function ProfileScreen() {
         )}
       </ScrollView>
 
+      <SectionHeader title="Réglages" styles={styles} colors={colors} />
+      <Pressable style={styles.importRow} onPress={handleImportTvTime} disabled={importing}>
+        <Ionicons name="cloud-upload-outline" size={20} color={colors.text} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.importRowTitle}>Importer depuis TV Time</Text>
+          <Text style={styles.importRowSubtitle}>Charge ton export CSV ou JSON récupéré de TV Time (by Refract) pour récupérer ton historique.</Text>
+        </View>
+        {importing ? (
+          <ActivityIndicator color={colors.black} />
+        ) : (
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        )}
+      </Pressable>
+      {importing && importProgress && (
+        <View style={styles.importProgress}>
+          <Text style={styles.importProgressText}>
+            {importProgress.phase === "matching" ? "Recherche des séries" : "Import des épisodes"} —{" "}
+            {importProgress.current}/{importProgress.total}
+          </Text>
+          <Text style={styles.importProgressLabel} numberOfLines={1}>
+            {importProgress.label}
+          </Text>
+        </View>
+      )}
+
       <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
         <Text style={styles.signOutText}>Se déconnecter</Text>
       </Pressable>
@@ -186,7 +266,9 @@ export default function ProfileScreen() {
   );
 }
 
-function SectionHeader({ title }: { title: string }) {
+type ProfileStyles = ReturnType<typeof createStyles>;
+
+function SectionHeader({ title, styles, colors }: { title: string; styles: ProfileStyles; colors: Colors }) {
   return (
     <Pressable style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -195,7 +277,7 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-function TvTimeUnit({ value, label }: { value: number; label: string }) {
+function TvTimeUnit({ value, label, styles }: { value: number; label: string; styles: ProfileStyles }) {
   return (
     <View style={styles.tvTimeUnit}>
       <Text style={styles.tvTimeValue}>{value}</Text>
@@ -204,7 +286,8 @@ function TvTimeUnit({ value, label }: { value: number; label: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   banner: {
     height: 220,
@@ -337,6 +420,21 @@ const styles = StyleSheet.create({
   createListText: { fontWeight: "800", fontSize: 13, letterSpacing: 0.5, color: colors.text },
   showsRow: { paddingHorizontal: 16, paddingBottom: 24 },
   empty: { color: colors.textMuted },
+  importRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  importRowTitle: { fontWeight: "700", fontSize: 14, color: colors.text },
+  importRowSubtitle: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
+  importProgress: { marginHorizontal: 16, marginTop: 10 },
+  importProgressText: { fontSize: 12, fontWeight: "700", color: colors.text },
+  importProgressLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   signOut: { alignItems: "center", paddingVertical: 24 },
   signOutText: { color: colors.red, fontWeight: "600" },
-});
+  });
+}

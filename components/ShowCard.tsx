@@ -1,7 +1,8 @@
+import { useMemo } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
-import { colors, radius } from "../lib/theme";
+import { useColors, radius, Colors } from "../lib/theme";
 
 interface ShowCardProps {
   id: number;
@@ -12,6 +13,8 @@ interface ShowCardProps {
 
 export function ShowCard({ id, name, imageUrl, subtitle }: ShowCardProps) {
   const router = useRouter();
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   return (
     <Pressable style={styles.card} onPress={() => router.push(`/show/${id}`)}>
@@ -34,11 +37,13 @@ export function ShowCard({ id, name, imageUrl, subtitle }: ShowCardProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  card: { width: 110, marginRight: 12 },
-  image: { width: 110, height: 155, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
-  placeholder: { alignItems: "center", justifyContent: "center" },
-  placeholderText: { color: colors.textFaint, fontSize: 30, fontWeight: "700" },
-  name: { color: colors.text, fontSize: 13, fontWeight: "600", marginTop: 6 },
-  subtitle: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
-});
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
+    card: { width: 110, marginRight: 12 },
+    image: { width: 110, height: 155, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
+    placeholder: { alignItems: "center", justifyContent: "center" },
+    placeholderText: { color: colors.textFaint, fontSize: 30, fontWeight: "700" },
+    name: { color: colors.text, fontSize: 13, fontWeight: "600", marginTop: 6 },
+    subtitle: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
+  });
+}

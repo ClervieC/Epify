@@ -27,7 +27,7 @@ import {
   upcomingGroupLabel,
 } from "../../lib/dates";
 import { EpisodeRow } from "../../components/EpisodeRow";
-import { colors, radius } from "../../lib/theme";
+import { useColors, radius, Colors } from "../../lib/theme";
 
 type ViewTab = "WATCH LIST" | "UPCOMING";
 
@@ -74,6 +74,8 @@ export default function ShowsScreen() {
   const upcomingListRef = useRef<FlatList<UpcomingRow>>(null);
   const watchNextY = useRef(0);
   const hasLoadedOnce = useRef(false);
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const loadData = useCallback(async () => {
     if (!hasLoadedOnce.current) {
@@ -591,7 +593,8 @@ export default function ShowsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   tabsRow: {
     flexDirection: "row",
@@ -644,4 +647,5 @@ const styles = StyleSheet.create({
     height: EMPTY_ROW_HEIGHT,
   },
   upcomingRowWrap: { height: EPISODE_ROW_HEIGHT, overflow: "hidden" },
-});
+  });
+}

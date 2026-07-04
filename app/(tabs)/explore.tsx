@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { getShowsIndex, searchShows, TVMazeShow } from "../../lib/tvmaze";
 import { fetchUserShows, removeUserShow, setShowFavorite, upsertUserShow } from "../../lib/userShows";
-import { colors, radius } from "../../lib/theme";
+import { useColors, radius, Colors } from "../../lib/theme";
 
 const TABS = ["FEED", "DISCOVER", "GROUPS", "ACTIVITY"] as const;
 type Tab = (typeof TABS)[number];
@@ -22,6 +22,8 @@ export default function ExploreScreen() {
   const [loading, setLoading] = useState(true);
   const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
   const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   let timer: ReturnType<typeof setTimeout>;
 
   useEffect(() => {
@@ -171,7 +173,7 @@ export default function ExploreScreen() {
                           quickAdd(show);
                         }}
                       >
-                        <Ionicons name={isAdded ? "checkmark" : "add"} size={18} color={isAdded ? colors.black : colors.accent} />
+                        <Ionicons name={isAdded ? "checkmark" : "add"} size={18} color={isAdded ? colors.onAccent : colors.accent} />
                       </Pressable>
                     </View>
                     <View style={styles.cardOverlay}>
@@ -204,7 +206,8 @@ export default function ExploreScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   searchBar: {
     flexDirection: "row",
@@ -229,7 +232,7 @@ const styles = StyleSheet.create({
   },
   tabChipActive: { backgroundColor: colors.accent },
   tabChipText: { fontWeight: "800", fontSize: 12, color: colors.textMuted, letterSpacing: 0.4 },
-  tabChipTextActive: { color: colors.black },
+  tabChipTextActive: { color: colors.onAccent },
   feed: { paddingHorizontal: 16, paddingBottom: 24, gap: 20 },
   card: { borderRadius: radius.md, overflow: "hidden" },
   cardImageWrap: { position: "relative" },
@@ -270,7 +273,7 @@ const styles = StyleSheet.create({
   cardMeta: { color: colors.textMuted, fontSize: 12, marginTop: 6 },
   watchedByRow: {
     marginTop: 10,
-    backgroundColor: "#fdf3d6",
+    backgroundColor: colors.accentSoft,
     paddingHorizontal: 12,
     paddingTop: 10,
     borderTopLeftRadius: radius.sm,
@@ -281,7 +284,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "#fdf3d6",
+    backgroundColor: colors.accentSoft,
     paddingHorizontal: 12,
     paddingBottom: 12,
     paddingTop: 4,
@@ -291,4 +294,5 @@ const styles = StyleSheet.create({
   avatarDot: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.accentDark },
   watchedByNumber: { fontWeight: "700", color: colors.text },
   placeholder: { color: colors.textMuted, textAlign: "center", marginTop: 40 },
-});
+  });
+}

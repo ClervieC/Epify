@@ -261,6 +261,35 @@ export async function setEpisodesWatched(
   if (error) throw error;
 }
 
+export async function bulkUpsertWatchedEpisodes(
+  showId: number,
+  records: { episodeId: number; season: number; number: number; watchedAt: string; timesWatched: number }[]
+) {
+  if (records.length === 0) return;
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) throw new Error("Not authenticated");
+
+  const CHUNK_SIZE = 300;
+  for (let i = 0; i < records.length; i += CHUNK_SIZE) {
+    const chunk = records.slice(i, i + CHUNK_SIZE);
+    const { error } = await supabase.from("watched_episodes").upsert(
+      chunk.map((r) => ({
+        user_id: userId,
+        tvmaze_show_id: showId,
+        tvmaze_episode_id: r.episodeId,
+        season: r.season,
+        number: r.number,
+        watched: true,
+        watched_at: r.watchedAt,
+        times_watched: r.timesWatched,
+      })),
+      { onConflict: "user_id,tvmaze_episode_id" }
+    );
+    if (error) throw error;
+  }
+}
+
 export async function rateEpisode(tvmazeEpisodeId: number, rating: number | null, feeling: string | null) {
   const { error } = await supabase
     .from("watched_episodes")

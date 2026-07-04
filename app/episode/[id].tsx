@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -16,7 +16,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { getShow, getShowEpisodes, TVMazeEpisode, TVMazeShow } from "../../lib/tvmaze";
 import { fetchWatchedEpisodes, incrementRewatch, rateEpisode, setEpisodeWatched, WatchedEpisode } from "../../lib/userShows";
-import { colors, radius } from "../../lib/theme";
+import { useColors, radius, Colors } from "../../lib/theme";
 import { WatchedCheck } from "../../components/WatchedCheck";
 
 const FEELINGS = [
@@ -47,6 +47,8 @@ export default function EpisodeDetailScreen() {
   const [loading, setLoading] = useState(true);
   const listRef = useRef<FlatList<TVMazeEpisode>>(null);
   const hasScrolledToInitial = useRef(false);
+  const colors = useColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   useFocusEffect(
     useCallback(() => {
@@ -148,7 +150,7 @@ export default function EpisodeDetailScreen() {
         {show && (
           <Pressable style={styles.showPill} onPress={() => router.push(`/show/${show.id}`)}>
             <Text style={styles.showPillText}>{show.name.toUpperCase()}</Text>
-            <Ionicons name="chevron-forward" size={12} color={colors.text} />
+            <Ionicons name="chevron-forward" size={12} color="#111" />
           </Pressable>
         )}
       </View>
@@ -265,7 +267,8 @@ export default function EpisodeDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
   overlay: {
@@ -298,7 +301,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  showPillText: { fontSize: 11, fontWeight: "800", color: colors.text },
+  showPillText: { fontSize: 11, fontWeight: "800", color: "#111" },
   page: { flexGrow: 1 },
   hero: { height: 260, backgroundColor: "#111" },
   heroImage: { width: "100%", height: "100%", position: "absolute" },
@@ -335,4 +338,5 @@ const styles = StyleSheet.create({
   feelingChipActive: { backgroundColor: colors.pillBg },
   feelingEmoji: { fontSize: 26 },
   feelingLabel: { fontSize: 9, fontWeight: "700", color: colors.textMuted },
-});
+  });
+}
