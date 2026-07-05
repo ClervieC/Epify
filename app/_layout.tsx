@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { View } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { RewatchPromptProvider } from "../context/RewatchPromptContext";
@@ -32,23 +33,29 @@ function RootNavigation() {
       <Stack.Screen name="show/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="episode/[id]" options={{ headerShown: false, presentation: "modal" }} />
       <Stack.Screen name="list/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="users/search" options={{ headerShown: false }} />
+      <Stack.Screen name="users/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="connections/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="notifications" options={{ headerShown: false }} />
     </Stack>
   );
 }
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <LanguageProvider>
-          <View style={{ flex: 1 }}>
-            <RewatchPromptProvider>
-              <RootNavigation />
-            </RewatchPromptProvider>
-          </View>
-        </LanguageProvider>
-      </AuthProvider>
-      <StatusBar style="dark" />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <LanguageProvider>
+            <View style={{ flex: 1 }}>
+              <RewatchPromptProvider>
+                <RootNavigation />
+              </RewatchPromptProvider>
+            </View>
+          </LanguageProvider>
+        </AuthProvider>
+        <StatusBar style="dark" />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

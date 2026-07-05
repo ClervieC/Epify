@@ -18,10 +18,14 @@ export interface UserShow {
   updated_at: string;
 }
 
-export async function fetchUserShows() {
+export async function fetchUserShows(userId?: string) {
+  const targetUserId = userId ?? (await supabase.auth.getUser()).data.user?.id;
+  if (!targetUserId) return [];
+
   const { data, error } = await supabase
     .from("user_shows")
     .select("*")
+    .eq("user_id", targetUserId)
     .order("updated_at", { ascending: false });
   if (error) throw error;
   return data as UserShow[];
@@ -82,10 +86,14 @@ export async function setShowFavorite(tvmazeId: number, isFavorite: boolean) {
   return data as UserShow;
 }
 
-export async function fetchFavorites() {
+export async function fetchFavorites(userId?: string) {
+  const targetUserId = userId ?? (await supabase.auth.getUser()).data.user?.id;
+  if (!targetUserId) return [];
+
   const { data, error } = await supabase
     .from("user_shows")
     .select("*")
+    .eq("user_id", targetUserId)
     .eq("is_favorite", true)
     .order("updated_at", { ascending: false });
   if (error) throw error;

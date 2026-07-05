@@ -1,10 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { View, Text, Pressable, Image, Animated, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
+import type { SwipeableMethods } from "react-native-gesture-handler/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps";
+import Reanimated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import { useColors, radius, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
-import { useScalePress } from "../lib/animations";
+import { useScalePress, useFlashPulse } from "../lib/animations";
 import { WatchedCheck } from "./WatchedCheck";
 
 interface EpisodeRowProps {
@@ -57,6 +60,39 @@ export function EpisodeRow({
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
   const { scale, onPressIn, onPressOut } = useScalePress(0.97);
+  const { opacity: flashOpacity, flash } = useFlashPulse();
+  const swipeableRef = useRef<SwipeableMethods>(null);
+
+  function handleToggleWatched() {
+    if (!watched) flash();
+    onToggleWatched();
+  }
+
+  function handleRewatch() {
+    flash();
+    onRewatch?.();
+  }
+
+  // Swiping to mark watched only makes sense where the checkmark column is
+  // shown (not for upcoming/unaired episodes) and for episodes not already
+  // watched — unwatching goes through the tap + rewatch-prompt flow instead.
+  const swipeToWatchEnabled =
+    daysAway === undefined && time === undefined && !watched;
+
+  function renderRightActions(progress: SharedValue<number>) {
+    const style = useAnimatedStyle(() => ({ opacity: progress.value }));
+    return (
+      <Reanimated.View style={[styles.swipeAction, style]}>
+        <Ionicons name="checkmark-circle" size={26} color="#fff" />
+        <Text style={styles.swipeActionText}>{t.episodeRow.markWatched}</Text>
+      </Reanimated.View>
+    );
+  }
+
+  function handleSwipeOpen() {
+    swipeableRef.current?.close();
+    handleToggleWatched();
+  }
 
   const openEpisode =
     onPress ??
@@ -66,7 +102,7 @@ export function EpisodeRow({
         params: { id: String(episodeId), showId: String(showId) },
       }));
 
-  return (
+  const row = (
     <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={openEpisode}>
       <Animated.View style={[styles.row, dimmed && styles.rowDimmed, { transform: [{ scale }] }]}>
       {showImage ? (
@@ -130,14 +166,31 @@ export function EpisodeRow({
           <WatchedCheck
             watched={watched}
             timesWatched={timesWatched}
-            onToggle={onToggleWatched}
-            onRewatch={onRewatch}
+            onToggle={handleToggleWatched}
+            onRewatch={handleRewatch}
             light={dimmed}
           />
         </View>
       )}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.flashOverlay, { backgroundColor: colors.green, opacity: flashOpacity }]}
+      />
       </Animated.View>
     </Pressable>
+  );
+
+  if (!swipeToWatchEnabled) return row;
+
+  return (
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={renderRightActions}
+      onSwipeableOpen={handleSwipeOpen}
+      overshootRight={false}
+    >
+      {row}
+    </Swipeable>
   );
 }
 
@@ -155,6 +208,17 @@ function createStyles(colors: Colors) {
       shadowOffset: { width: 0, height: 2 },
       elevation: 1,
     },
+    flashOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
+    swipeAction: {
+      width: 88,
+      marginBottom: 12,
+      borderRadius: radius.md,
+      backgroundColor: colors.green,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 4,
+    },
+    swipeActionText: { color: "#fff", fontSize: 11, fontWeight: "800", textAlign: "center" },
     rowDimmed: { backgroundColor: "transparent", shadowOpacity: 0 },
     thumb: { width: 88, alignSelf: "stretch", backgroundColor: colors.backgroundAlt },
     thumbDimmed: { opacity: 0.45 },

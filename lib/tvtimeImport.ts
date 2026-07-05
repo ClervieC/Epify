@@ -1,9 +1,33 @@
 import { parseCSV } from "./csv";
 import { searchShows, getShowEpisodes, lookupShowByTvdbId, TVMazeEpisode, TVMazeShow } from "./tvmaze";
-import { upsertUserShow, bulkUpsertWatchedEpisodes, setShowFavorite, ShowStatus } from "./userShows";
+import { fetchUserShows, upsertUserShow, bulkUpsertWatchedEpisodes, setShowFavorite, ShowStatus } from "./userShows";
 import { bulkUpsertUserMovies } from "./userMovies";
 
-const TVMAZE_REQUEST_DELAY_MS = 350;
+const TVMAZE_REQUEST_DELAY_MS = 150;
+const IMPORT_CONCURRENCY = 4;
+
+// Runs `worker` over `items` with at most `concurrency` in flight at once, instead of
+// one at a time. TVmaze's rate limit (~20 req/10s) is a floor, not a hard cap, and the
+// client now retries on 429 with backoff — so a few lanes running in parallel finish a
+// large import several times faster without needing to be exactly right about the limit.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runLane() {
+    while (nextIndex < items.length) {
+      const current = nextIndex++;
+      results[current] = await worker(items[current], current);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, runLane));
+  return results;
+}
 
 interface TvTimeRow {
   mediaType: string;
@@ -136,14 +160,26 @@ export async function importTvTimeCsv(
   const unmatched: string[] = [];
   let episodesImported = 0;
 
-  for (let i = 0; i < titles.length; i++) {
-    const title = titles[i];
-    onProgress?.({ phase: "matching", current: i + 1, total: titles.length, label: title });
+  // Same resume-friendly skip as the JSON import: if this show is already tracked
+  // (e.g. a previous run of this same import got interrupted), don't redo the
+  // expensive episode fetch + rewrite, just count it and move on.
+  const alreadyImported = new Set((await fetchUserShows()).map((s) => s.tvmaze_id));
+
+  let completed = 0;
+
+  await mapWithConcurrency(titles, IMPORT_CONCURRENCY, async (title) => {
+    onProgress?.({ phase: "matching", current: completed + 1, total: titles.length, label: title });
 
     const show = await findBestShowMatch(title);
     if (!show) {
       unmatched.push(title);
-      continue;
+      completed += 1;
+      return;
+    }
+
+    if (alreadyImported.has(show.id)) {
+      completed += 1;
+      return;
     }
 
     let episodes: TVMazeEpisode[];
@@ -151,7 +187,8 @@ export async function importTvTimeCsv(
       episodes = await getShowEpisodes(show.id);
     } catch {
       unmatched.push(title);
-      continue;
+      completed += 1;
+      return;
     }
     await sleep(TVMAZE_REQUEST_DELAY_MS);
 
@@ -191,21 +228,23 @@ export async function importTvTimeCsv(
       timesWatched: v.timesWatched,
     }));
 
-    onProgress?.({ phase: "importing", current: i + 1, total: titles.length, label: show.name });
+    completed += 1;
+    onProgress?.({ phase: "importing", current: completed, total: titles.length, label: show.name });
 
-    if (records.length === 0) continue;
+    if (records.length === 0) return;
 
     await bulkUpsertWatchedEpisodes(show.id, records);
     episodesImported += records.length;
 
     const airedEpisodeCount = episodes.filter((ep) => new Date(ep.airstamp).getTime() <= Date.now()).length;
+    const isEnded = show.status === "Ended";
     await upsertUserShow({
       tvmaze_id: show.id,
       show_name: show.name,
       show_image: show.image?.medium ?? null,
-      status: records.length >= airedEpisodeCount ? "watched" : "watching",
+      status: isEnded && records.length >= airedEpisodeCount ? "watched" : "watching",
     });
-  }
+  });
 
   return {
     showsImported: titles.length - unmatched.length,
@@ -268,10 +307,14 @@ function parseTvTimeJsonEntries(jsonText: string): unknown[] {
   return list;
 }
 
-function mapTvTimeJsonStatus(rawStatus: string, watchedCount: number, airedCount: number): ShowStatus {
+// Known TV Time statuses: "stopped", "not_started_yet", "watch_later", "up_to_date",
+// "continuing". Any other/future status (unrecognized or absent) falls through to the
+// last line, which derives watching/watched from actual per-episode watch data instead
+// of trusting the raw string — so an unknown status can't crash or silently mis-tag a show.
+function mapTvTimeJsonStatus(rawStatus: string, watchedCount: number, airedCount: number, isEnded: boolean): ShowStatus {
   if (rawStatus === "stopped") return "dropped";
   if (rawStatus === "not_started_yet" || rawStatus === "watch_later") return "want_to_watch";
-  return watchedCount > 0 && watchedCount >= airedCount ? "watched" : "watching";
+  return isEnded && watchedCount > 0 && watchedCount >= airedCount ? "watched" : "watching";
 }
 
 export async function importTvTimeJson(
@@ -312,9 +355,17 @@ async function importTvTimeShowsJson(
   let showsImported = 0;
   let episodesImported = 0;
 
-  for (let i = 0; i < rawShows.length; i++) {
-    const raw = rawShows[i];
-    onProgress?.({ phase: "matching", current: i + 1, total: rawShows.length, label: raw.title });
+  // On a very large export, an import can take a long time (roughly one TVmaze
+  // round trip per show). If it gets interrupted partway and the user re-runs it
+  // on the same file, there's no reason to redo the expensive part (fetching every
+  // episode + rewriting watch history) for shows already fully imported — just the
+  // cheap lookup, then skip straight to the next one.
+  const alreadyImported = new Set((await fetchUserShows()).map((s) => s.tvmaze_id));
+
+  let completed = 0;
+
+  await mapWithConcurrency(rawShows, IMPORT_CONCURRENCY, async (raw) => {
+    onProgress?.({ phase: "matching", current: completed + 1, total: rawShows.length, label: raw.title });
 
     let show: TVMazeShow | null = null;
     if (raw.id?.tvdb) {
@@ -330,7 +381,14 @@ async function importTvTimeShowsJson(
     }
     if (!show) {
       unmatched.push(raw.title);
-      continue;
+      completed += 1;
+      return;
+    }
+
+    if (alreadyImported.has(show.id)) {
+      showsImported += 1;
+      completed += 1;
+      return;
     }
 
     let episodes: TVMazeEpisode[];
@@ -338,7 +396,8 @@ async function importTvTimeShowsJson(
       episodes = await getShowEpisodes(show.id);
     } catch {
       unmatched.push(raw.title);
-      continue;
+      completed += 1;
+      return;
     }
     await sleep(TVMAZE_REQUEST_DELAY_MS);
 
@@ -362,7 +421,8 @@ async function importTvTimeShowsJson(
       }
     }
 
-    onProgress?.({ phase: "importing", current: i + 1, total: rawShows.length, label: show.name });
+    completed += 1;
+    onProgress?.({ phase: "importing", current: completed, total: rawShows.length, label: show.name });
 
     if (records.length > 0) {
       await bulkUpsertWatchedEpisodes(show.id, records);
@@ -370,7 +430,7 @@ async function importTvTimeShowsJson(
     }
 
     const airedEpisodeCount = episodes.filter((ep) => new Date(ep.airstamp).getTime() <= Date.now()).length;
-    const status = mapTvTimeJsonStatus(raw.status, records.length, airedEpisodeCount);
+    const status = mapTvTimeJsonStatus(raw.status, records.length, airedEpisodeCount, show.status === "Ended");
 
     await upsertUserShow({
       tvmaze_id: show.id,
@@ -383,7 +443,7 @@ async function importTvTimeShowsJson(
     }
 
     showsImported += 1;
-  }
+  });
 
   return {
     showsImported,

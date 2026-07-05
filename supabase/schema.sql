@@ -30,6 +30,12 @@ create policy "Users manage their own shows"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+-- Lets a user's shows/favorites be shown on their public profile page.
+create policy "Shows are viewable by authenticated users"
+  on public.user_shows
+  for select
+  using (auth.role() = 'authenticated');
+
 create or replace function public.set_updated_at()
 returns trigger as $$
 begin
@@ -151,3 +157,102 @@ create trigger user_settings_set_updated_at
   before update on public.user_settings
   for each row
   execute function public.set_updated_at();
+
+-- Public-ish identity used for search/follow, separate from auth.users (which clients
+-- can't query directly). Anyone authenticated can read profiles; only the owner can
+-- create/edit theirs.
+create table if not exists public.profiles (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  username text not null unique check (username ~ '^[a-zA-Z0-9_]{3,20}$'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+
+create policy "Profiles are viewable by authenticated users"
+  on public.profiles
+  for select
+  using (auth.role() = 'authenticated');
+
+create policy "Users create their own profile"
+  on public.profiles
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users update their own profile"
+  on public.profiles
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create trigger profiles_set_updated_at
+  before update on public.profiles
+  for each row
+  execute function public.set_updated_at();
+
+-- Following requires both sides to have a profile (i.e. a username), which is also
+-- what makes them findable via search in the first place.
+create table if not exists public.follows (
+  follower_id uuid not null references public.profiles (user_id) on delete cascade,
+  followed_id uuid not null references public.profiles (user_id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (follower_id, followed_id),
+  check (follower_id <> followed_id)
+);
+
+alter table public.follows enable row level security;
+
+create policy "Follows are viewable by authenticated users"
+  on public.follows
+  for select
+  using (auth.role() = 'authenticated');
+
+create policy "Users create their own follows"
+  on public.follows
+  for insert
+  with check (auth.uid() = follower_id);
+
+create policy "Users remove their own follows"
+  on public.follows
+  for delete
+  using (auth.uid() = follower_id);
+
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles (user_id) on delete cascade,
+  type text not null,
+  actor_id uuid references public.profiles (user_id) on delete set null,
+  read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+alter table public.notifications enable row level security;
+
+create policy "Users see their own notifications"
+  on public.notifications
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users mark their own notifications read"
+  on public.notifications
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+-- No insert policy for regular users: rows are only ever created by the trigger below,
+-- which runs as the function owner and bypasses RLS. A follower's session can't insert
+-- into someone else's notifications directly (auth.uid() would never match user_id).
+create or replace function public.notify_on_follow()
+returns trigger as $$
+begin
+  insert into public.notifications (user_id, type, actor_id)
+  values (new.followed_id, 'follow', new.follower_id);
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger follows_notify
+  after insert on public.follows
+  for each row
+  execute function public.notify_on_follow();

@@ -234,7 +234,7 @@ function createStyles(colors: Colors) {
       backgroundColor: colors.backgroundAlt,
       borderRadius: radius.sm,
     },
-    searchInput: { flex: 1, fontSize: 15, color: colors.text },
+    searchInput: { flex: 1, fontSize: 16, color: colors.text },
     grid: { padding: 16, paddingTop: 8, gap: 16 },
     row: { gap: 16 },
     card: { flex: 1 },

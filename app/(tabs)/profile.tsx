@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../lib/supabase";
 import { createList, fetchAllListItems, fetchFavorites, fetchLists, fetchUserShows, ListItem, ShowList, UserShow } from "../../lib/userShows";
@@ -11,7 +12,12 @@ import { importTvTimeCsv, importTvTimeJson, ImportProgress } from "../../lib/tvt
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { Language } from "../../lib/userSettings";
+import { fetchMyProfile, createProfile, Profile } from "../../lib/profiles";
+import { fetchFollowCounts } from "../../lib/follows";
+import { fetchUnreadNotificationCount } from "../../lib/notifications";
 import { ShowCard } from "../../components/ShowCard";
+
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
 const AVG_EPISODE_MINUTES = 42;
 
@@ -35,6 +41,12 @@ export default function ProfileScreen() {
   const [newListName, setNewListName] = useState("");
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [usernameInput, setUsernameInput] = useState("");
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [savingUsername, setSavingUsername] = useState(false);
+  const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
+  const [unreadCount, setUnreadCount] = useState(0);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, language, setLanguage, spoilerMode, setSpoilerMode } = useLanguage();
@@ -48,7 +60,30 @@ export default function ProfileScreen() {
       .from("watched_episodes")
       .select("id", { count: "exact", head: true })
       .then(({ count }) => setEpisodeCount(count ?? 0));
+    fetchUnreadNotificationCount().then(setUnreadCount);
+    fetchMyProfile().then((p) => {
+      setProfile(p);
+      if (p) fetchFollowCounts(p.user_id).then(setFollowCounts);
+    });
   }, []);
+
+  async function handleSaveUsername() {
+    setUsernameError(null);
+    if (!USERNAME_RE.test(usernameInput)) {
+      setUsernameError(t.signup.usernameInvalid);
+      return;
+    }
+    setSavingUsername(true);
+    try {
+      const created = await createProfile(usernameInput);
+      setProfile(created);
+      fetchFollowCounts(created.user_id).then(setFollowCounts);
+    } catch {
+      setUsernameError(t.signup.usernameTaken);
+    } finally {
+      setSavingUsername(false);
+    }
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -82,6 +117,7 @@ export default function ProfileScreen() {
 
     setImporting(true);
     setImportProgress(null);
+    await activateKeepAwakeAsync("tvtime-import");
     try {
       let text: string;
       if (Platform.OS === "web") {
@@ -110,39 +146,83 @@ export default function ProfileScreen() {
     } finally {
       setImporting(false);
       setImportProgress(null);
+      deactivateKeepAwake("tvtime-import");
     }
   }
 
+  const droppedShows = useMemo(() => shows.filter((s) => s.status === "dropped"), [shows]);
+
   const email = session?.user.email ?? "";
-  const username = email.split("@")[0] || "Moi";
+  const displayName = profile?.username ?? email.split("@")[0] ?? "Moi";
   const tvTime = formatTvTime(episodeCount * AVG_EPISODE_MINUTES);
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarInitial}>{username[0]?.toUpperCase()}</Text>
+          <Text style={styles.avatarInitial}>{displayName[0]?.toUpperCase()}</Text>
         </View>
         <View style={styles.headerInfo}>
-          <Text style={styles.username}>{username}</Text>
+          <Text style={styles.username}>{displayName}</Text>
           {!!email && (
             <Text style={styles.userEmail} numberOfLines={1}>
               {email}
             </Text>
           )}
         </View>
+        <Pressable style={styles.bellBtn} onPress={() => router.push("/notifications")}>
+          <Ionicons name="notifications-outline" size={20} color={colors.text} />
+          {unreadCount > 0 && <View style={styles.bellBadge} />}
+        </Pressable>
       </View>
 
-      <View style={styles.followRow}>
-        <View style={styles.followStat}>
-          <Text style={styles.followNumber}>0</Text>
-          <Text style={styles.followLabel}>{t.profile.followers}</Text>
+      {profile ? (
+        <View style={styles.followRow}>
+          <Pressable
+            style={styles.followStat}
+            onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "followers" } })}
+          >
+            <Text style={styles.followNumber}>{followCounts.followers}</Text>
+            <Text style={styles.followLabel}>{t.profile.followers}</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.followStat, styles.followStatBorder]}
+            onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "following" } })}
+          >
+            <Text style={styles.followNumber}>{followCounts.following}</Text>
+            <Text style={styles.followLabel}>{t.profile.following}</Text>
+          </Pressable>
         </View>
-        <View style={[styles.followStat, styles.followStatBorder]}>
-          <Text style={styles.followNumber}>0</Text>
-          <Text style={styles.followLabel}>{t.profile.following}</Text>
+      ) : (
+        <View style={styles.usernamePrompt}>
+          <Text style={styles.usernamePromptTitle}>{t.social.setUsernameTitle}</Text>
+          <Text style={styles.usernamePromptDesc}>{t.social.setUsernameDesc}</Text>
+          <View style={styles.newListRow}>
+            <TextInput
+              style={styles.newListInput}
+              placeholder={t.social.usernamePlaceholder}
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="none"
+              value={usernameInput}
+              onChangeText={setUsernameInput}
+            />
+            <Pressable style={styles.newListBtn} onPress={handleSaveUsername} disabled={savingUsername}>
+              {savingUsername ? (
+                <ActivityIndicator color={colors.onAccent} />
+              ) : (
+                <Ionicons name="checkmark" size={20} color={colors.onAccent} />
+              )}
+            </Pressable>
+          </View>
+          {usernameError && <Text style={styles.usernameError}>{usernameError}</Text>}
         </View>
-      </View>
+      )}
+
+      <Pressable style={styles.importRow} onPress={() => router.push("/users/search")}>
+        <Ionicons name="people-outline" size={20} color={colors.text} />
+        <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.social.findPeople}</Text>
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+      </Pressable>
 
       <SectionHeader title={t.profile.statistics} styles={styles} />
       <View style={styles.statHero}>
@@ -226,6 +306,17 @@ export default function ProfileScreen() {
           <Text style={styles.empty}>{t.profile.noShows}</Text>
         ) : (
           shows.map((s) => (
+            <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />
+          ))
+        )}
+      </ScrollView>
+
+      <SectionHeader title={t.profile.dropped} styles={styles} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
+        {droppedShows.length === 0 ? (
+          <Text style={styles.empty}>{t.profile.noDropped}</Text>
+        ) : (
+          droppedShows.map((s) => (
             <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />
           ))
         )}
@@ -352,6 +443,16 @@ function createStyles(colors: Colors) {
   headerInfo: { flex: 1 },
   username: { fontSize: 20, fontWeight: "800", color: colors.text },
   userEmail: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  bellBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  bellBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.red,
+  },
   followRow: {
     flexDirection: "row",
     marginHorizontal: 16,
@@ -364,6 +465,17 @@ function createStyles(colors: Colors) {
   followStatBorder: { borderLeftWidth: 1, borderLeftColor: colors.border },
   followNumber: { fontSize: 18, fontWeight: "800", color: colors.text },
   followLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  usernamePrompt: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 4,
+    padding: 16,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.md,
+  },
+  usernamePromptTitle: { fontWeight: "800", fontSize: 15, color: colors.text },
+  usernamePromptDesc: { fontSize: 13, color: colors.textMuted, marginTop: 4, marginBottom: 12 },
+  usernameError: { fontSize: 12, color: colors.red, marginTop: 8 },
   sectionHeader: {
     paddingHorizontal: 16,
     paddingTop: 24,

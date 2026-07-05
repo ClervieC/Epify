@@ -38,6 +38,22 @@ export function useMountIn() {
   return { opacity: progress, transform: [{ translateY }] };
 }
 
+// Quick color flash overlay, meant to confirm an action (e.g. marking an
+// episode watched) happened right away. Imperatively triggered rather than
+// derived from state, so it fires the instant the user acts — it doesn't
+// depend on the row still showing the same data (or even still being
+// mounted at the same list position) once a network round-trip resolves.
+export function useFlashPulse() {
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  function flash() {
+    opacity.setValue(0.35);
+    Animated.timing(opacity, { toValue: 0, duration: 500, useNativeDriver: true }).start();
+  }
+
+  return { opacity, flash };
+}
+
 export function useGrowIn(trigger: unknown) {
   const scaleX = useRef(new Animated.Value(0)).current;
 

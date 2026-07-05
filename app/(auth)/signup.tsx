@@ -5,10 +5,14 @@ import { Link } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
+import { createProfile } from "../../lib/profiles";
+
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
 export default function SignupScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,14 +23,34 @@ export default function SignupScreen() {
   async function handleSignup() {
     setError(null);
     setInfo(null);
-    setLoading(true);
-    const { error } = await supabase.auth.signUp({ email, password });
-    setLoading(false);
-    if (error) {
-      setError(error.message);
-    } else {
-      setInfo(t.signup.success);
+
+    if (!USERNAME_RE.test(username)) {
+      setError(t.signup.usernameInvalid);
+      return;
     }
+
+    setLoading(true);
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      setLoading(false);
+      setError(error.message);
+      return;
+    }
+
+    if (data.session) {
+      try {
+        await createProfile(username);
+      } catch {
+        setLoading(false);
+        setError(t.signup.usernameTaken);
+        return;
+      }
+    }
+    // If there's no session yet (email confirmation required), the profile gets
+    // created on first login instead — see the missing-profile prompt in Profile.
+
+    setLoading(false);
+    setInfo(t.signup.success);
   }
 
   return (
@@ -42,6 +66,14 @@ export default function SignupScreen() {
         keyboardType="email-address"
         value={email}
         onChangeText={setEmail}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder={t.signup.username}
+        placeholderTextColor={colors.textFaint}
+        autoCapitalize="none"
+        value={username}
+        onChangeText={setUsername}
       />
       <TextInput
         style={styles.input}
