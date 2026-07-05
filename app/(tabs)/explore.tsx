@@ -1,21 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, TextInput, ScrollView, Pressable, StyleSheet, ActivityIndicator, Image } from "react-native";
+import { View, Text, TextInput, FlatList, Pressable, Animated, StyleSheet, ActivityIndicator, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { getShowsIndex, searchShows, TVMazeShow } from "../../lib/tvmaze";
 import { fetchUserShows, removeUserShow, setShowFavorite, upsertUserShow } from "../../lib/userShows";
 import { useColors, radius, Colors } from "../../lib/theme";
-
-const TABS = ["FEED", "DISCOVER", "GROUPS", "ACTIVITY"] as const;
-type Tab = (typeof TABS)[number];
-
-function fakeWatchedBy(id: number) {
-  return Math.round((((id * 9301 + 49297) % 233280) / 233280) * 900) + 30;
-}
+import { useLanguage, Translations } from "../../lib/i18n";
+import { useScalePress, useMountIn } from "../../lib/animations";
 
 export default function ExploreScreen() {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("FEED");
   const [query, setQuery] = useState("");
   const [shows, setShows] = useState<TVMazeShow[]>([]);
   const [searchResults, setSearchResults] = useState<TVMazeShow[]>([]);
@@ -24,11 +18,12 @@ export default function ExploreScreen() {
   const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
   let timer: ReturnType<typeof setTimeout>;
 
   useEffect(() => {
     getShowsIndex(0)
-      .then((data) => setShows(data.slice(0, 12)))
+      .then((data) => setShows(data.slice(0, 20)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -108,191 +103,161 @@ export default function ExploreScreen() {
 
   return (
     <View style={styles.container}>
+      <Text style={styles.title}>{t.explore.title}</Text>
       <View style={styles.searchBar}>
         <Ionicons name="search" size={18} color={colors.textFaint} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search"
+          placeholder={t.explore.searchPlaceholder}
           placeholderTextColor={colors.textFaint}
           value={query}
           onChangeText={onChangeText}
         />
       </View>
 
-      <ScrollView
-        horizontal
-        style={styles.tabsScroll}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabsRow}
-      >
-        {TABS.map((t) => (
-          <Pressable
-            key={t}
-            style={[styles.tabChip, tab === t && styles.tabChipActive]}
-            onPress={() => setTab(t)}
-          >
-            <Text style={[styles.tabChipText, tab === t && styles.tabChipTextActive]}>{t}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
       {loading ? (
         <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
       ) : (
-        <ScrollView style={styles.feedScroll} contentContainerStyle={styles.feed} showsVerticalScrollIndicator={false}>
-          {tab === "FEED" &&
-            listData.map((show) => {
-              const isAdded = addedIds.has(show.id);
-              const isFavorite = favoriteIds.has(show.id);
-              return (
-                <Pressable key={show.id} style={styles.card} onPress={() => router.push(`/show/${show.id}`)}>
-                  <View style={styles.cardImageWrap}>
-                    {show.image ? (
-                      <Image source={{ uri: show.image.original }} style={styles.cardImage} resizeMode="cover" />
-                    ) : (
-                      <View style={[styles.cardImage, styles.cardImagePlaceholder]} />
-                    )}
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        style={styles.heartBtn}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          toggleFavorite(show);
-                        }}
-                      >
-                        <Ionicons
-                          name={isFavorite ? "heart" : "heart-outline"}
-                          size={16}
-                          color={isFavorite ? colors.red : "#fff"}
-                        />
-                      </Pressable>
-                      <Pressable
-                        style={[styles.addBtn, isAdded && styles.addBtnActive]}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          quickAdd(show);
-                        }}
-                      >
-                        <Ionicons name={isAdded ? "checkmark" : "add"} size={18} color={isAdded ? colors.onAccent : colors.accent} />
-                      </Pressable>
-                    </View>
-                    <View style={styles.cardOverlay}>
-                      <Ionicons name="tv-outline" size={16} color="#fff" />
-                      <Text style={styles.cardTitle}>{show.name}</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.cardMeta}>
-                    {show.status === "Ended" ? "Ended" : "Running"}
-                    {show.network ? ` · ${show.network.name}` : ""}
-                  </Text>
-                  <View style={styles.watchedByRow}>
-                    <Text style={styles.watchedByLabel}>Watched by</Text>
-                  </View>
-                  <View style={styles.watchedByCount}>
-                    <View style={styles.avatarDot} />
-                    <Text style={styles.watchedByNumber}>+{fakeWatchedBy(show.id)}K</Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-
-          {tab === "FEED" && !!query.trim() && listData.length === 0 && (
-            <Text style={styles.placeholder}>Aucun résultat pour "{query}".</Text>
+        <FlatList
+          data={listData}
+          keyExtractor={(show) => String(show.id)}
+          numColumns={2}
+          columnWrapperStyle={styles.row}
+          contentContainerStyle={styles.grid}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            query.trim() ? <Text style={styles.placeholder}>{t.explore.noResults(query)}</Text> : null
+          }
+          renderItem={({ item: show }) => (
+            <ExploreCard
+              show={show}
+              isAdded={addedIds.has(show.id)}
+              isFavorite={favoriteIds.has(show.id)}
+              onPress={() => router.push(`/show/${show.id}`)}
+              onToggleFavorite={() => toggleFavorite(show)}
+              onQuickAdd={() => quickAdd(show)}
+              colors={colors}
+              styles={styles}
+              t={t}
+            />
           )}
-          {tab !== "FEED" && <Text style={styles.placeholder}>{tab} arrive bientôt.</Text>}
-        </ScrollView>
+        />
       )}
     </View>
   );
 }
 
+type ExploreStyles = ReturnType<typeof createStyles>;
+
+function ExploreCard({
+  show,
+  isAdded,
+  isFavorite,
+  onPress,
+  onToggleFavorite,
+  onQuickAdd,
+  colors,
+  styles,
+  t,
+}: {
+  show: TVMazeShow;
+  isAdded: boolean;
+  isFavorite: boolean;
+  onPress: () => void;
+  onToggleFavorite: () => void;
+  onQuickAdd: () => void;
+  colors: Colors;
+  styles: ExploreStyles;
+  t: Translations;
+}) {
+  const { scale, onPressIn, onPressOut } = useScalePress();
+  const mountIn = useMountIn();
+
+  return (
+    <Pressable style={styles.card} onPressIn={onPressIn} onPressOut={onPressOut} onPress={onPress}>
+      <Animated.View style={{ opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }}>
+        <View style={styles.cardImageWrap}>
+          {show.image ? (
+            <Image source={{ uri: show.image.medium }} style={styles.cardImage} resizeMode="cover" />
+          ) : (
+            <View style={[styles.cardImage, styles.cardImagePlaceholder]} />
+          )}
+          <View style={styles.cardActions}>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={(e) => {
+                e.stopPropagation();
+                onToggleFavorite();
+              }}
+            >
+              <Ionicons
+                name={isFavorite ? "heart" : "heart-outline"}
+                size={15}
+                color={isFavorite ? colors.red : "#fff"}
+              />
+            </Pressable>
+            <Pressable
+              style={[styles.iconBtn, isAdded && styles.iconBtnActive]}
+              onPress={(e) => {
+                e.stopPropagation();
+                onQuickAdd();
+              }}
+            >
+              <Ionicons name={isAdded ? "checkmark" : "add"} size={16} color={isAdded ? colors.onAccent : "#fff"} />
+            </Pressable>
+          </View>
+        </View>
+        <Text style={styles.cardTitle} numberOfLines={1}>
+          {show.name}
+        </Text>
+        <Text style={styles.cardMeta} numberOfLines={1}>
+          {show.status === "Ended" ? t.explore.ended : t.explore.running}
+          {show.network ? ` · ${show.network.name}` : ""}
+        </Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 function createStyles(colors: Colors) {
   return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginHorizontal: 16,
-    marginTop: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  searchInput: { flex: 1, fontSize: 16, color: colors.text },
-  tabsScroll: { flexGrow: 0, flexShrink: 0 },
-  tabsRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
-  feedScroll: { flex: 1 },
-  tabChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: radius.pill,
-    backgroundColor: colors.pillBg,
-  },
-  tabChipActive: { backgroundColor: colors.accent },
-  tabChipText: { fontWeight: "800", fontSize: 12, color: colors.textMuted, letterSpacing: 0.4 },
-  tabChipTextActive: { color: colors.onAccent },
-  feed: { paddingHorizontal: 16, paddingBottom: 24, gap: 20 },
-  card: { borderRadius: radius.md, overflow: "hidden" },
-  cardImageWrap: { position: "relative" },
-  cardImage: { width: "100%", height: 210, backgroundColor: colors.backgroundAlt },
-  cardImagePlaceholder: { backgroundColor: colors.backgroundAlt },
-  cardActions: { position: "absolute", top: 10, right: 10, flexDirection: "row", gap: 8 },
-  heartBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.sm,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.sm,
-    borderWidth: 2,
-    borderColor: colors.accent,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  cardOverlay: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    padding: 12,
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
-  cardTitle: { color: "#fff", fontWeight: "800", fontSize: 17 },
-  cardMeta: { color: colors.textMuted, fontSize: 12, marginTop: 6 },
-  watchedByRow: {
-    marginTop: 10,
-    backgroundColor: colors.accentSoft,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    borderTopLeftRadius: radius.sm,
-    borderTopRightRadius: radius.sm,
-  },
-  watchedByLabel: { fontWeight: "700", fontSize: 13, color: colors.text },
-  watchedByCount: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: colors.accentSoft,
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    paddingTop: 4,
-    borderBottomLeftRadius: radius.sm,
-    borderBottomRightRadius: radius.sm,
-  },
-  avatarDot: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.accentDark },
-  watchedByNumber: { fontWeight: "700", color: colors.text },
-  placeholder: { color: colors.textMuted, textAlign: "center", marginTop: 40 },
+    container: { flex: 1, backgroundColor: colors.background },
+    title: { fontSize: 22, fontWeight: "800", color: colors.text, paddingHorizontal: 16, paddingTop: 20 },
+    searchBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginHorizontal: 16,
+      marginTop: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: colors.backgroundAlt,
+      borderRadius: radius.sm,
+    },
+    searchInput: { flex: 1, fontSize: 15, color: colors.text },
+    grid: { padding: 16, paddingTop: 8, gap: 16 },
+    row: { gap: 16 },
+    card: { flex: 1 },
+    cardImageWrap: { position: "relative" },
+    cardImage: {
+      width: "100%",
+      aspectRatio: 2 / 3,
+      borderRadius: radius.md,
+      backgroundColor: colors.backgroundAlt,
+    },
+    cardImagePlaceholder: { backgroundColor: colors.backgroundAlt },
+    cardActions: { position: "absolute", top: 8, right: 8, gap: 6 },
+    iconBtn: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: "rgba(0,0,0,0.45)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    iconBtnActive: { backgroundColor: colors.accent },
+    cardTitle: { color: colors.text, fontWeight: "700", fontSize: 13, marginTop: 8 },
+    cardMeta: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
+    placeholder: { color: colors.textMuted, textAlign: "center", marginTop: 40 },
   });
 }

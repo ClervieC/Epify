@@ -5,12 +5,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { fetchUserMovies, UserMovie } from "../../lib/userMovies";
 import { MovieCard } from "../../components/MovieCard";
 import { useColors, Colors } from "../../lib/theme";
+import { useLanguage } from "../../lib/i18n";
 
 export default function MoviesScreen() {
   const [movies, setMovies] = useState<UserMovie[]>([]);
   const [loaded, setLoaded] = useState(false);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
 
   useFocusEffect(
     useCallback(() => {
@@ -24,8 +26,8 @@ export default function MoviesScreen() {
     return (
       <View style={styles.empty}>
         <Ionicons name="film-outline" size={40} color={colors.textFaint} />
-        <Text style={styles.title}>Films</Text>
-        <Text style={styles.subtitle}>Aucun film pour l'instant.</Text>
+        <Text style={styles.title}>{t.movies.title}</Text>
+        <Text style={styles.subtitle}>{t.movies.empty}</Text>
       </View>
     );
   }

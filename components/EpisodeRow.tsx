@@ -1,8 +1,10 @@
 import { useMemo } from "react";
-import { View, Text, Pressable, Image, StyleSheet } from "react-native";
+import { View, Text, Pressable, Image, Animated, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, Colors } from "../lib/theme";
+import { useLanguage } from "../lib/i18n";
+import { useScalePress } from "../lib/animations";
 import { WatchedCheck } from "./WatchedCheck";
 
 interface EpisodeRowProps {
@@ -53,6 +55,8 @@ export function EpisodeRow({
   const router = useRouter();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
+  const { scale, onPressIn, onPressOut } = useScalePress(0.97);
 
   const openEpisode =
     onPress ??
@@ -63,7 +67,8 @@ export function EpisodeRow({
       }));
 
   return (
-    <Pressable style={[styles.row, dimmed && styles.rowDimmed]} onPress={openEpisode}>
+    <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={openEpisode}>
+      <Animated.View style={[styles.row, dimmed && styles.rowDimmed, { transform: [{ scale }] }]}>
       {showImage ? (
         <Image source={{ uri: showImage }} style={[styles.thumb, dimmed && styles.thumbDimmed]} />
       ) : (
@@ -93,17 +98,17 @@ export function EpisodeRow({
           <View style={styles.badgeRow}>
             {isPremiere && (
               <View style={[styles.badge, { backgroundColor: colors.badgePremiere }]}>
-                <Text style={[styles.badgeText, { color: "#fff" }]}>PREMIERE</Text>
+                <Text style={[styles.badgeText, { color: "#fff" }]}>{t.episodeRow.premiere}</Text>
               </View>
             )}
             {isNew && (
               <View style={[styles.badge, { backgroundColor: colors.badgeNew }]}>
-                <Text style={[styles.badgeText, { color: colors.onAccent }]}>NEW</Text>
+                <Text style={[styles.badgeText, { color: colors.onAccent }]}>{t.episodeRow.new}</Text>
               </View>
             )}
             {hasAired && (
               <View style={[styles.badge, { backgroundColor: colors.badgeAired }]}>
-                <Text style={[styles.badgeText, { color: "#fff" }]}>AIRED</Text>
+                <Text style={[styles.badgeText, { color: "#fff" }]}>{t.episodeRow.aired}</Text>
               </View>
             )}
           </View>
@@ -113,7 +118,7 @@ export function EpisodeRow({
       {daysAway !== undefined ? (
         <View style={styles.timeCol}>
           <Text style={styles.daysAwayNumber}>{daysAway}</Text>
-          <Text style={styles.daysAwayLabel}>DAYS</Text>
+          <Text style={styles.daysAwayLabel}>{t.episodeRow.days}</Text>
         </View>
       ) : time ? (
         <View style={styles.timeCol}>
@@ -131,6 +136,7 @@ export function EpisodeRow({
           />
         </View>
       )}
+      </Animated.View>
     </Pressable>
   );
 }

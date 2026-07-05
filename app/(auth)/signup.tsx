@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { Link } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { useColors, radius, Colors } from "../../lib/theme";
+import { useLanguage } from "../../lib/i18n";
 
 export default function SignupScreen() {
   const [email, setEmail] = useState("");
@@ -13,6 +14,7 @@ export default function SignupScreen() {
   const [loading, setLoading] = useState(false);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
 
   async function handleSignup() {
     setError(null);
@@ -23,18 +25,18 @@ export default function SignupScreen() {
     if (error) {
       setError(error.message);
     } else {
-      setInfo("Compte créé. Vérifie ta boîte mail si une confirmation est requise.");
+      setInfo(t.signup.success);
     }
   }
 
   return (
     <View style={styles.container}>
       <Image source={require("../../assets/logo.png")} style={styles.logo} contentFit="contain" />
-      <Text style={styles.title}>Créer un compte</Text>
+      <Text style={styles.title}>{t.signup.title}</Text>
 
       <TextInput
         style={styles.input}
-        placeholder="Email"
+        placeholder={t.signup.email}
         placeholderTextColor={colors.textFaint}
         autoCapitalize="none"
         keyboardType="email-address"
@@ -43,7 +45,7 @@ export default function SignupScreen() {
       />
       <TextInput
         style={styles.input}
-        placeholder="Mot de passe"
+        placeholder={t.signup.password}
         placeholderTextColor={colors.textFaint}
         secureTextEntry
         value={password}
@@ -54,11 +56,11 @@ export default function SignupScreen() {
       {info && <Text style={styles.info}>{info}</Text>}
 
       <Pressable style={styles.button} onPress={handleSignup} disabled={loading}>
-        {loading ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.buttonText}>S'inscrire</Text>}
+        {loading ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.buttonText}>{t.signup.signUp}</Text>}
       </Pressable>
 
       <Link href="/(auth)/login" style={styles.link}>
-        Déjà un compte ? Se connecter
+        {t.signup.hasAccount}
       </Link>
     </View>
   );

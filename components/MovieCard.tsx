@@ -1,6 +1,8 @@
 import { useMemo } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, Animated, StyleSheet } from "react-native";
 import { useColors, radius, Colors } from "../lib/theme";
+import { useLanguage } from "../lib/i18n";
+import { useMountIn } from "../lib/animations";
 
 interface MovieCardProps {
   title: string;
@@ -12,6 +14,8 @@ interface MovieCardProps {
 export function MovieCard({ title, year, watchedAt, timesWatched }: MovieCardProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
+  const mountIn = useMountIn();
   const watchedDate = new Date(watchedAt).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -19,7 +23,7 @@ export function MovieCard({ title, year, watchedAt, timesWatched }: MovieCardPro
   });
 
   return (
-    <View style={styles.card}>
+    <Animated.View style={[styles.card, { opacity: mountIn.opacity, transform: mountIn.transform }]}>
       <View style={[styles.image, styles.placeholder]}>
         <Text style={styles.placeholderText}>{title[0]}</Text>
       </View>
@@ -28,10 +32,10 @@ export function MovieCard({ title, year, watchedAt, timesWatched }: MovieCardPro
         {year ? ` (${year})` : ""}
       </Text>
       <Text style={styles.subtitle} numberOfLines={1}>
-        Vu le {watchedDate}
+        {t.movies.watchedOn(watchedDate)}
         {timesWatched > 1 ? ` · ${timesWatched}x` : ""}
       </Text>
-    </View>
+    </Animated.View>
   );
 }
 

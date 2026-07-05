@@ -4,6 +4,7 @@ import { Image } from "expo-image";
 import { Link } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { useColors, radius, Colors } from "../../lib/theme";
+import { useLanguage } from "../../lib/i18n";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -12,6 +13,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
 
   async function handleLogin() {
     setError(null);
@@ -24,11 +26,11 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <Image source={require("../../assets/logo.png")} style={styles.logo} contentFit="contain" />
-      <Text style={styles.subtitle}>Suis tes séries</Text>
+      <Text style={styles.subtitle}>{t.login.tagline}</Text>
 
       <TextInput
         style={styles.input}
-        placeholder="Email"
+        placeholder={t.login.email}
         placeholderTextColor={colors.textFaint}
         autoCapitalize="none"
         keyboardType="email-address"
@@ -37,7 +39,7 @@ export default function LoginScreen() {
       />
       <TextInput
         style={styles.input}
-        placeholder="Mot de passe"
+        placeholder={t.login.password}
         placeholderTextColor={colors.textFaint}
         secureTextEntry
         value={password}
@@ -47,11 +49,11 @@ export default function LoginScreen() {
       {error && <Text style={styles.error}>{error}</Text>}
 
       <Pressable style={styles.button} onPress={handleLogin} disabled={loading}>
-        {loading ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.buttonText}>Se connecter</Text>}
+        {loading ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.buttonText}>{t.login.signIn}</Text>}
       </Pressable>
 
       <Link href="/(auth)/signup" style={styles.link}>
-        Pas de compte ? Créer un compte
+        {t.login.noAccount}
       </Link>
     </View>
   );

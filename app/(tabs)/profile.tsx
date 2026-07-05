@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert, ActivityIndicator, Platform } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert, ActivityIndicator, Platform, Switch } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
@@ -9,6 +9,8 @@ import { supabase } from "../../lib/supabase";
 import { createList, fetchAllListItems, fetchFavorites, fetchLists, fetchUserShows, ListItem, ShowList, UserShow } from "../../lib/userShows";
 import { importTvTimeCsv, importTvTimeJson, ImportProgress } from "../../lib/tvtimeImport";
 import { useColors, radius, Colors } from "../../lib/theme";
+import { useLanguage } from "../../lib/i18n";
+import { Language } from "../../lib/userSettings";
 import { ShowCard } from "../../components/ShowCard";
 
 const AVG_EPISODE_MINUTES = 42;
@@ -35,6 +37,7 @@ export default function ProfileScreen() {
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t, language, setLanguage, spoilerMode, setSpoilerMode } = useLanguage();
 
   const load = useCallback(() => {
     fetchUserShows().then(setShows);
@@ -73,7 +76,7 @@ export default function ProfileScreen() {
     const isJson = name.endsWith(".json");
     const isCsv = name.endsWith(".csv");
     if (!isJson && !isCsv) {
-      Alert.alert("Fichier invalide", "Choisis un export CSV ou JSON de TV Time.");
+      Alert.alert(t.profile.importInvalidFileTitle, t.profile.importInvalidFileMsg);
       return;
     }
 
@@ -82,7 +85,7 @@ export default function ProfileScreen() {
     try {
       let text: string;
       if (Platform.OS === "web") {
-        if (!asset.file) throw new Error("Impossible de lire le fichier sélectionné.");
+        if (!asset.file) throw new Error(t.profile.importReadError);
         text = await asset.file.text();
       } else {
         text = await new File(asset.uri).text();
@@ -92,94 +95,90 @@ export default function ProfileScreen() {
 
       const unmatchedNote =
         summary.showsUnmatched.length > 0
-          ? `\n${summary.showsUnmatched.length} série(s) introuvable(s) sur TVmaze : ${summary.showsUnmatched
-              .slice(0, 5)
-              .join(", ")}${summary.showsUnmatched.length > 5 ? "…" : ""}`
+          ? t.profile.importUnmatched(
+              summary.showsUnmatched.length,
+              summary.showsUnmatched.slice(0, 5).join(", ") + (summary.showsUnmatched.length > 5 ? "…" : "")
+            )
           : "";
 
       Alert.alert(
-        "Import terminé",
-        `${summary.showsImported} série(s) importée(s), ${summary.episodesImported} épisode(s) marqué(s) comme vu(s), ${summary.moviesImported} film(s) importé(s).${unmatchedNote}`
+        t.profile.importDoneTitle,
+        t.profile.importDone(summary.showsImported, summary.episodesImported, summary.moviesImported) + unmatchedNote
       );
     } catch (e) {
-      Alert.alert("Échec de l'import", e instanceof Error ? e.message : "Erreur inconnue.");
+      Alert.alert(t.profile.importFailedTitle, e instanceof Error ? e.message : t.profile.importFailedUnknown);
     } finally {
       setImporting(false);
       setImportProgress(null);
     }
   }
 
-  const username = session?.user.email?.split("@")[0] ?? "Moi";
+  const email = session?.user.email ?? "";
+  const username = email.split("@")[0] || "Moi";
   const tvTime = formatTvTime(episodeCount * AVG_EPISODE_MINUTES);
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.banner}>
-        <Pressable style={styles.bell}>
-          <Ionicons name="notifications" size={20} color={colors.onAccent} />
-        </Pressable>
-        <Pressable style={styles.menuDots}>
-          <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
-        </Pressable>
-      </View>
-
-      <View style={styles.profileHeader}>
+      <View style={styles.header}>
         <View style={styles.avatar}>
-          <Ionicons name="person" size={44} color="#fff" />
+          <Text style={styles.avatarInitial}>{username[0]?.toUpperCase()}</Text>
         </View>
-        <Text style={styles.username}>{username}</Text>
-        <Pressable style={styles.editButton}>
-          <Text style={styles.editButtonText}>EDIT</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.statsBar}>
-        <View style={styles.statsBarItem}>
-          <Text style={styles.statsBarNumber}>11</Text>
-          <Text style={styles.statsBarLabel}>following</Text>
-        </View>
-        <View style={[styles.statsBarItem, styles.statsBarBorder]}>
-          <Text style={styles.statsBarNumber}>13</Text>
-          <Text style={styles.statsBarLabel}>followers</Text>
-        </View>
-        <View style={styles.statsBarItem}>
-          <Text style={styles.statsBarNumber}>0</Text>
-          <Text style={styles.statsBarLabel}>comments</Text>
+        <View style={styles.headerInfo}>
+          <Text style={styles.username}>{username}</Text>
+          {!!email && (
+            <Text style={styles.userEmail} numberOfLines={1}>
+              {email}
+            </Text>
+          )}
         </View>
       </View>
 
-      <SectionHeader title="Stats" styles={styles} colors={colors} />
-      <View style={styles.statCards}>
-        <View style={styles.statCard}>
-          <View style={styles.statCardHeader}>
-            <Ionicons name="tv-outline" size={16} color={colors.black} />
-            <Text style={styles.statCardTitle}>TV time</Text>
-          </View>
-          <View style={styles.tvTimeRow}>
-            <TvTimeUnit value={tvTime.months} label="MONTHS" styles={styles} />
-            <TvTimeUnit value={tvTime.days} label="DAYS" styles={styles} />
-            <TvTimeUnit value={tvTime.hours} label="HOUR" styles={styles} />
-          </View>
+      <View style={styles.followRow}>
+        <View style={styles.followStat}>
+          <Text style={styles.followNumber}>0</Text>
+          <Text style={styles.followLabel}>{t.profile.followers}</Text>
         </View>
-        <View style={styles.statCard}>
-          <View style={styles.statCardHeader}>
-            <Ionicons name="tv-outline" size={16} color={colors.black} />
-            <Text style={styles.statCardTitle}>Episodes watched</Text>
-          </View>
-          <Text style={styles.episodesNumber}>{episodeCount.toLocaleString()}</Text>
+        <View style={[styles.followStat, styles.followStatBorder]}>
+          <Text style={styles.followNumber}>0</Text>
+          <Text style={styles.followLabel}>{t.profile.following}</Text>
         </View>
       </View>
 
-      <SectionHeader title="Favorites" styles={styles} colors={colors} />
+      <SectionHeader title={t.profile.statistics} styles={styles} />
+      <View style={styles.statHero}>
+        <View style={styles.statHeroRow}>
+          <View style={styles.statHeroIcon}>
+            <Ionicons name="time-outline" size={16} color={colors.accent} />
+          </View>
+          <Text style={styles.statHeroLabel}>{t.profile.watchTime}</Text>
+        </View>
+        <View style={styles.tvTimeRow}>
+          <TvTimeUnit value={tvTime.months} label={t.profile.months} styles={styles} />
+          <TvTimeUnit value={tvTime.days} label={t.profile.days} styles={styles} />
+          <TvTimeUnit value={tvTime.hours} label={t.profile.hours} styles={styles} />
+        </View>
+
+        <View style={styles.statHeroDivider} />
+
+        <View style={styles.statHeroRow}>
+          <View style={styles.statHeroIcon}>
+            <Ionicons name="checkmark-circle-outline" size={16} color={colors.accent} />
+          </View>
+          <Text style={styles.statHeroLabel}>{t.profile.episodesWatched}</Text>
+          <Text style={styles.statHeroBig}>{episodeCount.toLocaleString()}</Text>
+        </View>
+      </View>
+
+      <SectionHeader title={t.profile.favorites} styles={styles} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
         {favorites.length === 0 ? (
-          <Text style={styles.empty}>Aucun favori pour l'instant.</Text>
+          <Text style={styles.empty}>{t.profile.noFavorites}</Text>
         ) : (
           favorites.map((s) => <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />)
         )}
       </ScrollView>
 
-      <SectionHeader title="Lists" styles={styles} colors={colors} />
+      <SectionHeader title={t.profile.lists} styles={styles} />
       {lists.map((list) => {
         const items = listItems.filter((i) => i.list_id === list.id);
         return (
@@ -193,9 +192,7 @@ export default function ProfileScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.listRowName}>{list.name}</Text>
-              <Text style={styles.listRowCount}>
-                {items.length} série{items.length > 1 ? "s" : ""}
-              </Text>
+              <Text style={styles.listRowCount}>{t.profile.seriesCount(items.length)}</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
           </Pressable>
@@ -206,7 +203,7 @@ export default function ProfileScreen() {
         <View style={styles.newListRow}>
           <TextInput
             style={styles.newListInput}
-            placeholder="Nom de la liste"
+            placeholder={t.profile.newListPlaceholder}
             placeholderTextColor={colors.textFaint}
             value={newListName}
             onChangeText={setNewListName}
@@ -218,15 +215,15 @@ export default function ProfileScreen() {
         </View>
       ) : (
         <Pressable style={styles.createList} onPress={() => setCreatingList(true)}>
-          <Ionicons name="add" size={28} color={colors.black} />
-          <Text style={styles.createListText}>CREATE A NEW LIST</Text>
+          <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+          <Text style={styles.createListText}>{t.profile.createList}</Text>
         </Pressable>
       )}
 
-      <SectionHeader title="Shows" styles={styles} colors={colors} />
+      <SectionHeader title={t.profile.shows} styles={styles} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
         {shows.length === 0 ? (
-          <Text style={styles.empty}>Aucune série pour l'instant.</Text>
+          <Text style={styles.empty}>{t.profile.noShows}</Text>
         ) : (
           shows.map((s) => (
             <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />
@@ -234,12 +231,12 @@ export default function ProfileScreen() {
         )}
       </ScrollView>
 
-      <SectionHeader title="Réglages" styles={styles} colors={colors} />
+      <SectionHeader title={t.profile.settings} styles={styles} />
       <Pressable style={styles.importRow} onPress={handleImportTvTime} disabled={importing}>
         <Ionicons name="cloud-upload-outline" size={20} color={colors.text} />
         <View style={{ flex: 1 }}>
-          <Text style={styles.importRowTitle}>Importer depuis TV Time</Text>
-          <Text style={styles.importRowSubtitle}>Charge ton export CSV ou JSON récupéré de TV Time (by Refract) pour récupérer ton historique.</Text>
+          <Text style={styles.importRowTitle}>{t.profile.importTitle}</Text>
+          <Text style={styles.importRowSubtitle}>{t.profile.importSubtitle}</Text>
         </View>
         {importing ? (
           <ActivityIndicator color={colors.black} />
@@ -250,7 +247,7 @@ export default function ProfileScreen() {
       {importing && importProgress && (
         <View style={styles.importProgress}>
           <Text style={styles.importProgressText}>
-            {importProgress.phase === "matching" ? "Recherche des séries" : "Import des épisodes"} —{" "}
+            {importProgress.phase === "matching" ? t.profile.importMatching : t.profile.importImporting} —{" "}
             {importProgress.current}/{importProgress.total}
           </Text>
           <Text style={styles.importProgressLabel} numberOfLines={1}>
@@ -259,8 +256,28 @@ export default function ProfileScreen() {
         </View>
       )}
 
+      <View style={styles.settingRow}>
+        <Ionicons name="eye-off-outline" size={20} color={colors.text} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.importRowTitle}>{t.profile.spoilerMode}</Text>
+          <Text style={styles.importRowSubtitle}>{t.profile.spoilerModeDesc}</Text>
+        </View>
+        <Switch
+          value={spoilerMode}
+          onValueChange={setSpoilerMode}
+          trackColor={{ true: colors.accent, false: colors.pillBg }}
+          thumbColor={colors.surface}
+        />
+      </View>
+
+      <View style={styles.settingRow}>
+        <Ionicons name="language-outline" size={20} color={colors.text} />
+        <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.language}</Text>
+        <LanguageSwitch language={language} setLanguage={setLanguage} colors={colors} styles={styles} />
+      </View>
+
       <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
-        <Text style={styles.signOutText}>Se déconnecter</Text>
+        <Text style={styles.signOutText}>{t.profile.signOut}</Text>
       </Pressable>
     </ScrollView>
   );
@@ -268,12 +285,11 @@ export default function ProfileScreen() {
 
 type ProfileStyles = ReturnType<typeof createStyles>;
 
-function SectionHeader({ title, styles, colors }: { title: string; styles: ProfileStyles; colors: Colors }) {
+function SectionHeader({ title, styles }: { title: string; styles: ProfileStyles }) {
   return (
-    <Pressable style={styles.sectionHeader}>
+    <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      <Ionicons name="chevron-forward" size={20} color={colors.black} />
-    </Pressable>
+    </View>
   );
 }
 
@@ -286,90 +302,98 @@ function TvTimeUnit({ value, label, styles }: { value: number; label: string; st
   );
 }
 
+function LanguageSwitch({
+  language,
+  setLanguage,
+  colors,
+  styles,
+}: {
+  language: Language;
+  setLanguage: (lang: Language) => void;
+  colors: Colors;
+  styles: ProfileStyles;
+}) {
+  return (
+    <View style={styles.languageSwitch}>
+      {(["en", "fr"] as const).map((lang) => (
+        <Pressable
+          key={lang}
+          style={[styles.languageOption, language === lang && { backgroundColor: colors.accent }]}
+          onPress={() => setLanguage(lang)}
+        >
+          <Text style={[styles.languageOptionText, language === lang && { color: colors.onAccent }]}>
+            {lang.toUpperCase()}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function createStyles(colors: Colors) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  banner: {
-    height: 220,
-    backgroundColor: "#2a2a2e",
-    justifyContent: "space-between",
+  header: {
     flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
     padding: 16,
+    paddingTop: 24,
   },
-  bell: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.pill,
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: colors.accent,
     alignItems: "center",
     justifyContent: "center",
   },
-  menuDots: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
-  profileHeader: { paddingHorizontal: 16, marginTop: -50 },
-  avatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: "#3a3a3e",
-    borderWidth: 4,
-    borderColor: colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  username: { fontSize: 26, fontWeight: "800", color: colors.text, marginTop: 10 },
-  editButton: {
-    borderWidth: 1.5,
-    borderColor: colors.black,
-    borderRadius: radius.pill,
-    alignSelf: "flex-start",
-    paddingHorizontal: 18,
-    paddingVertical: 6,
-    marginTop: 10,
-  },
-  editButtonText: { fontWeight: "700", fontSize: 12, letterSpacing: 0.5 },
-  statsBar: {
+  avatarInitial: { fontSize: 26, fontWeight: "800", color: colors.onAccent },
+  headerInfo: { flex: 1 },
+  username: { fontSize: 20, fontWeight: "800", color: colors.text },
+  userEmail: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  followRow: {
     flexDirection: "row",
-    marginTop: 20,
-    paddingVertical: 16,
-    borderTopWidth: 1,
+    marginHorizontal: 16,
+    marginTop: 4,
+    paddingBottom: 16,
     borderBottomWidth: 1,
-    borderColor: colors.border,
+    borderBottomColor: colors.border,
   },
-  statsBarItem: { flex: 1, alignItems: "center" },
-  statsBarBorder: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: colors.border },
-  statsBarNumber: { fontSize: 22, fontWeight: "800", color: colors.text },
-  statsBarLabel: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
+  followStat: { flex: 1, alignItems: "center" },
+  followStatBorder: { borderLeftWidth: 1, borderLeftColor: colors.border },
+  followNumber: { fontSize: 18, fontWeight: "800", color: colors.text },
+  followLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
   sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 24,
     paddingBottom: 12,
   },
-  sectionTitle: { fontSize: 22, fontWeight: "800", color: colors.text },
-  statCards: { flexDirection: "row", gap: 12, paddingHorizontal: 16 },
-  statCard: {
-    flex: 1,
+  sectionTitle: { fontSize: 18, fontWeight: "800", color: colors.text },
+  statHero: {
+    marginHorizontal: 16,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.md,
-    overflow: "hidden",
+    borderRadius: radius.lg,
+    padding: 16,
   },
-  statCardHeader: {
-    flexDirection: "row",
+  statHeroRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  statHeroIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.accentSoft,
     alignItems: "center",
-    gap: 6,
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    justifyContent: "center",
   },
-  statCardTitle: { fontWeight: "700", fontSize: 13, color: colors.text },
-  tvTimeRow: { flexDirection: "row", padding: 12, gap: 8 },
+  statHeroLabel: { flex: 1, fontWeight: "700", fontSize: 13, color: colors.text },
+  statHeroBig: { fontSize: 20, fontWeight: "800", color: colors.text },
+  tvTimeRow: { flexDirection: "row", marginTop: 14, gap: 8 },
   tvTimeUnit: { alignItems: "center", flex: 1 },
-  tvTimeValue: { fontSize: 22, fontWeight: "800", color: colors.text },
-  tvTimeLabel: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
-  episodesNumber: { fontSize: 30, fontWeight: "800", color: colors.text, padding: 16, textAlign: "center" },
+  tvTimeValue: { fontSize: 24, fontWeight: "800", color: colors.text },
+  tvTimeLabel: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  statHeroDivider: { height: 1, backgroundColor: colors.border, marginVertical: 16 },
   listRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -408,16 +432,14 @@ function createStyles(colors: Colors) {
     justifyContent: "center",
   },
   createList: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     marginHorizontal: 16,
     marginTop: 12,
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: radius.md,
-    paddingVertical: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    paddingVertical: 12,
   },
-  createListText: { fontWeight: "800", fontSize: 13, letterSpacing: 0.5, color: colors.text },
+  createListText: { fontWeight: "700", fontSize: 14, color: colors.accent },
   showsRow: { paddingHorizontal: 16, paddingBottom: 24 },
   empty: { color: colors.textMuted },
   importRow: {
@@ -434,6 +456,24 @@ function createStyles(colors: Colors) {
   importProgress: { marginHorizontal: 16, marginTop: 10 },
   importProgressText: { fontSize: 12, fontWeight: "700", color: colors.text },
   importProgressLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  languageSwitch: {
+    flexDirection: "row",
+    backgroundColor: colors.pillBg,
+    borderRadius: radius.sm,
+    padding: 3,
+    gap: 2,
+  },
+  languageOption: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.sm - 2 },
+  languageOptionText: { fontSize: 12, fontWeight: "800", color: colors.textMuted },
   signOut: { alignItems: "center", paddingVertical: 24 },
   signOutText: { color: colors.red, fontWeight: "600" },
   });

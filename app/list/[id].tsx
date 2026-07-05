@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { fetchListItems, fetchLists, ListItem, ShowList } from "../../lib/userShows";
 import { useColors, Colors } from "../../lib/theme";
+import { useLanguage } from "../../lib/i18n";
 import { ShowCard } from "../../components/ShowCard";
 
 export default function ListDetailScreen() {
@@ -14,6 +15,7 @@ export default function ListDetailScreen() {
   const [loading, setLoading] = useState(true);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
 
   useFocusEffect(
     useCallback(() => {
@@ -45,7 +47,7 @@ export default function ListDetailScreen() {
         <Pressable onPress={() => router.back()} hitSlop={10}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.title}>{list?.name ?? "Liste"}</Text>
+        <Text style={styles.title}>{list?.name ?? t.listDetail.title}</Text>
         <View style={{ width: 24 }} />
       </View>
 
@@ -56,7 +58,7 @@ export default function ListDetailScreen() {
         contentContainerStyle={styles.grid}
         columnWrapperStyle={{ gap: 12 }}
         renderItem={({ item }) => <ShowCard id={item.tvmaze_id} name={item.show_name} imageUrl={item.show_image} />}
-        ListEmptyComponent={<Text style={styles.empty}>Aucune série dans cette liste.</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>{t.listDetail.empty}</Text>}
       />
     </View>
   );

@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { RewatchPromptProvider } from "../context/RewatchPromptContext";
+import { LanguageProvider } from "../lib/i18n";
 
 function RootNavigation() {
   const { session, loading } = useAuth();
@@ -39,11 +40,13 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <View style={{ flex: 1 }}>
-          <RewatchPromptProvider>
-            <RootNavigation />
-          </RewatchPromptProvider>
-        </View>
+        <LanguageProvider>
+          <View style={{ flex: 1 }}>
+            <RewatchPromptProvider>
+              <RootNavigation />
+            </RewatchPromptProvider>
+          </View>
+        </LanguageProvider>
       </AuthProvider>
       <StatusBar style="dark" />
     </SafeAreaProvider>

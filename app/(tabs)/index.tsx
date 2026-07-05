@@ -5,6 +5,7 @@ import {
   ScrollView,
   FlatList,
   Pressable,
+  Animated,
   StyleSheet,
   ActivityIndicator,
 } from "react-native";
@@ -28,8 +29,10 @@ import {
 } from "../../lib/dates";
 import { EpisodeRow } from "../../components/EpisodeRow";
 import { useColors, radius, Colors } from "../../lib/theme";
+import { useLanguage } from "../../lib/i18n";
+import { useGrowIn, useFadeIn } from "../../lib/animations";
 
-type ViewTab = "WATCH LIST" | "UPCOMING";
+type ViewTab = "list" | "upcoming";
 
 interface TrackedShow {
   show: UserShow;
@@ -49,7 +52,7 @@ interface EnrichedEpisode {
 }
 
 type UpcomingRow =
-  | { type: "header"; key: string; label: string; showGrid: boolean }
+  | { type: "header"; key: string; label: string }
   | { type: "empty" }
   | { type: "episode"; item: EnrichedEpisode };
 
@@ -67,7 +70,7 @@ function upcomingRowHeight(row: UpcomingRow) {
 }
 
 export default function ShowsScreen() {
-  const [tab, setTab] = useState<ViewTab>("WATCH LIST");
+  const [tab, setTab] = useState<ViewTab>("list");
   const [loading, setLoading] = useState(true);
   const [tracked, setTracked] = useState<TrackedShow[]>([]);
   const scrollRef = useRef<ScrollView>(null);
@@ -76,6 +79,9 @@ export default function ShowsScreen() {
   const hasLoadedOnce = useRef(false);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t, language } = useLanguage();
+  const underlineGrow = useGrowIn(tab);
+  const contentFade = useFadeIn(!loading);
 
   const loadData = useCallback(async () => {
     if (!hasLoadedOnce.current) {
@@ -135,7 +141,7 @@ export default function ShowsScreen() {
       let active = true;
       loadData().then(() => {
         if (!active) return;
-        if (tab === "WATCH LIST") scrollToWatchNext();
+        if (tab === "list") scrollToWatchNext();
         else scrollToUpcomingToday();
       });
       return () => {
@@ -146,12 +152,12 @@ export default function ShowsScreen() {
   );
 
   function goToWatchList() {
-    setTab("WATCH LIST");
+    setTab("list");
     loadData().then(scrollToWatchNext);
   }
 
   function goToUpcoming() {
-    setTab("UPCOMING");
+    setTab("upcoming");
     loadData().then(scrollToUpcomingToday);
   }
 
@@ -239,7 +245,7 @@ export default function ShowsScreen() {
       for (const ep of episodes) {
         // Rendering every past episode a long-running show ever aired (hundreds
         // of rows) is unnecessary noise — cap how far back we go, same spirit
-        // as Watch List's capped WATCHED HISTORY.
+        // as the capped "Historique" section above.
         if (diffDaysFromToday(ep.airdate) < -90) continue;
         result.push({
           show,
@@ -346,13 +352,12 @@ export default function ShowsScreen() {
 
       const flatData: UpcomingRow[] = [];
       let todayIndex = 0;
-      sortedEntries.forEach(([key, items], groupIndex) => {
+      sortedEntries.forEach(([key, items]) => {
         if (key === todayKey) todayIndex = flatData.length;
         flatData.push({
           type: "header",
           key,
-          label: upcomingGroupLabel(key, items[0]?.episode.airdate ?? key),
-          showGrid: groupIndex === 0,
+          label: upcomingGroupLabel(key, items[0]?.episode.airdate ?? key, language),
         });
         if (items.length === 0) {
           flatData.push({ type: "empty" });
@@ -374,28 +379,25 @@ export default function ShowsScreen() {
         todayHeaderIndex: todayIndex,
         upcomingOffsets: offsets,
       };
-    }, [upcoming]);
+    }, [upcoming, language]);
 
   function renderUpcomingRow({ item: row }: { item: UpcomingRow }) {
     if (row.type === "header") {
       return (
-        <View style={styles.groupHeaderRow}>
-          <View style={styles.groupHeaderSpacer} />
-          <View style={styles.groupPill}>
-            <Text style={styles.groupPillText}>{row.label}</Text>
-          </View>
-          {row.showGrid ? (
-            <Pressable style={styles.gridBtn}>
-              <Ionicons name="grid-outline" size={18} color={colors.text} />
-            </Pressable>
-          ) : (
-            <View style={styles.groupHeaderSpacer} />
-          )}
+        <View style={styles.dateHeaderRow}>
+          <View style={styles.dateHeaderLine} />
+          <Text style={styles.dateHeaderText}>{row.label}</Text>
+          <View style={styles.dateHeaderLine} />
         </View>
       );
     }
     if (row.type === "empty") {
-      return <Text style={styles.empty}>Rien de prévu aujourd'hui.</Text>;
+      return (
+        <View style={styles.emptyTodayCard}>
+          <Ionicons name="cafe-outline" size={16} color={colors.textFaint} />
+          <Text style={styles.emptyTodayText}>{t.shows.emptyToday}</Text>
+        </View>
+      );
     }
     const item = row.item;
     const isFuture = new Date(item.episode.airstamp).getTime() > Date.now();
@@ -436,41 +438,38 @@ export default function ShowsScreen() {
           <Text
             style={[
               styles.tabText,
-              tab === "WATCH LIST" && styles.tabTextActive,
+              tab === "list" && styles.tabTextActive,
             ]}
           >
-            WATCH LIST
+            {t.shows.tabList}
           </Text>
-          {tab === "WATCH LIST" && <View style={styles.tabUnderline} />}
+          {tab === "list" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
         </Pressable>
         <Pressable style={styles.tabBtn} onPress={goToUpcoming}>
           <Text
-            style={[styles.tabText, tab === "UPCOMING" && styles.tabTextActive]}
+            style={[styles.tabText, tab === "upcoming" && styles.tabTextActive]}
           >
-            UPCOMING
+            {t.shows.tabUpcoming}
           </Text>
-          {tab === "UPCOMING" && <View style={styles.tabUnderline} />}
+          {tab === "upcoming" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
         </Pressable>
       </View>
 
       {loading ? (
         <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
-      ) : tab === "WATCH LIST" ? (
+      ) : tab === "list" ? (
         <ScrollView
           ref={scrollRef}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
+        <Animated.View style={{ opacity: contentFade }}>
           {watchedHistory.length > 0 && (
             <>
               <View style={styles.groupHeaderRow}>
-                <View style={styles.groupHeaderSpacer} />
                 <View style={styles.groupPill}>
-                  <Text style={styles.groupPillText}>WATCHED HISTORY</Text>
+                  <Text style={styles.groupPillText}>{t.shows.history}</Text>
                 </View>
-                <Pressable style={styles.gridBtn}>
-                  <Ionicons name="grid-outline" size={18} color={colors.text} />
-                </Pressable>
               </View>
               {watchedHistory.map((item) => (
                 <EpisodeRow
@@ -498,21 +497,13 @@ export default function ShowsScreen() {
               watchNextY.current = e.nativeEvent.layout.y;
             }}
           >
-            <View style={styles.groupHeaderSpacer} />
             <View style={styles.groupPill}>
-              <Text style={styles.groupPillText}>WATCH NEXT</Text>
+              <Text style={styles.groupPillText}>{t.shows.watchNext}</Text>
             </View>
-            {watchedHistory.length === 0 ? (
-              <Pressable style={styles.gridBtn}>
-                <Ionicons name="grid-outline" size={18} color={colors.text} />
-              </Pressable>
-            ) : (
-              <View style={styles.groupHeaderSpacer} />
-            )}
           </View>
           {watchNext.length === 0 ? (
             <Text style={styles.empty}>
-              Ajoute des séries à suivre pour les voir ici.
+              {t.shows.emptyWatchList}
             </Text>
           ) : (
             watchNext.map((item) => (
@@ -536,11 +527,9 @@ export default function ShowsScreen() {
           {haventStarted.length > 0 && (
             <>
               <View style={styles.groupHeaderRow}>
-                <View style={styles.groupHeaderSpacer} />
                 <View style={styles.groupPill}>
-                  <Text style={styles.groupPillText}>HAVEN'T STARTED</Text>
+                  <Text style={styles.groupPillText}>{t.shows.notStarted}</Text>
                 </View>
-                <View style={styles.groupHeaderSpacer} />
               </View>
               {haventStarted.map((item) => (
                 <EpisodeRow
@@ -558,36 +547,41 @@ export default function ShowsScreen() {
               ))}
             </>
           )}
+        </Animated.View>
         </ScrollView>
+      ) : tracked.length === 0 ? (
+        <View style={styles.fullEmpty}>
+          <Ionicons name="calendar-outline" size={32} color={colors.textFaint} />
+          <Text style={styles.fullEmptyText}>{t.shows.emptyWatchList}</Text>
+        </View>
       ) : (
-        <FlatList
-          ref={upcomingListRef}
-          data={upcomingFlatData}
-          keyExtractor={(row, i) =>
-            row.type === "header"
-              ? `h-${row.key}`
-              : row.type === "empty"
-                ? `e-${i}`
-                : `ep-${row.item.episode.id}`
-          }
-          renderItem={renderUpcomingRow}
-          getItemLayout={(_data, index) => ({
-            length: upcomingRowHeight(upcomingFlatData[index]),
-            offset: upcomingOffsets[index],
-            index,
-          })}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-          onScrollToIndexFailed={({ index }) => {
-            upcomingListRef.current?.scrollToOffset({
-              offset: upcomingOffsets[index] ?? 0,
-              animated: false,
-            });
-          }}
-          ListEmptyComponent={
-            <Text style={styles.empty}>Rien de prévu prochainement.</Text>
-          }
-        />
+        <Animated.View style={{ flex: 1, opacity: contentFade }}>
+          <FlatList
+            ref={upcomingListRef}
+            data={upcomingFlatData}
+            keyExtractor={(row, i) =>
+              row.type === "header"
+                ? `h-${row.key}`
+                : row.type === "empty"
+                  ? `e-${i}`
+                  : `ep-${row.item.episode.id}`
+            }
+            renderItem={renderUpcomingRow}
+            getItemLayout={(_data, index) => ({
+              length: upcomingRowHeight(upcomingFlatData[index]),
+              offset: upcomingOffsets[index],
+              index,
+            })}
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+            onScrollToIndexFailed={({ index }) => {
+              upcomingListRef.current?.scrollToOffset({
+                offset: upcomingOffsets[index] ?? 0,
+                animated: false,
+              });
+            }}
+          />
+        </Animated.View>
       )}
     </View>
   );
@@ -608,10 +602,10 @@ function createStyles(colors: Colors) {
     color: colors.textFaint,
     letterSpacing: 0.4,
   },
-  tabTextActive: { color: colors.black },
+  tabTextActive: { color: colors.accent },
   tabUnderline: {
     height: 2,
-    backgroundColor: colors.black,
+    backgroundColor: colors.accent,
     width: "60%",
     marginTop: 8,
   },
@@ -620,9 +614,8 @@ function createStyles(colors: Colors) {
     height: HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
   },
-  groupHeaderSpacer: { width: 30 },
   groupPill: {
     backgroundColor: colors.pillBg,
     borderRadius: radius.pill,
@@ -635,17 +628,34 @@ function createStyles(colors: Colors) {
     color: colors.textMuted,
     letterSpacing: 0.5,
   },
-  gridBtn: {
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   empty: {
     color: colors.textMuted,
     textAlign: "center",
     height: EMPTY_ROW_HEIGHT,
   },
   upcomingRowWrap: { height: EPISODE_ROW_HEIGHT, overflow: "hidden" },
+  dateHeaderRow: {
+    height: HEADER_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  dateHeaderLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dateHeaderText: {
+    fontWeight: "800",
+    fontSize: 11,
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+  },
+  emptyTodayCard: {
+    height: EMPTY_ROW_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  emptyTodayText: { color: colors.textMuted, fontSize: 13 },
+  fullEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 40 },
+  fullEmptyText: { color: colors.textMuted, textAlign: "center" },
   });
 }

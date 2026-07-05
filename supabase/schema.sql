@@ -130,3 +130,24 @@ create trigger user_movies_set_updated_at
   before update on public.user_movies
   for each row
   execute function public.set_updated_at();
+
+create table if not exists public.user_settings (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  spoiler_mode boolean not null default false,
+  language text not null default 'en' check (language in ('en', 'fr')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.user_settings enable row level security;
+
+create policy "Users manage their own settings"
+  on public.user_settings
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create trigger user_settings_set_updated_at
+  before update on public.user_settings
+  for each row
+  execute function public.set_updated_at();

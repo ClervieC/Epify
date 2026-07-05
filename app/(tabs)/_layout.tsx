@@ -3,6 +3,7 @@ import { Tabs } from "expo-router";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, Colors } from "../../lib/theme";
+import { useLanguage, Translations } from "../../lib/i18n";
 
 interface TabBarProps {
   state: { routes: { key: string; name: string }[]; index: number };
@@ -16,22 +17,26 @@ const ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   profile: "person-outline",
 };
 
-const LABELS: Record<string, string> = {
-  index: "Shows",
-  movies: "Movies",
-  explore: "Explore",
-  profile: "Profile",
-};
+function tabLabels(t: Translations): Record<string, string> {
+  return {
+    index: t.tabs.shows,
+    movies: t.tabs.movies,
+    explore: t.tabs.explore,
+    profile: t.tabs.profile,
+  };
+}
 
 function CustomTabBar({ state, navigation }: TabBarProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
+  const labels = tabLabels(t);
 
   return (
     <View style={styles.bar}>
       {state.routes.map((route, index) => {
         const focused = state.index === index;
-        const color = focused ? colors.black : colors.textFaint;
+        const color = focused ? colors.accent : colors.textFaint;
 
         return (
           <Pressable
@@ -49,7 +54,7 @@ function CustomTabBar({ state, navigation }: TabBarProps) {
             }}
           >
             <Ionicons name={ICONS[route.name]} size={22} color={color} />
-            <Text style={[styles.label, { color }]}>{LABELS[route.name]}</Text>
+            <Text style={[styles.label, { color }]}>{labels[route.name]}</Text>
           </Pressable>
         );
       })}
@@ -58,15 +63,16 @@ function CustomTabBar({ state, navigation }: TabBarProps) {
 }
 
 export default function TabsLayout() {
+  const { t } = useLanguage();
   return (
     <Tabs
       screenOptions={{ headerShown: false }}
       tabBar={(props) => <CustomTabBar {...props} />}
     >
-      <Tabs.Screen name="index" options={{ title: "Shows" }} />
-      <Tabs.Screen name="movies" options={{ title: "Movies" }} />
-      <Tabs.Screen name="explore" options={{ title: "Explore" }} />
-      <Tabs.Screen name="profile" options={{ title: "Profile" }} />
+      <Tabs.Screen name="index" options={{ title: t.tabs.shows }} />
+      <Tabs.Screen name="movies" options={{ title: t.tabs.movies }} />
+      <Tabs.Screen name="explore" options={{ title: t.tabs.explore }} />
+      <Tabs.Screen name="profile" options={{ title: t.tabs.profile }} />
     </Tabs>
   );
 }

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, PropsWithChildren } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { useColors, radius, Colors } from "../lib/theme";
+import { useLanguage } from "../lib/i18n";
 
 type RewatchChoice = "unwatch" | "rewatch";
 
@@ -15,6 +16,7 @@ export function RewatchPromptProvider({ children }: PropsWithChildren) {
   const resolver = useRef<((choice: RewatchChoice) => void) | null>(null);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { t } = useLanguage();
 
   const askRewatch = useCallback(() => {
     return new Promise<RewatchChoice>((resolve) => {
@@ -35,13 +37,13 @@ export function RewatchPromptProvider({ children }: PropsWithChildren) {
       {visible && (
         <Pressable style={styles.backdrop} onPress={() => choose("unwatch")}>
           <Pressable style={styles.card} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.title}>Tu as déjà marqué cet épisode comme vu</Text>
-            <Text style={styles.subtitle}>Qu'est-ce que tu veux faire ?</Text>
+            <Text style={styles.title}>{t.rewatchPrompt.alreadyWatched}</Text>
+            <Text style={styles.subtitle}>{t.rewatchPrompt.whatToDo}</Text>
             <Pressable style={styles.optionBtn} onPress={() => choose("unwatch")}>
-              <Text style={styles.optionText}>Je ne l'ai pas regardé</Text>
+              <Text style={styles.optionText}>{t.rewatchPrompt.unwatch}</Text>
             </Pressable>
             <Pressable style={[styles.optionBtn, styles.optionBtnPrimary]} onPress={() => choose("rewatch")}>
-              <Text style={[styles.optionText, styles.optionTextPrimary]}>Je l'ai revu</Text>
+              <Text style={[styles.optionText, styles.optionTextPrimary]}>{t.rewatchPrompt.rewatch}</Text>
             </Pressable>
           </Pressable>
         </Pressable>
