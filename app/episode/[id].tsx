@@ -10,6 +10,7 @@ import {
   Image,
   ActivityIndicator,
   Share,
+  Platform,
   useWindowDimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
@@ -17,6 +18,8 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { GestureDetector } from "react-native-gesture-handler";
+import Reanimated from "react-native-reanimated";
 import { getShow, getShowCast, getShowEpisodes, CastMember, TVMazeEpisode, TVMazeShow } from "../../lib/tvmaze";
 import { getCachedEpisodes, getCachedShow, getCachedWatchedEpisodes } from "../../lib/showDataCache";
 import {
@@ -29,7 +32,7 @@ import {
 } from "../../lib/userShows";
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
-import { useScalePress, useMountIn } from "../../lib/animations";
+import { useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { CommentsSection } from "../../components/CommentsSection";
 import { CharacterVote } from "../../components/CharacterVote";
@@ -57,6 +60,12 @@ const FEELING_EMOJIS = [
 ] as const;
 
 const MAX_DOTS = 5;
+const SIDEBAR_WIDTH = 340;
+// Left/right offset (16) + button width (44) + a small gap, so the floating
+// prev/next buttons on desktop web never sit on top of text.
+const SIDE_NAV_INSET = 76;
+const SIDEBAR_HEADER_HEIGHT = 32;
+const SIDEBAR_ROW_HEIGHT = 72;
 
 function stripHtml(html: string | null) {
   if (!html) return "";
@@ -82,6 +91,14 @@ export default function EpisodeDetailScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, spoilerMode } = useLanguage();
+  // A horizontal swipe-paged list with vertical scrolling content nested
+  // inside works fine with real touch input (native, or an actual mobile
+  // browser), but on a desktop browser the mouse wheel gets captured by the
+  // horizontal scroller and never reaches the vertical content underneath —
+  // there's no way to scroll down at all. Wide viewports (desktop web) skip
+  // the horizontal pager entirely and show one episode with prev/next
+  // buttons instead, avoiding the nested-scroll conflict altogether.
+  const isDesktopWeb = Platform.OS === "web" && width >= 700;
 
   useFocusEffect(
     useCallback(() => {
@@ -120,7 +137,7 @@ export default function EpisodeDetailScreen() {
   // briefly. Runs once per episode open (hasScrolledToInitial is reset in the
   // focus effect above), not on every currentIndex change from swiping.
   useEffect(() => {
-    if (loading || hasScrolledToInitial.current) return;
+    if (isDesktopWeb || loading || hasScrolledToInitial.current) return;
     hasScrolledToInitial.current = true;
     const targetIndex = currentIndex;
     const attempt = () => listRef.current?.scrollToOffset({ offset: targetIndex * width, animated: false });
@@ -138,6 +155,33 @@ export default function EpisodeDetailScreen() {
     const index = Math.round(e.nativeEvent.contentOffset.x / width);
     setCurrentIndex((prev) => (prev === index ? prev : index));
   }
+
+  // Only used by the desktop sidebar, but computed unconditionally since
+  // hooks can't be called after the early loading return below.
+  const seasonGroups = useMemo(() => {
+    const bySeason = new Map<number, TVMazeEpisode[]>();
+    for (const ep of episodes) {
+      if (!bySeason.has(ep.season)) bySeason.set(ep.season, []);
+      bySeason.get(ep.season)!.push(ep);
+    }
+    return [...bySeason.entries()].sort((a, b) => a[0] - b[0]);
+  }, [episodes]);
+
+  function goToIndex(i: number) {
+    setCurrentIndex(Math.max(0, Math.min(episodes.length - 1, i)));
+  }
+
+  // Desktop web only (see isDesktopWeb below) — left/right arrow keys move
+  // between episodes the same way the on-screen prev/next buttons do.
+  useEffect(() => {
+    if (!isDesktopWeb) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "ArrowLeft") goToIndex(currentIndex - 1);
+      else if (e.key === "ArrowRight") goToIndex(currentIndex + 1);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isDesktopWeb, currentIndex, episodes.length]);
 
   async function toggleWatched(episode: TVMazeEpisode) {
     const isWatched = !!watchedMap[episode.id];
@@ -195,6 +239,81 @@ export default function EpisodeDetailScreen() {
   dotStart = Math.max(0, dotEnd - MAX_DOTS);
   const dotIndices = Array.from({ length: dotEnd - dotStart }, (_, i) => dotStart + i);
 
+  if (isDesktopWeb) {
+    const currentEpisode = episodes[currentIndex];
+    const mainWidth = width - SIDEBAR_WIDTH;
+    const atStart = currentIndex === 0;
+    const atEnd = currentIndex === episodes.length - 1;
+    return (
+      <View style={styles.container}>
+        <View style={[styles.overlay, { right: SIDEBAR_WIDTH }]} pointerEvents="box-none">
+          <View style={styles.overlayTopRow}>
+            <Pressable style={styles.iconBtn} onPress={() => router.replace("/(tabs)")}>
+              <Ionicons name="chevron-down" size={22} color="#fff" />
+            </Pressable>
+            <Pressable style={styles.iconBtn} onPress={() => shareEpisode(currentEpisode)}>
+              <Ionicons name="share-outline" size={20} color="#fff" />
+            </Pressable>
+          </View>
+          {show && (
+            <Pressable style={styles.showPill} onPress={() => router.push(`/show/${show.id}`)}>
+              <Text style={styles.showPillText}>{show.name.toUpperCase()}</Text>
+              <Ionicons name="chevron-forward" size={12} color="#111" />
+            </Pressable>
+          )}
+        </View>
+
+        <Pressable
+          style={[styles.sideNavBtn, styles.sideNavBtnLeft, atStart && styles.sideNavBtnDisabled]}
+          onPress={() => goToIndex(currentIndex - 1)}
+          disabled={atStart}
+        >
+          <Ionicons name="chevron-back" size={22} color="#fff" />
+        </Pressable>
+        <Pressable
+          style={[styles.sideNavBtn, styles.sideNavBtnRight, atEnd && styles.sideNavBtnDisabled]}
+          onPress={() => goToIndex(currentIndex + 1)}
+          disabled={atEnd}
+        >
+          <Ionicons name="chevron-forward" size={22} color="#fff" />
+        </Pressable>
+
+        <View style={styles.desktopLayout}>
+          <View style={{ width: mainWidth }}>
+            <EpisodePage
+              key={currentEpisode.id}
+              episode={currentEpisode}
+              showId={showIdNum}
+              cast={cast}
+              width={mainWidth}
+              watched={watchedMap[currentEpisode.id] ?? null}
+              remaining={remaining}
+              spoilerMode={spoilerMode}
+              active
+              sideInset={SIDE_NAV_INSET}
+              onToggleWatched={() => toggleWatched(currentEpisode)}
+              onRewatch={() => rewatchEpisode(currentEpisode)}
+              onRate={(n) => setRating(currentEpisode, n)}
+              onFeeling={(key) => setFeeling(currentEpisode, key)}
+              colors={colors}
+              styles={styles}
+              t={t}
+            />
+          </View>
+          <EpisodeSidebar
+            seasonGroups={seasonGroups}
+            currentIndex={currentIndex}
+            watchedMap={watchedMap}
+            onSelect={goToIndex}
+            colors={colors}
+            styles={styles}
+            t={t}
+          />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.overlay} pointerEvents="box-none">
@@ -220,16 +339,26 @@ export default function EpisodeDetailScreen() {
       </View>
 
       <FlatList
+        style={styles.episodesList}
         ref={listRef}
         data={episodes}
         keyExtractor={(ep) => String(ep.id)}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
+        // Virtualization only renders a small window of pages around index 0
+        // by default — if the tapped episode (e.g. S3E2) falls outside that
+        // window, scrollToOffset moves the viewport to the right pixel
+        // offset before that page has actually been created, landing on
+        // whatever nearby page IS rendered instead. Rendering every episode
+        // page up front removes that race entirely; episode counts per show
+        // are small enough (rarely more than a couple hundred) for this to
+        // be cheap.
+        initialNumToRender={episodes.length}
         getItemLayout={(_data, index) => ({ length: width, offset: width * index, index })}
         onScroll={onScroll}
         scrollEventThrottle={16}
-        renderItem={({ item: episode }) => (
+        renderItem={({ item: episode, index }) => (
           <EpisodePage
             episode={episode}
             showId={showIdNum}
@@ -238,6 +367,10 @@ export default function EpisodeDetailScreen() {
             watched={watchedMap[episode.id] ?? null}
             remaining={remaining}
             spoilerMode={spoilerMode}
+            // Every page is mounted up front (see initialNumToRender above),
+            // but comments/votes/feelings are still only worth fetching for
+            // the page you're actually on or about to swipe to.
+            active={Math.abs(index - currentIndex) <= 1}
             onToggleWatched={() => toggleWatched(episode)}
             onRewatch={() => rewatchEpisode(episode)}
             onRate={(n) => setRating(episode, n)}
@@ -259,6 +392,102 @@ export default function EpisodeDetailScreen() {
 
 type EpisodeStyles = ReturnType<typeof createStyles>;
 
+type SidebarRow =
+  | { type: "header"; season: number }
+  | { type: "episode"; episode: TVMazeEpisode; index: number };
+
+function EpisodeSidebar({
+  seasonGroups,
+  currentIndex,
+  watchedMap,
+  onSelect,
+  colors,
+  styles,
+  t,
+}: {
+  seasonGroups: [number, TVMazeEpisode[]][];
+  currentIndex: number;
+  watchedMap: Record<number, WatchedEpisode | null>;
+  onSelect: (index: number) => void;
+  colors: Colors;
+  styles: EpisodeStyles;
+  t: Translations;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  const hasScrolledOnce = useRef(false);
+
+  // Fixed row heights let the currently open episode be scrolled into view
+  // by computed offset, without waiting on onLayout measurement.
+  const { rows, currentOffset } = useMemo(() => {
+    const rows: SidebarRow[] = [];
+    let index = 0;
+    for (const [season, eps] of seasonGroups) {
+      rows.push({ type: "header", season });
+      for (const ep of eps) {
+        rows.push({ type: "episode", episode: ep, index });
+        index += 1;
+      }
+    }
+    let acc = 0;
+    let currentOffset = 0;
+    for (const row of rows) {
+      if (row.type === "episode" && row.index === currentIndex) currentOffset = acc;
+      acc += row.type === "header" ? SIDEBAR_HEADER_HEIGHT : SIDEBAR_ROW_HEIGHT;
+    }
+    return { rows, currentOffset };
+  }, [seasonGroups, currentIndex]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, currentOffset - SIDEBAR_ROW_HEIGHT * 2),
+      animated: hasScrolledOnce.current,
+    });
+    hasScrolledOnce.current = true;
+  }, [currentOffset]);
+
+  return (
+    <View style={styles.sidebar}>
+      <Text style={styles.sidebarTitle}>{t.showDetail.episodes}</Text>
+      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
+        {rows.map((row) => {
+          if (row.type === "header") {
+            return (
+              <Text key={`h-${row.season}`} style={styles.sidebarSeasonHeader}>
+                {t.showDetail.season(row.season)}
+              </Text>
+            );
+          }
+          const ep = row.episode;
+          const selected = row.index === currentIndex;
+          const isWatched = !!watchedMap[ep.id];
+          return (
+            <Pressable
+              key={ep.id}
+              style={[styles.sidebarRow, selected && styles.sidebarRowActive]}
+              onPress={() => onSelect(row.index)}
+            >
+              {ep.image ? (
+                <Image source={{ uri: ep.image.medium }} style={styles.sidebarThumb} />
+              ) : (
+                <View style={[styles.sidebarThumb, { backgroundColor: colors.backgroundAlt }]} />
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sidebarEpisodeCode}>
+                  S{String(ep.season).padStart(2, "0")}E{String(ep.number).padStart(2, "0")}
+                </Text>
+                <Text style={styles.sidebarEpisodeTitle} numberOfLines={1}>
+                  {ep.name}
+                </Text>
+              </View>
+              {isWatched && <Ionicons name="checkmark-circle" size={16} color={colors.green} />}
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
 function EpisodePage({
   episode,
   showId,
@@ -267,6 +496,8 @@ function EpisodePage({
   watched,
   remaining,
   spoilerMode,
+  active,
+  sideInset,
   onToggleWatched,
   onRewatch,
   onRate,
@@ -282,6 +513,8 @@ function EpisodePage({
   watched: WatchedEpisode | null;
   remaining: number | null;
   spoilerMode: boolean;
+  active: boolean;
+  sideInset?: number;
   onToggleWatched: () => void;
   onRewatch: () => void;
   onRate: (value: number) => void;
@@ -292,6 +525,10 @@ function EpisodePage({
 }) {
   const bodyIn = useMountIn();
   const unlocked = !!watched || spoilerMode;
+  const router = useRouter();
+  const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(() =>
+    router.replace("/(tabs)")
+  );
 
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [comments, setComments] = useState<EnrichedComment[]>([]);
@@ -301,25 +538,28 @@ function EpisodePage({
   const [myCharacterId, setMyCharacterId] = useState<number | null>(null);
 
   // Comments/votes/feelings are spoiler-sensitive, same as the rest of this
-  // gated section — nothing is fetched until the episode is actually unlocked.
+  // gated section — nothing is fetched until the episode is unlocked. `active`
+  // additionally limits this to the page the user is actually on (or next to)
+  // since every page is mounted up front (see initialNumToRender on the
+  // FlatList) purely to make initial positioning reliable.
   useEffect(() => {
-    if (!unlocked) return;
-    let active = true;
-    supabase.auth.getUser().then(({ data }) => active && setMyUserId(data.user?.id ?? null));
+    if (!unlocked || !active) return;
+    let isCurrent = true;
+    supabase.auth.getUser().then(({ data }) => isCurrent && setMyUserId(data.user?.id ?? null));
     setCommentsLoading(true);
     fetchEpisodeComments(episode.id)
-      .then((data) => active && setComments(data))
-      .finally(() => active && setCommentsLoading(false));
-    fetchEpisodeFeelingCounts(episode.id).then((data) => active && setFeelingCounts(data));
+      .then((data) => isCurrent && setComments(data))
+      .finally(() => isCurrent && setCommentsLoading(false));
+    fetchEpisodeFeelingCounts(episode.id).then((data) => isCurrent && setFeelingCounts(data));
     fetchCharacterVotes(episode.id).then(({ tally, myCharacterId: mine }) => {
-      if (!active) return;
+      if (!isCurrent) return;
       setVoteTally(tally);
       setMyCharacterId(mine);
     });
     return () => {
-      active = false;
+      isCurrent = false;
     };
-  }, [unlocked, episode.id]);
+  }, [unlocked, active, episode.id]);
 
   async function handlePostComment(body: string) {
     await postEpisodeComment(showId, episode.id, body);
@@ -362,27 +602,35 @@ function EpisodePage({
   }
 
   return (
-    <ScrollView style={{ width }} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
-      <View style={styles.hero}>
-        {episode.image ? (
-          <Image source={{ uri: episode.image.original }} style={styles.heroImage} />
-        ) : (
-          <View style={[styles.heroImage, { backgroundColor: colors.backgroundAlt }]} />
-        )}
-        <LinearGradient
-          colors={["transparent", colors.background]}
-          style={styles.heroGradient}
-          pointerEvents="none"
-        />
-        <View style={styles.heroBottom}>
-          <Text style={styles.code}>
-            S{String(episode.season).padStart(2, "0")} · E{String(episode.number).padStart(2, "0")}
-          </Text>
-          <Text style={styles.title}>{episode.name}</Text>
-        </View>
-      </View>
+    <ScrollView style={{ width, height: "100%" }} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+      <GestureDetector gesture={swipeDownGesture}>
+        <Reanimated.View style={[styles.hero, swipeDownStyle]}>
+          {episode.image ? (
+            <Image source={{ uri: episode.image.original }} style={styles.heroImage} />
+          ) : (
+            <View style={[styles.heroImage, { backgroundColor: colors.backgroundAlt }]} />
+          )}
+          <LinearGradient
+            colors={["transparent", colors.background]}
+            style={styles.heroGradient}
+            pointerEvents="none"
+          />
+          <View style={styles.heroBottom}>
+            <Text style={styles.code}>
+              S{String(episode.season).padStart(2, "0")} · E{String(episode.number).padStart(2, "0")}
+            </Text>
+            <Text style={styles.title}>{episode.name}</Text>
+          </View>
+        </Reanimated.View>
+      </GestureDetector>
 
-      <Animated.View style={[styles.sheet, { opacity: bodyIn.opacity, transform: bodyIn.transform }]}>
+      <Animated.View
+        style={[
+          styles.sheet,
+          sideInset ? { paddingLeft: sideInset, paddingRight: sideInset } : null,
+          { opacity: bodyIn.opacity, transform: bodyIn.transform },
+        ]}
+      >
         {remaining !== null && (
           <View style={styles.remainingBadge}>
             <Ionicons name="film-outline" size={13} color={colors.accent} />
@@ -565,6 +813,7 @@ function FeelingChip({
 function createStyles(colors: Colors) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  episodesList: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
   loadingOverlay: {
     position: "absolute",
@@ -600,6 +849,50 @@ function createStyles(colors: Colors) {
     justifyContent: "center",
   },
   dotsRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  sideNavBtn: {
+    position: "absolute",
+    top: "50%",
+    marginTop: -22,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 15,
+  },
+  sideNavBtnLeft: { left: 16 },
+  sideNavBtnRight: { right: SIDEBAR_WIDTH + 16 },
+  sideNavBtnDisabled: { opacity: 0.3 },
+  desktopLayout: { flex: 1, flexDirection: "row" },
+  sidebar: {
+    width: SIDEBAR_WIDTH,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
+    backgroundColor: colors.background,
+    paddingTop: 20,
+  },
+  sidebarTitle: { fontSize: 16, fontWeight: "800", color: colors.text, paddingHorizontal: 16, marginBottom: 8 },
+  sidebarSeasonHeader: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+    paddingHorizontal: 16,
+    height: SIDEBAR_HEADER_HEIGHT,
+    lineHeight: SIDEBAR_HEADER_HEIGHT,
+  },
+  sidebarRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    height: SIDEBAR_ROW_HEIGHT,
+    paddingHorizontal: 16,
+  },
+  sidebarRowActive: { backgroundColor: colors.accentSoft },
+  sidebarThumb: { width: 72, height: 48, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
+  sidebarEpisodeCode: { fontSize: 11, fontWeight: "800", color: colors.textMuted },
+  sidebarEpisodeTitle: { fontSize: 13, fontWeight: "600", color: colors.text, marginTop: 2 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.5)" },
   dotActive: { backgroundColor: colors.accent, width: 18, height: 6, borderRadius: 3 },
   showPill: {

@@ -14,6 +14,8 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { GestureDetector } from "react-native-gesture-handler";
+import Reanimated from "react-native-reanimated";
 import { getShow, getShowCast, getShowEpisodes, CastMember, TVMazeShow, TVMazeEpisode } from "../../lib/tvmaze";
 import { getCachedEpisodes, getCachedShow, getCachedWatchedEpisodes } from "../../lib/showDataCache";
 import {
@@ -37,7 +39,7 @@ import {
 } from "../../lib/userShows";
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
-import { useGrowIn, useFadeIn, useScalePress, useMountIn } from "../../lib/animations";
+import { useGrowIn, useFadeIn, useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { CommentsSection } from "../../components/CommentsSection";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
@@ -89,6 +91,7 @@ export default function ShowDetailScreen() {
   const progressAnim = useRef(new Animated.Value(0)).current;
   const askPreviousEpisodes = usePreviousEpisodesPrompt();
   const askRewatch = useRewatchPrompt();
+  const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(() => router.back());
 
   const load = useCallback(async () => {
     const [showData, episodeData, userShows, watchedData, castData] = await Promise.all([
@@ -371,29 +374,31 @@ export default function ShowDetailScreen() {
   return (
     <View style={styles.screen}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        <View style={styles.hero}>
-          {show.image && <Image source={{ uri: show.image.original }} style={styles.heroImage} />}
-          <LinearGradient colors={["transparent", colors.background]} style={styles.heroGradient} pointerEvents="none" />
-          <View style={styles.heroTopRow}>
-            <Pressable style={styles.iconBtn} onPress={() => router.back()}>
-              <Ionicons name="chevron-down" size={22} color="#fff" />
-            </Pressable>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              {userShow && (
-                <Pressable style={styles.iconBtn} onPress={handleToggleFavorite}>
-                  <Ionicons
-                    name={userShow.is_favorite ? "star" : "star-outline"}
-                    size={19}
-                    color={userShow.is_favorite ? colors.accent : "#fff"}
-                  />
-                </Pressable>
-              )}
-              <Pressable style={styles.iconBtn} onPress={() => setMenuOpen(true)}>
-                <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
+        <GestureDetector gesture={swipeDownGesture}>
+          <Reanimated.View style={[styles.hero, swipeDownStyle]}>
+            {show.image && <Image source={{ uri: show.image.original }} style={styles.heroImage} />}
+            <LinearGradient colors={["transparent", colors.background]} style={styles.heroGradient} pointerEvents="none" />
+            <View style={styles.heroTopRow}>
+              <Pressable style={styles.iconBtn} onPress={() => router.back()}>
+                <Ionicons name="chevron-down" size={22} color="#fff" />
               </Pressable>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {userShow && (
+                  <Pressable style={styles.iconBtn} onPress={handleToggleFavorite}>
+                    <Ionicons
+                      name={userShow.is_favorite ? "star" : "star-outline"}
+                      size={19}
+                      color={userShow.is_favorite ? colors.accent : "#fff"}
+                    />
+                  </Pressable>
+                )}
+                <Pressable style={styles.iconBtn} onPress={() => setMenuOpen(true)}>
+                  <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
+                </Pressable>
+              </View>
             </View>
-          </View>
-        </View>
+          </Reanimated.View>
+        </GestureDetector>
 
         <View style={styles.sheet}>
           <Text style={styles.heroTitle}>{show.name}</Text>

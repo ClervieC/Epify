@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Animated } from "react-native";
+import { Gesture } from "react-native-gesture-handler";
+import { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 
 export function useScalePress(toValue = 0.95) {
   const scale = useRef(new Animated.Value(1)).current;
@@ -52,6 +54,37 @@ export function useFlashPulse() {
   }
 
   return { opacity, flash };
+}
+
+const DISMISS_DISTANCE = 100;
+const DISMISS_VELOCITY = 800;
+
+// Pull-down-to-close, scoped to whatever it's attached to (typically just the
+// hero image) rather than the whole screen — so it doesn't fight the page's
+// own vertical scroll, the same way iOS/Android modals close on a swipe down
+// from their top area.
+export function useSwipeDownToDismiss(onDismiss: () => void) {
+  const translateY = useSharedValue(0);
+
+  const gesture = Gesture.Pan()
+    .activeOffsetY(10)
+    .failOffsetY(-10)
+    .onUpdate((e) => {
+      translateY.value = Math.max(0, e.translationY);
+    })
+    .onEnd((e) => {
+      if (e.translationY > DISMISS_DISTANCE || e.velocityY > DISMISS_VELOCITY) {
+        runOnJS(onDismiss)();
+      } else {
+        translateY.value = withSpring(0, { damping: 20, stiffness: 300 });
+      }
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  return { gesture, animatedStyle };
 }
 
 export function useGrowIn(trigger: unknown) {
