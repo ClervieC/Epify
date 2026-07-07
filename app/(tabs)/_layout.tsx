@@ -1,13 +1,15 @@
-import { useMemo } from "react";
-import { Tabs } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
+import { Tabs, useFocusEffect } from "expo-router";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
+import { fetchUnreadNotificationCount } from "../../lib/notifications";
 
 interface TabBarProps {
   state: { routes: { key: string; name: string }[]; index: number };
   navigation: any;
+  unreadCount: number;
 }
 
 const ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -26,7 +28,7 @@ function tabLabels(t: Translations): Record<string, string> {
   };
 }
 
-function CustomTabBar({ state, navigation }: TabBarProps) {
+function CustomTabBar({ state, navigation, unreadCount }: TabBarProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -60,7 +62,10 @@ function CustomTabBar({ state, navigation }: TabBarProps) {
               }
             }}
           >
-            <Ionicons name={ICONS[route.name]} size={22} color={color} />
+            <View>
+              <Ionicons name={ICONS[route.name]} size={22} color={color} />
+              {route.name === "profile" && unreadCount > 0 && <View style={styles.badge} />}
+            </View>
             <Text style={[styles.label, { color }]}>{labels[route.name]}</Text>
           </Pressable>
         );
@@ -71,10 +76,21 @@ function CustomTabBar({ state, navigation }: TabBarProps) {
 
 export default function TabsLayout() {
   const { t } = useLanguage();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Refetches whenever the whole (tabs) group regains focus — covers app
+  // start, switching tabs, and coming back from the notifications screen
+  // (a stack push outside the tab navigator, so it doesn't remount this).
+  useFocusEffect(
+    useCallback(() => {
+      fetchUnreadNotificationCount().then(setUnreadCount);
+    }, [])
+  );
+
   return (
     <Tabs
       screenOptions={{ headerShown: false }}
-      tabBar={(props) => <CustomTabBar {...props} />}
+      tabBar={(props) => <CustomTabBar {...(props as any)} unreadCount={unreadCount} />}
     >
       <Tabs.Screen name="index" options={{ title: t.tabs.shows }} />
       <Tabs.Screen name="movies" options={{ title: t.tabs.movies }} />
@@ -103,6 +119,15 @@ function createStyles(colors: Colors) {
     label: {
       fontSize: 11,
       fontWeight: "600",
+    },
+    badge: {
+      position: "absolute",
+      top: -2,
+      right: -4,
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: colors.red,
     },
   });
 }

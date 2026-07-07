@@ -266,3 +266,98 @@ create trigger follows_notify
   after insert on public.follows
   for each row
   execute function public.notify_on_follow();
+
+-- Comments on a show (target_type='show') or a specific episode
+-- (target_type='episode', tvmaze_episode_id set). Episode comments always
+-- carry the show id too, alongside the episode id, so a client can query/
+-- delete by show without a join. Same read-everyone/write-your-own shape as
+-- user_shows/watched_episodes above; the client is responsible for hiding
+-- episode comments behind spoiler mode until the episode is watched, the same
+-- way it already gates watched-episode data.
+create type comment_target as enum ('show', 'episode');
+
+create table if not exists public.comments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  target_type comment_target not null,
+  tvmaze_show_id integer not null,
+  tvmaze_episode_id integer,
+  body text not null check (char_length(trim(body)) between 1 and 2000),
+  created_at timestamptz not null default now(),
+  check (target_type = 'episode' or tvmaze_episode_id is null),
+  check (target_type = 'show' or tvmaze_episode_id is not null)
+);
+
+alter table public.comments enable row level security;
+
+create policy "Users manage their own comments"
+  on public.comments
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Comments are viewable by authenticated users"
+  on public.comments
+  for select
+  using (auth.role() = 'authenticated');
+
+create index if not exists comments_show_idx
+  on public.comments (tvmaze_show_id, target_type, created_at);
+create index if not exists comments_episode_idx
+  on public.comments (tvmaze_episode_id)
+  where tvmaze_episode_id is not null;
+
+-- One reaction (heart) per user per comment — toggled on/off, not a pick from
+-- multiple reaction types.
+create table if not exists public.comment_reactions (
+  comment_id uuid not null references public.comments (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (comment_id, user_id)
+);
+
+alter table public.comment_reactions enable row level security;
+
+create policy "Users manage their own comment reactions"
+  on public.comment_reactions
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Comment reactions are viewable by authenticated users"
+  on public.comment_reactions
+  for select
+  using (auth.role() = 'authenticated');
+
+-- One active "favorite character of this episode" vote per user per episode —
+-- voting again just replaces it (upsert on the primary key). Character/person
+-- name and image are denormalized at vote time so the tally stays renderable
+-- even if a later cast fetch drops or reorders that person.
+create table if not exists public.character_votes (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  tvmaze_show_id integer not null,
+  tvmaze_episode_id integer not null,
+  person_id integer not null,
+  person_name text not null,
+  person_image text,
+  character_id integer not null,
+  character_name text not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, tvmaze_episode_id)
+);
+
+alter table public.character_votes enable row level security;
+
+create policy "Users manage their own character votes"
+  on public.character_votes
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Character votes are viewable by authenticated users"
+  on public.character_votes
+  for select
+  using (auth.role() = 'authenticated');
+
+create index if not exists character_votes_episode_idx
+  on public.character_votes (tvmaze_episode_id);

@@ -194,6 +194,13 @@ export default function ShowsScreen() {
     setHasMoreHistory(true);
     setUpcomingPastDays(UPCOMING_INITIAL_PAST_DAYS);
     setLoadGeneration((g) => g + 1);
+    // The FlatLists below remount at offset 0 on every load (see loadGeneration
+    // in their key), but these refs weren't reset with them — leaving a stale
+    // scroll position from before the refresh made onWatchListScroll think it
+    // was scrolling toward the top on the very next scroll event, spuriously
+    // re-triggering the history/past-upcoming load.
+    watchListScrollY.current = 0;
+    upcomingScrollY.current = 0;
   }, []);
 
   useFocusEffect(

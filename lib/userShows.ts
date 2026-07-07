@@ -394,6 +394,26 @@ export async function rateEpisode(tvmazeEpisodeId: number, rating: number | null
   if (error) throw error;
 }
 
+// Aggregate, anonymous count of how everyone who's watched this episode felt
+// about it — only the `feeling` column is selected, never the full row (no
+// user_id, rating, or watch history leaks out), same spirit as the
+// public-profile episode count query above.
+export async function fetchEpisodeFeelingCounts(episodeId: number): Promise<Record<string, number>> {
+  const { data, error } = await supabase
+    .from("watched_episodes")
+    .select("feeling")
+    .eq("tvmaze_episode_id", episodeId)
+    .not("feeling", "is", null);
+  if (error) throw error;
+
+  const counts: Record<string, number> = {};
+  for (const row of data as { feeling: string | null }[]) {
+    if (!row.feeling) continue;
+    counts[row.feeling] = (counts[row.feeling] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export async function incrementRewatch(tvmazeEpisodeId: number, currentTimesWatched: number) {
   const { data, error } = await supabase
     .from("watched_episodes")

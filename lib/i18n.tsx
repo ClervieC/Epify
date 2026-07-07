@@ -122,7 +122,6 @@ const en = {
     newListPlaceholder: "New list",
     cast: "Cast",
     comments: "Comments",
-    commentsSoon: "Coming soon",
   },
   episodeDetail: {
     notWatched: "Not watched yet",
@@ -130,9 +129,18 @@ const en = {
     remaining: (n: number) => `${n} episode${n > 1 ? "s" : ""} left`,
     yourRating: "Your rating",
     howDidYouFeel: "How did it make you feel?",
+    othersFelt: "How others felt",
     comments: "Comments",
-    commentsSoon: "Coming soon",
     unwatchedPrompt: "Mark this episode as watched to rate it, react, and see comments.",
+  },
+  comments: {
+    placeholder: "Add a comment...",
+    empty: "No comments yet. Be the first!",
+    unknownUser: "Someone",
+  },
+  characterVote: {
+    title: "Favorite character",
+    voteCount: (n: number) => `${n} vote${n > 1 ? "s" : ""}`,
   },
   feelings: {
     lol: "Hilarious",
@@ -302,7 +310,6 @@ const fr: typeof en = {
     newListPlaceholder: "Nouvelle liste",
     cast: "Acteurs",
     comments: "Commentaires",
-    commentsSoon: "Bientôt disponible",
   },
   episodeDetail: {
     notWatched: "Pas encore vu",
@@ -310,9 +317,18 @@ const fr: typeof en = {
     remaining: (n: number) => `${n} épisode${n > 1 ? "s" : ""} restant${n > 1 ? "s" : ""}`,
     yourRating: "Ta note",
     howDidYouFeel: "Comment tu l'as vécu ?",
+    othersFelt: "Le ressenti des autres",
     comments: "Commentaires",
-    commentsSoon: "Bientôt disponible",
     unwatchedPrompt: "Marque l'épisode comme vu pour le noter, réagir et voir les commentaires.",
+  },
+  comments: {
+    placeholder: "Ajouter un commentaire...",
+    empty: "Aucun commentaire pour l'instant. Sois le premier !",
+    unknownUser: "Quelqu'un",
+  },
+  characterVote: {
+    title: "Personnage préféré",
+    voteCount: (n: number) => `${n} vote${n > 1 ? "s" : ""}`,
   },
   feelings: {
     lol: "Hilarant",

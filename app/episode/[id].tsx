@@ -17,13 +17,36 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { getShow, getShowEpisodes, TVMazeEpisode, TVMazeShow } from "../../lib/tvmaze";
+import { getShow, getShowCast, getShowEpisodes, CastMember, TVMazeEpisode, TVMazeShow } from "../../lib/tvmaze";
 import { getCachedEpisodes, getCachedShow, getCachedWatchedEpisodes } from "../../lib/showDataCache";
-import { fetchWatchedEpisodes, incrementRewatch, rateEpisode, setEpisodeWatched, WatchedEpisode } from "../../lib/userShows";
+import {
+  fetchEpisodeFeelingCounts,
+  fetchWatchedEpisodes,
+  incrementRewatch,
+  rateEpisode,
+  setEpisodeWatched,
+  WatchedEpisode,
+} from "../../lib/userShows";
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useScalePress, useMountIn } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
+import { CommentsSection } from "../../components/CommentsSection";
+import { CharacterVote } from "../../components/CharacterVote";
+import { supabase } from "../../lib/supabase";
+import {
+  deleteComment,
+  fetchEpisodeComments,
+  postEpisodeComment,
+  toggleCommentReaction,
+  EnrichedComment,
+} from "../../lib/comments";
+import {
+  fetchCharacterVotes,
+  removeCharacterVote,
+  voteForCharacter,
+  CharacterVoteTally,
+} from "../../lib/characterVotes";
 
 const FEELING_EMOJIS = [
   { key: "lol", emoji: "😂" },
@@ -49,9 +72,11 @@ export default function EpisodeDetailScreen() {
 
   const [show, setShow] = useState<TVMazeShow | null>(null);
   const [episodes, setEpisodes] = useState<TVMazeEpisode[]>([]);
+  const [cast, setCast] = useState<CastMember[]>([]);
   const [watchedMap, setWatchedMap] = useState<Record<number, WatchedEpisode | null>>({});
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [positioned, setPositioned] = useState(false);
   const listRef = useRef<FlatList<TVMazeEpisode>>(null);
   const hasScrolledToInitial = useRef(false);
   const colors = useColors();
@@ -62,15 +87,18 @@ export default function EpisodeDetailScreen() {
     useCallback(() => {
       let active = true;
       setLoading(true);
+      setPositioned(false);
       hasScrolledToInitial.current = false;
       Promise.all([
         showIdNum ? getCachedShow(showIdNum, () => getShow(showIdNum)) : Promise.resolve(null),
         showIdNum ? getCachedEpisodes(showIdNum, () => getShowEpisodes(showIdNum)) : Promise.resolve([]),
         showIdNum ? getCachedWatchedEpisodes(showIdNum, () => fetchWatchedEpisodes(showIdNum)) : Promise.resolve([]),
-      ]).then(([sh, eps, watchedList]) => {
+        showIdNum ? getShowCast(showIdNum).catch(() => []) : Promise.resolve([]),
+      ]).then(([sh, eps, watchedList, castData]) => {
         if (!active) return;
         setShow(sh);
         setEpisodes(eps);
+        setCast(castData);
         const map: Record<number, WatchedEpisode | null> = {};
         for (const w of watchedList) map[w.tvmaze_episode_id] = w;
         setWatchedMap(map);
@@ -84,19 +112,26 @@ export default function EpisodeDetailScreen() {
     }, [initialEpisodeId, showIdNum])
   );
 
-  // FlatList's initialScrollIndex is only honored on the very first layout and
-  // is unreliable (especially on web) once episodes/width settle a moment
-  // later — without this, opening an episode sometimes lands on a neighboring
-  // page instead of the one that was actually tapped. Runs once per episode
-  // open (hasScrolledToInitial is reset in the focus effect above), not on
-  // every currentIndex change from the user swiping between episodes.
+  // FlatList's initialScrollIndex prop is unreliable for this — especially on
+  // web, it's been observed landing on the wrong page for larger indexes (e.g.
+  // opening S3E2 would show S1E2 instead), so positioning is done imperatively
+  // here instead and the FlatList is kept hidden (see `positioned` below)
+  // until it lands correctly, so the wrong episode is never visible even
+  // briefly. Runs once per episode open (hasScrolledToInitial is reset in the
+  // focus effect above), not on every currentIndex change from swiping.
   useEffect(() => {
     if (loading || hasScrolledToInitial.current) return;
     hasScrolledToInitial.current = true;
     const targetIndex = currentIndex;
     const attempt = () => listRef.current?.scrollToOffset({ offset: targetIndex * width, animated: false });
-    requestAnimationFrame(() => requestAnimationFrame(attempt));
-    setTimeout(attempt, 80);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      attempt();
+      setPositioned(true);
+    }));
+    setTimeout(() => {
+      attempt();
+      setPositioned(true);
+    }, 80);
   }, [loading, currentIndex, width]);
 
   function onScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
@@ -191,16 +226,14 @@ export default function EpisodeDetailScreen() {
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        initialScrollIndex={currentIndex}
         getItemLayout={(_data, index) => ({ length: width, offset: width * index, index })}
         onScroll={onScroll}
         scrollEventThrottle={16}
-        onScrollToIndexFailed={({ index }) => {
-          requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: index * width, animated: false }));
-        }}
         renderItem={({ item: episode }) => (
           <EpisodePage
             episode={episode}
+            showId={showIdNum}
+            cast={cast}
             width={width}
             watched={watchedMap[episode.id] ?? null}
             remaining={remaining}
@@ -215,6 +248,11 @@ export default function EpisodeDetailScreen() {
           />
         )}
       />
+      {!positioned && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator color={colors.black} />
+        </View>
+      )}
     </View>
   );
 }
@@ -223,6 +261,8 @@ type EpisodeStyles = ReturnType<typeof createStyles>;
 
 function EpisodePage({
   episode,
+  showId,
+  cast,
   width,
   watched,
   remaining,
@@ -236,6 +276,8 @@ function EpisodePage({
   t,
 }: {
   episode: TVMazeEpisode;
+  showId: number;
+  cast: CastMember[];
   width: number;
   watched: WatchedEpisode | null;
   remaining: number | null;
@@ -249,6 +291,75 @@ function EpisodePage({
   t: Translations;
 }) {
   const bodyIn = useMountIn();
+  const unlocked = !!watched || spoilerMode;
+
+  const [myUserId, setMyUserId] = useState<string | null>(null);
+  const [comments, setComments] = useState<EnrichedComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [feelingCounts, setFeelingCounts] = useState<Record<string, number>>({});
+  const [voteTally, setVoteTally] = useState<CharacterVoteTally[]>([]);
+  const [myCharacterId, setMyCharacterId] = useState<number | null>(null);
+
+  // Comments/votes/feelings are spoiler-sensitive, same as the rest of this
+  // gated section — nothing is fetched until the episode is actually unlocked.
+  useEffect(() => {
+    if (!unlocked) return;
+    let active = true;
+    supabase.auth.getUser().then(({ data }) => active && setMyUserId(data.user?.id ?? null));
+    setCommentsLoading(true);
+    fetchEpisodeComments(episode.id)
+      .then((data) => active && setComments(data))
+      .finally(() => active && setCommentsLoading(false));
+    fetchEpisodeFeelingCounts(episode.id).then((data) => active && setFeelingCounts(data));
+    fetchCharacterVotes(episode.id).then(({ tally, myCharacterId: mine }) => {
+      if (!active) return;
+      setVoteTally(tally);
+      setMyCharacterId(mine);
+    });
+    return () => {
+      active = false;
+    };
+  }, [unlocked, episode.id]);
+
+  async function handlePostComment(body: string) {
+    await postEpisodeComment(showId, episode.id, body);
+    setComments(await fetchEpisodeComments(episode.id));
+  }
+
+  function handleDeleteComment(id: string) {
+    setComments((prev) => prev.filter((c) => c.id !== id));
+    deleteComment(id).catch(() => fetchEpisodeComments(episode.id).then(setComments));
+  }
+
+  function handleToggleReaction(id: string, currentlyReacted: boolean) {
+    setComments((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, reactedByMe: !currentlyReacted, reactionCount: c.reactionCount + (currentlyReacted ? -1 : 1) }
+          : c
+      )
+    );
+    toggleCommentReaction(id, currentlyReacted).catch(() => fetchEpisodeComments(episode.id).then(setComments));
+  }
+
+  async function handleVote(member: CastMember) {
+    const choice = {
+      personId: member.person.id,
+      personName: member.person.name,
+      personImage: member.person.image?.medium ?? null,
+      characterId: member.character.id,
+      characterName: member.character.name,
+    };
+    setMyCharacterId(member.character.id);
+    await voteForCharacter(showId, episode.id, choice);
+    setVoteTally((await fetchCharacterVotes(episode.id)).tally);
+  }
+
+  async function handleRemoveVote() {
+    setMyCharacterId(null);
+    await removeCharacterVote(episode.id);
+    setVoteTally((await fetchCharacterVotes(episode.id)).tally);
+  }
 
   return (
     <ScrollView style={{ width }} contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
@@ -349,14 +460,46 @@ function EpisodePage({
           </>
         )}
 
-        {(watched || spoilerMode) && (
+        {unlocked && (
           <>
+            {cast.length > 0 && (
+              <>
+                <View style={styles.divider} />
+                <CharacterVote
+                  cast={cast}
+                  tally={voteTally}
+                  myCharacterId={myCharacterId}
+                  onVote={handleVote}
+                  onRemoveVote={handleRemoveVote}
+                />
+              </>
+            )}
+
+            {Object.keys(feelingCounts).length > 0 && (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>{t.episodeDetail.othersFelt}</Text>
+                <View style={styles.feelingsRow}>
+                  {FEELING_EMOJIS.filter((f) => feelingCounts[f.key] > 0).map((f) => (
+                    <View key={f.key} style={styles.feelingTally}>
+                      <Text style={styles.feelingEmoji}>{f.emoji}</Text>
+                      <Text style={styles.feelingTallyCount}>{feelingCounts[f.key]}</Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+
             <View style={styles.divider} />
             <Text style={styles.sectionLabel}>{t.episodeDetail.comments}</Text>
-            <View style={styles.commentsPlaceholder}>
-              <Ionicons name="chatbubble-outline" size={18} color={colors.textFaint} />
-              <Text style={styles.commentsPlaceholderText}>{t.episodeDetail.commentsSoon}</Text>
-            </View>
+            <CommentsSection
+              comments={comments}
+              loading={commentsLoading}
+              myUserId={myUserId}
+              onSubmit={handlePostComment}
+              onDelete={handleDeleteComment}
+              onToggleReaction={handleToggleReaction}
+            />
           </>
         )}
       </Animated.View>
@@ -423,6 +566,17 @@ function createStyles(colors: Colors) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
+  loadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.background,
+    zIndex: 20,
+  },
   overlay: {
     position: "absolute",
     top: 0,
@@ -507,16 +661,8 @@ function createStyles(colors: Colors) {
   feelingChipActive: { backgroundColor: colors.accentSoft },
   feelingEmoji: { fontSize: 26 },
   feelingLabel: { fontSize: 9, fontWeight: "700", color: colors.textMuted },
-  commentsPlaceholder: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: radius.md,
-    paddingVertical: 20,
-  },
-  commentsPlaceholderText: { color: colors.textFaint, fontSize: 13, fontWeight: "600" },
+  feelingTally: { alignItems: "center", gap: 4, padding: 8 },
+  feelingTallyCount: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
   unwatchedPrompt: {
     flexDirection: "row",
     alignItems: "center",

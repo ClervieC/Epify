@@ -1,5 +1,16 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { View, Text, ScrollView, Animated, StyleSheet, ActivityIndicator, Pressable, Image, TextInput } from "react-native";
+import {
+  View,
+  Text,
+  ScrollView,
+  Animated,
+  StyleSheet,
+  ActivityIndicator,
+  Pressable,
+  Image,
+  TextInput,
+  useWindowDimensions,
+} from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -28,8 +39,17 @@ import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useGrowIn, useFadeIn, useScalePress, useMountIn } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
+import { CommentsSection } from "../../components/CommentsSection";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
 import { useRewatchPrompt } from "../../context/RewatchPromptContext";
+import { supabase } from "../../lib/supabase";
+import {
+  deleteComment,
+  fetchShowComments,
+  postShowComment,
+  toggleCommentReaction,
+  EnrichedComment,
+} from "../../lib/comments";
 
 function stripHtml(html: string | null) {
   if (!html) return "";
@@ -53,9 +73,17 @@ export default function ShowDetailScreen() {
   const [listPickerOpen, setListPickerOpen] = useState(false);
   const [lists, setLists] = useState<ShowList[]>([]);
   const [newListName, setNewListName] = useState("");
+  const [showComments, setShowComments] = useState<EnrichedComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
+  const { width: windowWidth } = useWindowDimensions();
+  // Below this, the sheet-from-the-bottom pattern still reads as "mobile
+  // native UI"; above it (tablet/desktop web), a centered dialog looks less
+  // like a phone menu stuck to the edge of a big window.
+  const isWideScreen = windowWidth >= 700;
   const underlineGrow = useGrowIn(tab);
   const contentFade = useFadeIn(!loading);
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -87,6 +115,45 @@ export default function ShowDetailScreen() {
       };
     }, [load])
   );
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMyUserId(data.user?.id ?? null));
+  }, []);
+
+  // Comments are only ever visible on the Info tab, so there's no reason to
+  // fetch them until the user actually switches there.
+  useEffect(() => {
+    if (tab !== "about" || !showId) return;
+    let active = true;
+    setCommentsLoading(true);
+    fetchShowComments(showId)
+      .then((data) => active && setShowComments(data))
+      .finally(() => active && setCommentsLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [tab, showId]);
+
+  async function handlePostShowComment(body: string) {
+    await postShowComment(showId, body);
+    setShowComments(await fetchShowComments(showId));
+  }
+
+  function handleDeleteShowComment(id: string) {
+    setShowComments((prev) => prev.filter((c) => c.id !== id));
+    deleteComment(id).catch(() => fetchShowComments(showId).then(setShowComments));
+  }
+
+  function handleToggleShowCommentReaction(id: string, currentlyReacted: boolean) {
+    setShowComments((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, reactedByMe: !currentlyReacted, reactionCount: c.reactionCount + (currentlyReacted ? -1 : 1) }
+          : c
+      )
+    );
+    toggleCommentReaction(id, currentlyReacted).catch(() => fetchShowComments(showId).then(setShowComments));
+  }
 
   const watchedIds = useMemo(() => new Set(watched.map((w) => w.tvmaze_episode_id)), [watched]);
 
@@ -415,10 +482,14 @@ export default function ShowDetailScreen() {
 
                 <View style={styles.divider} />
                 <Text style={styles.sectionHeader}>{t.showDetail.comments}</Text>
-                <View style={styles.commentsPlaceholder}>
-                  <Ionicons name="chatbubble-outline" size={18} color={colors.textFaint} />
-                  <Text style={styles.commentsPlaceholderText}>{t.showDetail.commentsSoon}</Text>
-                </View>
+                <CommentsSection
+                  comments={showComments}
+                  loading={commentsLoading}
+                  myUserId={myUserId}
+                  onSubmit={handlePostShowComment}
+                  onDelete={handleDeleteShowComment}
+                  onToggleReaction={handleToggleShowCommentReaction}
+                />
               </View>
             ) : (
               <View style={styles.section}>
@@ -476,8 +547,14 @@ export default function ShowDetailScreen() {
       </ScrollView>
 
       {menuOpen && (
-        <Pressable style={styles.modalBackdrop} onPress={() => setMenuOpen(false)}>
-          <Pressable style={styles.menuSheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.modalBackdrop, isWideScreen && styles.modalBackdropWide]}
+          onPress={() => setMenuOpen(false)}
+        >
+          <Pressable
+            style={[styles.menuSheet, isWideScreen && styles.menuSheetWide]}
+            onPress={(e) => e.stopPropagation()}
+          >
             {userShow ? (
               <>
                 <Pressable style={styles.menuItem} onPress={handlePause}>
@@ -538,8 +615,14 @@ export default function ShowDetailScreen() {
       )}
 
       {listPickerOpen && (
-        <Pressable style={styles.modalBackdrop} onPress={() => setListPickerOpen(false)}>
-          <Pressable style={styles.menuSheet} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={[styles.modalBackdrop, isWideScreen && styles.modalBackdropWide]}
+          onPress={() => setListPickerOpen(false)}
+        >
+          <Pressable
+            style={[styles.menuSheet, isWideScreen && styles.menuSheetWide]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <Text style={styles.menuSheetTitle}>{t.showDetail.addToAList}</Text>
             {lists.map((list) => (
               <Pressable key={list.id} style={styles.menuItem} onPress={() => handleAddToList(list.id)}>
@@ -741,16 +824,6 @@ function createStyles(colors: Colors) {
   section: { paddingVertical: 16 },
   sectionHeader: { fontSize: 18, fontWeight: "800", color: colors.text, marginBottom: 12 },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: 20 },
-  commentsPlaceholder: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: radius.md,
-    paddingVertical: 20,
-  },
-  commentsPlaceholderText: { color: colors.textFaint, fontSize: 13, fontWeight: "600" },
   summary: { color: colors.text, fontSize: 14, lineHeight: 21, marginBottom: 12 },
   meta: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
   castCard: { width: 84, marginRight: 12 },
@@ -795,6 +868,14 @@ function createStyles(colors: Colors) {
     backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "flex-end",
   },
+  // On a wide (tablet/desktop web) viewport, a sheet glued to the bottom edge
+  // reads as an unadapted mobile pattern — center it as a regular dialog
+  // instead, same backdrop otherwise.
+  modalBackdropWide: {
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
   menuSheet: {
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.lg,
@@ -802,6 +883,17 @@ function createStyles(colors: Colors) {
     padding: 16,
     paddingBottom: 32,
     gap: 4,
+  },
+  menuSheetWide: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: radius.lg,
+    paddingBottom: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
   },
   menuSheetTitle: { fontSize: 16, fontWeight: "800", color: colors.text, marginBottom: 8 },
   menuItem: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 14 },
