@@ -23,6 +23,12 @@ import {
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useScalePress, useMountIn } from "../../lib/animations";
+import { mapWithConcurrency } from "../../lib/concurrency";
+
+// Most of these are already cached (see lib/tvmaze) after the first visit, but
+// on a cold cache a user who follows many shows would otherwise fire one
+// request per show at once and blow straight through TVmaze's rate limit.
+const GENRE_BIAS_FETCH_CONCURRENCY = 6;
 
 // K-Drama and New Releases are rare in TVmaze's index (ordered by internal
 // ID, roughly chronological by when the show was added — not by premiere
@@ -70,17 +76,17 @@ export default function ExploreScreen() {
         // getShow is cached (see lib/tvmaze), so this is free for shows
         // already opened elsewhere (Watch List, show detail, ...).
         const followed = userShows.filter((s) => s.status !== "dropped");
-        Promise.all(followed.map((s) => getShow(s.tvmaze_id).catch(() => null))).then(
-          (shows) => {
-            if (!active) return;
-            const genres = new Set<string>();
-            for (const s of shows) {
-              if (!s) continue;
-              for (const g of s.genres) genres.add(g);
-            }
-            setPreferredGenres(genres);
-          },
-        );
+        mapWithConcurrency(followed, GENRE_BIAS_FETCH_CONCURRENCY, (s) =>
+          getShow(s.tvmaze_id).catch(() => null),
+        ).then((shows) => {
+          if (!active) return;
+          const genres = new Set<string>();
+          for (const s of shows) {
+            if (!s) continue;
+            for (const g of s.genres) genres.add(g);
+          }
+          setPreferredGenres(genres);
+        });
       });
       // Clear the search on the way out, so coming back to a fresh Explore
       // (from another tab) never shows a stale query/result set.

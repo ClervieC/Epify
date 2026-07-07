@@ -2,32 +2,10 @@ import { parseCSV } from "./csv";
 import { searchShows, getShowEpisodes, lookupShowByTvdbId, TVMazeEpisode, TVMazeShow } from "./tvmaze";
 import { fetchUserShows, upsertUserShow, bulkUpsertWatchedEpisodes, setShowFavorite, ShowStatus } from "./userShows";
 import { bulkUpsertUserMovies } from "./userMovies";
+import { mapWithConcurrency } from "./concurrency";
 
 const TVMAZE_REQUEST_DELAY_MS = 150;
 const IMPORT_CONCURRENCY = 4;
-
-// Runs `worker` over `items` with at most `concurrency` in flight at once, instead of
-// one at a time. TVmaze's rate limit (~20 req/10s) is a floor, not a hard cap, and the
-// client now retries on 429 with backoff — so a few lanes running in parallel finish a
-// large import several times faster without needing to be exactly right about the limit.
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-
-  async function runLane() {
-    while (nextIndex < items.length) {
-      const current = nextIndex++;
-      results[current] = await worker(items[current], current);
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, runLane));
-  return results;
-}
 
 interface TvTimeRow {
   mediaType: string;

@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet } from "react-native";
 import { useColors, radius, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 
-type RewatchChoice = "unwatch" | "rewatch";
+type RewatchChoice = "unwatch" | "rewatch" | "cancel";
 
 interface RewatchPromptContextValue {
   askRewatch: () => Promise<RewatchChoice>;
@@ -35,7 +35,9 @@ export function RewatchPromptProvider({ children }: PropsWithChildren) {
     <RewatchPromptContext.Provider value={{ askRewatch }}>
       {children}
       {visible && (
-        <Pressable style={styles.backdrop} onPress={() => choose("unwatch")}>
+        // Dismissing by tapping outside the card is a cancel, not a choice —
+        // only an explicit option button should change the episode's state.
+        <Pressable style={styles.backdrop} onPress={() => choose("cancel")}>
           <Pressable style={styles.card} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.title}>{t.rewatchPrompt.alreadyWatched}</Text>
             <Text style={styles.subtitle}>{t.rewatchPrompt.whatToDo}</Text>

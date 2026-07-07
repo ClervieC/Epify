@@ -34,6 +34,7 @@ export function WatchedCheck({ watched, timesWatched, onToggle, onRewatch, size 
       return;
     }
     const choice = await askRewatch();
+    if (choice === "cancel") return;
     bounce();
     if (choice === "rewatch") {
       onRewatch?.();

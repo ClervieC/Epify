@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { mapWithConcurrency } from "./concurrency";
 
 const BASE_URL = "https://api.tvmaze.com";
 const CACHE_PREFIX = "tvmaze_cache:";
@@ -102,6 +103,10 @@ export interface ScheduleEntry {
 }
 
 const MAX_RETRIES = 3;
+
+// Keeps bulk pool/show fetches comfortably under TVmaze's ~20 req/10s rate
+// limit even when the list of pages/shows to fetch is much larger than that.
+const POOL_FETCH_CONCURRENCY = 6;
 
 // TVmaze rate-limits at ~20 calls/10s per IP, and being a free public API it
 // occasionally has brief outages/5xx blips or the request just times out on
@@ -226,8 +231,8 @@ export async function getShowsPool(pageCount: number) {
           Math.round((i * lastPage) / (pageCount - 1)),
         );
   const uniquePages = Array.from(new Set(pages));
-  const results = await Promise.all(
-    uniquePages.map((p) => getShowsIndex(p).catch(() => [])),
+  const results = await mapWithConcurrency(uniquePages, POOL_FETCH_CONCURRENCY, (p) =>
+    getShowsIndex(p).catch(() => []),
   );
   return results.flat();
 }

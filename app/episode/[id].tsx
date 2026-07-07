@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -83,6 +83,21 @@ export default function EpisodeDetailScreen() {
       };
     }, [initialEpisodeId, showIdNum])
   );
+
+  // FlatList's initialScrollIndex is only honored on the very first layout and
+  // is unreliable (especially on web) once episodes/width settle a moment
+  // later — without this, opening an episode sometimes lands on a neighboring
+  // page instead of the one that was actually tapped. Runs once per episode
+  // open (hasScrolledToInitial is reset in the focus effect above), not on
+  // every currentIndex change from the user swiping between episodes.
+  useEffect(() => {
+    if (loading || hasScrolledToInitial.current) return;
+    hasScrolledToInitial.current = true;
+    const targetIndex = currentIndex;
+    const attempt = () => listRef.current?.scrollToOffset({ offset: targetIndex * width, animated: false });
+    requestAnimationFrame(() => requestAnimationFrame(attempt));
+    setTimeout(attempt, 80);
+  }, [loading, currentIndex, width]);
 
   function onScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
     const index = Math.round(e.nativeEvent.contentOffset.x / width);

@@ -201,9 +201,14 @@ export async function fetchEpisodeCount(userId?: string) {
 }
 
 export async function fetchWatchedEpisode(episodeId: number) {
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) return null;
+
   const { data, error } = await supabase
     .from("watched_episodes")
     .select("*")
+    .eq("user_id", userId)
     .eq("tvmaze_episode_id", episodeId)
     .maybeSingle();
   if (error) throw error;
@@ -211,9 +216,14 @@ export async function fetchWatchedEpisode(episodeId: number) {
 }
 
 export async function fetchWatchedEpisodes(showId: number) {
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) return [];
+
   const { data, error } = await supabase
     .from("watched_episodes")
     .select("*")
+    .eq("user_id", userId)
     .eq("tvmaze_show_id", showId);
   if (error) throw error;
   return data as WatchedEpisode[];
@@ -300,6 +310,49 @@ export async function setEpisodesWatched(
     { onConflict: "user_id,tvmaze_episode_id" }
   );
   if (error) throw error;
+  invalidateWatchedEpisodes(showId);
+}
+
+export async function setEpisodesUnwatched(showId: number, episodeIds: number[]) {
+  if (episodeIds.length === 0) return;
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("watched_episodes")
+    .delete()
+    .eq("user_id", userId)
+    .in("tvmaze_episode_id", episodeIds);
+  if (error) throw error;
+  invalidateWatchedEpisodes(showId);
+}
+
+// Bulk version of incrementRewatch — used to mark a whole season/show as
+// rewatched at once. times_watched can't be incremented in a single set-based
+// update (each row starts from a different count), so each row gets its own
+// update, run concurrently since a season is at most a few dozen episodes.
+export async function bulkIncrementRewatch(
+  showId: number,
+  episodes: { episodeId: number; timesWatched: number }[]
+) {
+  if (episodes.length === 0) return;
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) throw new Error("Not authenticated");
+
+  const watchedAt = new Date().toISOString();
+  const results = await Promise.all(
+    episodes.map((e) =>
+      supabase
+        .from("watched_episodes")
+        .update({ times_watched: e.timesWatched + 1, watched_at: watchedAt })
+        .eq("user_id", userId)
+        .eq("tvmaze_episode_id", e.episodeId)
+    )
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) throw failed.error;
   invalidateWatchedEpisodes(showId);
 }
 

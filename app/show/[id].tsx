@@ -7,6 +7,7 @@ import { getShow, getShowCast, getShowEpisodes, CastMember, TVMazeShow, TVMazeEp
 import { getCachedEpisodes, getCachedShow, getCachedWatchedEpisodes } from "../../lib/showDataCache";
 import {
   addShowToList,
+  bulkIncrementRewatch,
   createList,
   fetchLists,
   fetchUserShows,
@@ -14,6 +15,7 @@ import {
   incrementRewatch,
   removeUserShow,
   setEpisodeWatched,
+  setEpisodesUnwatched,
   setEpisodesWatched,
   setShowFavorite,
   setShowStatus,
@@ -27,6 +29,7 @@ import { useLanguage, Translations } from "../../lib/i18n";
 import { useGrowIn, useFadeIn, useScalePress, useMountIn } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
+import { useRewatchPrompt } from "../../context/RewatchPromptContext";
 
 function stripHtml(html: string | null) {
   if (!html) return "";
@@ -57,6 +60,7 @@ export default function ShowDetailScreen() {
   const contentFade = useFadeIn(!loading);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const askPreviousEpisodes = usePreviousEpisodesPrompt();
+  const askRewatch = useRewatchPrompt();
 
   const load = useCallback(async () => {
     const [showData, episodeData, userShows, watchedData, castData] = await Promise.all([
@@ -249,6 +253,44 @@ export default function ShowDetailScreen() {
     ]);
   }
 
+  async function unmarkSeasonWatched(eps: TVMazeEpisode[]) {
+    const ids = eps.filter((e) => watchedIds.has(e.id)).map((e) => e.id);
+    if (ids.length === 0) return;
+    await setEpisodesUnwatched(showId, ids);
+    setWatched((prev) => prev.filter((w) => !ids.includes(w.tvmaze_episode_id)));
+  }
+
+  async function rewatchSeason(eps: TVMazeEpisode[]) {
+    const entries = eps
+      .map((e) => watched.find((w) => w.tvmaze_episode_id === e.id))
+      .filter((w): w is WatchedEpisode => !!w);
+    if (entries.length === 0) return;
+    await bulkIncrementRewatch(
+      showId,
+      entries.map((w) => ({ episodeId: w.tvmaze_episode_id, timesWatched: w.times_watched }))
+    );
+    setWatched((prev) =>
+      prev.map((w) =>
+        entries.some((e) => e.tvmaze_episode_id === w.tvmaze_episode_id)
+          ? { ...w, times_watched: w.times_watched + 1 }
+          : w
+      )
+    );
+  }
+
+  // The season checkmark already handles "mark this whole season watched" —
+  // tapping it again once complete offers the same unwatch/rewatch choice as
+  // a single episode's checkmark, just applied to every episode in the season.
+  async function handleSeasonCheckPress(eps: TVMazeEpisode[], complete: boolean) {
+    if (!complete) {
+      await markSeasonWatched(eps);
+      return;
+    }
+    const choice = await askRewatch();
+    if (choice === "rewatch") await rewatchSeason(eps);
+    else if (choice === "unwatch") await unmarkSeasonWatched(eps);
+  }
+
   if (loading || !show) {
     return (
       <View style={styles.center}>
@@ -415,7 +457,7 @@ export default function ShowDetailScreen() {
                       watchedIds={watchedIds}
                       watched={watched}
                       onToggleExpand={() => setExpandedSeason(expanded ? null : seasonNum)}
-                      onMarkSeasonWatched={() => markSeasonWatched(eps)}
+                      onSeasonCheckPress={() => handleSeasonCheckPress(eps, complete)}
                       onToggleEpisode={toggleEpisode}
                       onRewatchEpisode={rewatchEpisode}
                       onOpenEpisode={(ep) =>
@@ -568,7 +610,7 @@ function SeasonSection({
   watchedIds,
   watched,
   onToggleExpand,
-  onMarkSeasonWatched,
+  onSeasonCheckPress,
   onToggleEpisode,
   onRewatchEpisode,
   onOpenEpisode,
@@ -584,7 +626,7 @@ function SeasonSection({
   watchedIds: Set<number>;
   watched: WatchedEpisode[];
   onToggleExpand: () => void;
-  onMarkSeasonWatched: () => void;
+  onSeasonCheckPress: () => void;
   onToggleEpisode: (ep: TVMazeEpisode) => void;
   onRewatchEpisode: (ep: TVMazeEpisode) => void;
   onOpenEpisode: (ep: TVMazeEpisode) => void;
@@ -609,7 +651,7 @@ function SeasonSection({
             style={[styles.seasonCheck, complete && styles.seasonCheckComplete]}
             onPress={(e) => {
               e.stopPropagation();
-              if (!complete) onMarkSeasonWatched();
+              onSeasonCheckPress();
             }}
             hitSlop={8}
           >

@@ -23,6 +23,7 @@ import {
   WatchedEpisode,
 } from "../../lib/userShows";
 import { getCachedEpisodes, getCachedWatchedEpisodes } from "../../lib/showDataCache";
+import { mapWithConcurrency } from "../../lib/concurrency";
 import {
   diffDaysFromToday,
   formatTime,
@@ -71,6 +72,11 @@ type WatchListRow =
   | { type: "watchNextItem"; item: EnrichedEpisode }
   | { type: "notStartedHeader" }
   | { type: "notStartedItem"; item: EnrichedEpisode };
+
+// On a cold cache, fetching every followed show's episodes at once would fire
+// one TVmaze request per show and can blow through their ~20 req/10s rate
+// limit for anyone following more than a handful of shows.
+const TRACKED_SHOW_FETCH_CONCURRENCY = 6;
 
 const HISTORY_PAGE_SIZE = 20;
 // Scrolling within this many pixels of the top triggers loading the next
@@ -176,7 +182,7 @@ export default function ShowsScreen() {
       (s) => s.status === "watching" || s.status === "want_to_watch",
     );
 
-    const results = await Promise.all(followed.map(fetchTrackedShow));
+    const results = await mapWithConcurrency(followed, TRACKED_SHOW_FETCH_CONCURRENCY, fetchTrackedShow);
 
     setTracked(results);
     setLoading(false);
@@ -255,8 +261,22 @@ export default function ShowsScreen() {
   }
 
   function onWatchListScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
-    watchListScrollY.current = e.nativeEvent.contentOffset.y;
-    if (e.nativeEvent.contentOffset.y <= HISTORY_LOAD_THRESHOLD) {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const previousY = watchListScrollY.current;
+    const newY = contentOffset.y;
+    watchListScrollY.current = newY;
+
+    // Only a genuinely scrollable list can meaningfully be "near the top" —
+    // otherwise (e.g. just a couple of shows, nothing to scroll) the offset
+    // sits at 0 permanently and any touch/bounce would spuriously trigger
+    // a history load and jump the page around.
+    const isScrollable = contentSize.height > layoutMeasurement.height + HISTORY_LOAD_THRESHOLD;
+    // Direction matters, not just position: starting a scroll from the very
+    // top and swiping down the page (offset climbing away from 0) passes
+    // through this same threshold zone as actually pulling up toward the
+    // top for older history — only the latter (offset decreasing) means it.
+    const isMovingTowardTop = newY <= previousY;
+    if (isScrollable && isMovingTowardTop && newY <= HISTORY_LOAD_THRESHOLD) {
       loadMoreHistory();
     }
   }
@@ -272,8 +292,14 @@ export default function ShowsScreen() {
   }
 
   function onUpcomingScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
-    upcomingScrollY.current = e.nativeEvent.contentOffset.y;
-    if (e.nativeEvent.contentOffset.y <= UPCOMING_LOAD_THRESHOLD) {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const previousY = upcomingScrollY.current;
+    const newY = contentOffset.y;
+    upcomingScrollY.current = newY;
+
+    const isScrollable = contentSize.height > layoutMeasurement.height + UPCOMING_LOAD_THRESHOLD;
+    const isMovingTowardTop = newY <= previousY;
+    if (isScrollable && isMovingTowardTop && newY <= UPCOMING_LOAD_THRESHOLD) {
       loadMorePastUpcoming();
     }
   }
