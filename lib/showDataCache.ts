@@ -1,6 +1,13 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import type { TVMazeEpisode, TVMazeShow } from "./tvmaze";
 import type { WatchedEpisode } from "./userShows";
+
+// See the same comment in lib/tvmaze.ts: the package's default export is a
+// legacy singleton backed by window.localStorage on web (~5-10MB, shared
+// with everything else stored there, including Supabase's own session
+// token) — this cache is per-show and unbounded, so on web it contributed to
+// filling that shared quota entirely. Its own IndexedDB database avoids that.
+const storage = createAsyncStorage("show_data_cache");
 
 const STORAGE_PREFIX = "show_data_cache:";
 
@@ -39,13 +46,13 @@ function createCache<T>(name: string, ttlMs: number) {
   function set(id: number, data: T) {
     const entry = { data, fetchedAt: Date.now() };
     map.set(id, entry);
-    AsyncStorage.setItem(storageKey(id), JSON.stringify(entry)).catch(() => {});
+    storage.setItem(storageKey(id), JSON.stringify(entry)).catch(() => {});
   }
 
   function invalidate(id: number) {
     invalidatedAt.set(id, Date.now());
     map.delete(id);
-    AsyncStorage.removeItem(storageKey(id)).catch(() => {});
+    storage.removeItem(storageKey(id)).catch(() => {});
   }
 
   async function getOrFetch(id: number, fetcher: () => Promise<T>): Promise<T> {
@@ -59,7 +66,7 @@ function createCache<T>(name: string, ttlMs: number) {
     const promise = (async () => {
       let stalePersisted: T | undefined;
       try {
-        const stored = await AsyncStorage.getItem(storageKey(id));
+        const stored = await storage.getItem(storageKey(id));
         if (stored) {
           const parsed = JSON.parse(stored) as { data: T; fetchedAt: number };
           if (Date.now() - parsed.fetchedAt <= ttlMs) {

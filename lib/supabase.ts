@@ -1,7 +1,15 @@
 import "react-native-url-polyfill/auto";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { Alert } from "react-native";
 import { createClient } from "@supabase/supabase-js";
+
+// The package's default export is a legacy singleton backed by
+// window.localStorage on web (~5-10MB, shared with the unbounded TVmaze/TMDB
+// caches — see lib/tvmaze.ts, lib/tmdb.ts, lib/showDataCache.ts). Those
+// filled that shared quota entirely on some accounts, to the point where
+// even this session token's own small write started failing with
+// QuotaExceededError on sign-in. Its own IndexedDB database avoids that.
+const authStorage = createAsyncStorage("supabase_auth");
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -80,7 +88,7 @@ function notifyWriteFailed() {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: AsyncStorage,
+    storage: authStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,

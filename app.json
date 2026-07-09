@@ -11,11 +11,18 @@
       "typedRoutes": true
     },
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.epify.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.epify.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#0d1524",
         "foregroundImage": "./assets/android-icon-foreground.png",

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { View, Text, Image, StyleSheet } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
+import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, avatarSize, Colors } from "../lib/theme";
 
@@ -32,7 +33,7 @@ export function Avatar({ name, imageUri, size = "md" }: AvatarProps) {
   return (
     <View style={[styles.circle, { backgroundColor: hasInitial ? colors.accent : colors.backgroundAlt }]}>
       {imageUri ? (
-        <Image source={{ uri: imageUri }} style={styles.photo} />
+        <Image source={{ uri: imageUri }} style={styles.photo} contentFit="cover" />
       ) : hasInitial ? (
         <Text style={styles.initial}>{name[0]?.toUpperCase() ?? "?"}</Text>
       ) : (

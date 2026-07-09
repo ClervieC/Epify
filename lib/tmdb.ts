@@ -1,5 +1,12 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { lookupShowByTvdbId, TVMazeShow, Priority } from "./tvmaze";
+
+// See the same comment in lib/tvmaze.ts: the package's default export is a
+// legacy singleton backed by window.localStorage on web (~5-10MB, shared
+// with everything else stored there, including Supabase's own session
+// token) — this cache is unbounded, so on web it contributed to filling
+// that shared quota entirely. Its own IndexedDB database avoids that.
+const storage = createAsyncStorage("tmdb_cache");
 
 const BASE_URL = "https://api.themoviedb.org/3";
 const IMAGE_BASE_URL = "https://image.tmdb.org/t/p";
@@ -21,7 +28,7 @@ async function withCache<T>(cacheKey: string, ttlMs: number, fetcher: () => Prom
   const storageKey = CACHE_PREFIX + cacheKey;
   let stalePersisted: T | undefined;
   try {
-    const stored = await AsyncStorage.getItem(storageKey);
+    const stored = await storage.getItem(storageKey);
     if (stored) {
       const parsed = JSON.parse(stored) as { data: T; expiresAt: number };
       if (parsed.expiresAt > now) {
@@ -38,7 +45,7 @@ async function withCache<T>(cacheKey: string, ttlMs: number, fetcher: () => Prom
     const data = await fetcher();
     const entry = { data, expiresAt: now + ttlMs };
     memoryCache.set(cacheKey, entry);
-    AsyncStorage.setItem(storageKey, JSON.stringify(entry)).catch(() => {});
+    storage.setItem(storageKey, JSON.stringify(entry)).catch(() => {});
     return data;
   } catch (err) {
     if (stalePersisted !== undefined) return stalePersisted;

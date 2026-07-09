@@ -1,5 +1,6 @@
 import { memo, useMemo, useRef } from "react";
-import { View, Text, Pressable, Image, Animated, StyleSheet } from "react-native";
+import { View, Text, Pressable, Animated, StyleSheet } from "react-native";
+import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -126,7 +127,7 @@ export const EpisodeRow = memo(function EpisodeRow({
         }}
       >
         {showImage ? (
-          <Image source={{ uri: showImage }} style={[styles.thumb, dimmed && styles.thumbDimmed]} />
+          <Image source={{ uri: showImage }} style={[styles.thumb, dimmed && styles.thumbDimmed]} contentFit="cover" />
         ) : (
           <View style={[styles.thumb, styles.thumbPlaceholder, dimmed && styles.thumbDimmed]} />
         )}

@@ -1,4 +1,6 @@
+import { createContext, useContext, useEffect, useMemo, useState, useCallback, PropsWithChildren } from "react";
 import { useColorScheme } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const lightColors = {
   background: "#f7f7f8",
@@ -54,9 +56,63 @@ const darkColors: typeof lightColors = {
 
 export type Colors = typeof lightColors;
 
+export type ThemeMode = "light" | "dark" | "system";
+
+const THEME_STORAGE_KEY = "theme_mode";
+
+interface ThemeContextValue {
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
+  // The scheme actually in effect right now — "system" resolved against the
+  // OS setting, or the explicit override otherwise. Only exposed for the
+  // settings row's own display; every other consumer should go through
+  // useColors() below instead of re-deriving this.
+  resolvedScheme: "light" | "dark";
+}
+
+const ThemeContext = createContext<ThemeContextValue>({
+  themeMode: "system",
+  setThemeMode: () => {},
+  resolvedScheme: "light",
+});
+
+// Device-local, not synced through Supabase like language/spoiler mode (see
+// lib/i18n.tsx) — theme is the kind of preference you'd want to set before
+// ever logging in, and re-set per device, not per account.
+export function ThemeProvider({ children }: PropsWithChildren) {
+  const systemScheme = useColorScheme();
+  const [themeMode, setThemeModeState] = useState<ThemeMode>("system");
+
+  useEffect(() => {
+    AsyncStorage.getItem(THEME_STORAGE_KEY).then((stored) => {
+      if (stored === "light" || stored === "dark" || stored === "system") {
+        setThemeModeState(stored);
+      }
+    });
+  }, []);
+
+  const setThemeMode = useCallback((mode: ThemeMode) => {
+    setThemeModeState(mode);
+    AsyncStorage.setItem(THEME_STORAGE_KEY, mode).catch(() => {});
+  }, []);
+
+  const resolvedScheme = themeMode === "system" ? (systemScheme === "dark" ? "dark" : "light") : themeMode;
+
+  const value = useMemo(
+    () => ({ themeMode, setThemeMode, resolvedScheme }),
+    [themeMode, setThemeMode, resolvedScheme]
+  );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+}
+
+export function useThemeMode() {
+  return useContext(ThemeContext);
+}
+
 export function useColors(): Colors {
-  const scheme = useColorScheme();
-  return scheme === "dark" ? darkColors : lightColors;
+  const { resolvedScheme } = useContext(ThemeContext);
+  return resolvedScheme === "dark" ? darkColors : lightColors;
 }
 
 export const radius = {

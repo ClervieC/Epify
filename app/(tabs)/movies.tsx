@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, Image, Pressable, Animated, FlatList, StyleSheet, ActivityIndicator, useWindowDimensions } from "react-native";
+import { View, Text, Pressable, Animated, FlatList, StyleSheet, ActivityIndicator, useWindowDimensions } from "react-native";
+import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
 import { fetchUserMovies, fetchMovieWatchlist, setMovieWatched, UserMovie } from "../../lib/userMovies";
 import { getMovieDetails, posterUrl, TMDBMovieDetails } from "../../lib/tmdb";
@@ -281,7 +282,7 @@ function UpcomingRow({
         style={[styles.upcomingRow, { opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }]}
       >
         {poster ? (
-          <Image source={{ uri: poster }} style={styles.upcomingPoster} />
+          <Image source={{ uri: poster }} style={styles.upcomingPoster} contentFit="cover" />
         ) : (
           <View style={[styles.upcomingPoster, styles.upcomingPosterPlaceholder]}>
             <Text style={styles.upcomingPlaceholderText}>{entry.movie.title[0]?.toUpperCase()}</Text>

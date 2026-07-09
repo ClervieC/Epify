@@ -10,8 +10,8 @@ import { supabase } from "../../lib/supabase";
 import { createList, fetchAllListItems, fetchEpisodeCount, fetchFavorites, fetchLists, fetchUserShows, ListItem, ShowList, UserShow } from "../../lib/userShows";
 import { fetchUserMovies, fetchFavoriteMovies, UserMovie } from "../../lib/userMovies";
 import { importTvTimeCsv, importTvTimeJson, ImportProgress } from "../../lib/tvtimeImport";
-import { useColors, radius, type, Colors } from "../../lib/theme";
-import { useLanguage } from "../../lib/i18n";
+import { useColors, useThemeMode, radius, type, Colors, ThemeMode } from "../../lib/theme";
+import { useLanguage, Translations } from "../../lib/i18n";
 import { Language } from "../../lib/userSettings";
 import { fetchMyProfile, createProfile, Profile } from "../../lib/profiles";
 import { fetchFollowCounts } from "../../lib/follows";
@@ -71,6 +71,7 @@ export default function ProfileScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, language, setLanguage, spoilerMode, setSpoilerMode } = useLanguage();
+  const { themeMode, setThemeMode } = useThemeMode();
 
   const lastLoadedAt = useRef(0);
   const load = useCallback(() => {
@@ -468,6 +469,12 @@ export default function ProfileScreen() {
         <LanguageSwitch language={language} setLanguage={setLanguage} colors={colors} styles={styles} />
       </View>
 
+      <View style={styles.settingRow}>
+        <Ionicons name="contrast-outline" size={20} color={colors.text} />
+        <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.theme}</Text>
+        <ThemeSwitch themeMode={themeMode} setThemeMode={setThemeMode} t={t} styles={styles} />
+      </View>
+
       <SectionHeader title={t.profile.legal} styles={styles} />
       <Pressable style={styles.importRow} onPress={() => router.push("/legal/terms")}>
         <Ionicons name="document-text-outline" size={20} color={colors.text} />
@@ -545,6 +552,33 @@ function LanguageSwitch({
       {(["en", "fr"] as const).map((lang) => (
         <Pill key={lang} size="sm" tone={language === lang ? "solid" : "neutral"} onPress={() => setLanguage(lang)}>
           {lang.toUpperCase()}
+        </Pill>
+      ))}
+    </View>
+  );
+}
+
+function ThemeSwitch({
+  themeMode,
+  setThemeMode,
+  t,
+  styles,
+}: {
+  themeMode: ThemeMode;
+  setThemeMode: (mode: ThemeMode) => void;
+  t: Translations;
+  styles: ProfileStyles;
+}) {
+  const options: { mode: ThemeMode; label: string }[] = [
+    { mode: "light", label: t.profile.themeLight },
+    { mode: "dark", label: t.profile.themeDark },
+    { mode: "system", label: t.profile.themeSystem },
+  ];
+  return (
+    <View style={styles.languageSwitch}>
+      {options.map(({ mode, label }) => (
+        <Pill key={mode} size="sm" tone={themeMode === mode ? "solid" : "neutral"} onPress={() => setThemeMode(mode)}>
+          {label}
         </Pill>
       ))}
     </View>

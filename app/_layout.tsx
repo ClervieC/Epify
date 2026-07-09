@@ -9,6 +9,7 @@ import { NotificationsProvider } from "../context/NotificationsContext";
 import { RewatchPromptProvider } from "../context/RewatchPromptContext";
 import { PreviousEpisodesPromptProvider } from "../context/PreviousEpisodesPromptContext";
 import { LanguageProvider } from "../lib/i18n";
+import { ThemeProvider, useThemeMode } from "../lib/theme";
 import { AppSplash } from "../components/AppSplash";
 
 function RootNavigation() {
@@ -57,24 +58,33 @@ function RootNavigation() {
   );
 }
 
+function ThemedStatusBar() {
+  const { resolvedScheme } = useThemeMode();
+  // expo-status-bar's "dark"/"light" name the *content* color, which is the
+  // inverse of the background scheme — a dark background needs light text.
+  return <StatusBar style={resolvedScheme === "dark" ? "light" : "dark"} />;
+}
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <LanguageProvider>
-            <NotificationsProvider>
-              <View style={{ flex: 1 }}>
-                <RewatchPromptProvider>
-                  <PreviousEpisodesPromptProvider>
-                    <RootNavigation />
-                  </PreviousEpisodesPromptProvider>
-                </RewatchPromptProvider>
-              </View>
-            </NotificationsProvider>
-          </LanguageProvider>
-        </AuthProvider>
-        <StatusBar style="dark" />
+        <ThemeProvider>
+          <AuthProvider>
+            <LanguageProvider>
+              <NotificationsProvider>
+                <View style={{ flex: 1 }}>
+                  <RewatchPromptProvider>
+                    <PreviousEpisodesPromptProvider>
+                      <RootNavigation />
+                    </PreviousEpisodesPromptProvider>
+                  </RewatchPromptProvider>
+                </View>
+              </NotificationsProvider>
+            </LanguageProvider>
+          </AuthProvider>
+          <ThemedStatusBar />
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -24,6 +24,8 @@ import {
   WatchedEpisode,
 } from "../../lib/userShows";
 import { getCachedEpisodes, getCachedWatchedEpisodes } from "../../lib/showDataCache";
+import { loadWatchingSnapshot, saveWatchingSnapshot, toSnapshotShow, fromSnapshotShow } from "../../lib/watchingSnapshot";
+import { prefetchLibrary } from "../../lib/backgroundPrefetch";
 import { mapWithConcurrency } from "../../lib/concurrency";
 import {
   diffDaysFromToday,
@@ -332,6 +334,13 @@ export default function ShowsScreen() {
   const listRef = useRef<FlatList<WatchListRow>>(null);
   const upcomingListRef = useRef<FlatList<UpcomingRow>>(null);
   const hasLoadedOnce = useRef(false);
+  // Mirrors `tracked` so loadData (whose deps are intentionally empty, see
+  // below) can seed a reload from whatever's already on screen without
+  // depending on — and re-creating itself on every change of — tracked.
+  const trackedRef = useRef<TrackedShow[]>([]);
+  useEffect(() => {
+    trackedRef.current = tracked;
+  }, [tracked]);
   const watchListScrollY = useRef(0);
   const upcomingScrollY = useRef(0);
   const pendingPastLoad = useRef<number | null>(null);
@@ -416,26 +425,35 @@ export default function ShowsScreen() {
     watchListScrollY.current = 0;
     upcomingScrollY.current = 0;
 
-    const shows = await fetchUserShows();
-    // Shows already being watched go first in the fetch queue — that's what
-    // populates Watch Next and History, the two sections actually visible on
-    // load. Shows not started yet only feed "Not started", which the user is
-    // less likely to be checking first, so they can trail in behind.
-    const watching = shows.filter((s) => s.status === "watching");
-    const wantToWatch = shows.filter((s) => s.status === "want_to_watch");
-    const followed = [...watching, ...wantToWatch];
-
-    // Render shows as their data arrives instead of blocking on the very
-    // last one to resolve — with a couple hundred tracked shows, the TVmaze
-    // rate limit alone can take minutes to clear on a cold cache, and there
-    // was no reason to hold the whole screen on a spinner while most shows
-    // were already done. Flushes are coalesced to one per animation frame
-    // rather than one per show, so this doesn't turn into 200+ re-renders.
-    const collected: TrackedShow[] = [];
+    // Seeded from whatever's already on screen (the previous load, or the
+    // on-disk snapshot) so the full list paints from storage before any
+    // network call — trackedRef can still be empty here even right after a
+    // cold-launch hydration, since that hydration is a separate async effect
+    // that may not have committed yet, so this falls back to the snapshot
+    // directly instead of depending on it having won that race.
+    let seed = trackedRef.current;
+    if (seed.length === 0) {
+      const snapshot = await loadWatchingSnapshot();
+      if (snapshot) {
+        seed = snapshot.map(fromSnapshotShow);
+      }
+    }
+    const byId = new Map(seed.map((t) => [t.show.tvmaze_id, t]));
+    // Ordered by each show's own status until fresh statuses come back —
+    // watching first, want_to_watch after (see the `followed` order below,
+    // which this gets rebuilt against once fetchUserShows resolves).
+    let order = [...seed]
+      .sort((a, b) => (a.show.status === b.show.status ? 0 : a.show.status === "watching" ? -1 : 1))
+      .map((t) => t.show.tvmaze_id);
+    function currentList() {
+      return order
+        .map((id) => byId.get(id))
+        .filter((t): t is TrackedShow => !!t);
+    }
     let flushScheduled = false;
     function flush() {
       flushScheduled = false;
-      setTracked([...collected]);
+      setTracked(currentList());
       setLoading(false);
       // Only the very first flush needs to tell the root splash screen it
       // can fade out (see AuthContext's dataReady) — later reloads (tab
@@ -450,14 +468,122 @@ export default function ShowsScreen() {
       flushScheduled = true;
       requestAnimationFrame(flush);
     }
+    // Never persist an empty snapshot — a genuinely-zero result here is
+    // indistinguishable from a stale/transient run (dev StrictMode
+    // double-invoking this effect, an auth race, etc.) landing after a good
+    // one, and since loadWatchingSnapshot() treats "nothing on disk" the
+    // same as "empty snapshot" anyway, there's no upside to writing zero
+    // shows — only the risk of clobbering a real snapshot with it.
+    function persistSnapshot() {
+      const toSave = currentList();
+      if (toSave.length === 0) return;
+      saveWatchingSnapshot(toSave.map(toSnapshotShow));
+    }
+    // With a large followed list, TVmaze's rate limit alone can take minutes
+    // to clear (see the comment below) — saving only once every show has
+    // resolved would mean the snapshot never updates during that whole
+    // window. Saving on a timer instead means a reload partway through a
+    // slow cold-cache fetch still benefits from whatever's landed so far.
+    const persistInterval = setInterval(persistSnapshot, 5000);
+    // Everything below hits the network (fetchUserShows, then every show's
+    // episodes/watched status) with no per-call error handling of its own —
+    // fetchTrackedShow settles its own two calls, but fetchUserShows() and
+    // loadWatchingSnapshot() above don't. An uncaught throw here (a network
+    // hiccup, an auth session race, a malformed snapshot) used to propagate
+    // out of loadData() entirely, skipping every flush() below it — which
+    // meant hasLoadedOnce/dataReady never got set on a load that hit this
+    // before its first flush, leaving the root splash screen stuck forever.
+    // The catch+finally below guarantee at least one flush happens no matter
+    // what fails, so the splash always resolves — worst case showing
+    // whatever seed data was already available (or an empty list).
+    try {
+      // Paint the full seed immediately — this is what makes cold/warm
+      // reloads show every tracked show at once, straight from storage,
+      // with zero API calls in the critical path instead of waiting on
+      // fetchUserShows().
+      if (byId.size > 0) flush();
 
-    await mapWithConcurrency(followed, TRACKED_SHOW_FETCH_CONCURRENCY, fetchTrackedShow, (result) => {
-      collected.push(result);
-      scheduleFlush();
+      const shows = await fetchUserShows();
+      // fetchUserShows() returns [] both when the user genuinely has no
+      // shows and when getCurrentUserId() raced the auth session still
+      // restoring from disk (see lib/supabase.ts) — on a cold launch, or
+      // under StrictMode's dev-only double-invoke of effects, that race can
+      // resolve before the session is actually ready. Treating an empty
+      // response as authoritative here would prune every seeded show and
+      // then persist that empty list, permanently wiping the snapshot on
+      // what's actually a transient hiccup. Bailing out instead leaves the
+      // seed on screen and the snapshot untouched; the next focus/refresh
+      // retries once the session (or StrictMode's second, real invocation)
+      // has caught up.
+      if (shows.length === 0 && seed.length > 0) return;
+      // Shows already being watched go first in the fetch queue — that's
+      // what populates Watch Next and History, the two sections actually
+      // visible on load. Shows not started yet only feed "Not started",
+      // which the user is less likely to be checking first, so they can
+      // trail in behind.
+      const watching = shows.filter((s) => s.status === "watching");
+      const wantToWatch = shows.filter((s) => s.status === "want_to_watch");
+      const followed = [...watching, ...wantToWatch];
+      // Re-key against the freshly fetched statuses/order — this also drops
+      // any seeded show whose status changed away from watching/want_to_watch
+      // (or that's no longer followed at all) and adds newly-followed shows,
+      // which only now exist to seed from.
+      order = followed.map((s) => s.tvmaze_id);
+      for (const id of [...byId.keys()]) {
+        if (!order.includes(id)) byId.delete(id);
+      }
+      flush();
+
+      // Render shows as their data arrives instead of blocking on the very
+      // last one to resolve — with a couple hundred tracked shows, the
+      // TVmaze rate limit alone can take minutes to clear on a cold cache,
+      // and there was no reason to hold the whole screen on a spinner while
+      // most shows were already done. Flushes are coalesced to one per
+      // animation frame rather than one per show, so this doesn't turn into
+      // 200+ re-renders. Seed data for shows still awaiting their fresh
+      // fetch stays visible until it's overwritten the moment that fetch
+      // lands.
+      await mapWithConcurrency(followed, TRACKED_SHOW_FETCH_CONCURRENCY, fetchTrackedShow, (result) => {
+        byId.set(result.show.tvmaze_id, result);
+        scheduleFlush();
+      });
+      // Final flush covers both the trailing rAF-coalesced items and the
+      // followed.length === 0 case, where onItemDone never fires at all.
+      flush();
+      persistSnapshot();
+      // Fire-and-forget, low priority (see backgroundPrefetch.ts): once the
+      // watching/want_to_watch list — the shows actually on screen — is
+      // done, gradually warm the caches for the rest of the library (every
+      // other show status, plus every movie) so their detail pages are
+      // instant later, without competing with the fetch that just populated
+      // what's visible right now.
+      prefetchLibrary();
+    } catch (err) {
+      console.warn("loadData failed", err);
+    } finally {
+      clearInterval(persistInterval);
+      if (!hasLoadedOnce.current) flush();
+    }
+  }, []);
+
+  // Cold-launch hydration: paint the last known "watching"/"want_to_watch"
+  // state from disk immediately, instead of a blank/loading screen until
+  // fetchUserShows() and every show's episodes come back over the network.
+  // Only runs once, before the first real loadData() — the fresh fetch below
+  // (via useFocusEffect) still runs and overwrites this as soon as it lands.
+  useEffect(() => {
+    let active = true;
+    loadWatchingSnapshot().then((snapshot) => {
+      if (!active || !snapshot || hasLoadedOnce.current) return;
+      setTracked(snapshot.map(fromSnapshotShow));
+      setLoading(false);
+      hasLoadedOnce.current = true;
+      setDataReady(true);
     });
-    // Final flush covers both the trailing rAF-coalesced items and the
-    // followed.length === 0 case, where onItemDone never fires at all.
-    flush();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useFocusEffect(

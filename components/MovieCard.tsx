@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { View, Text, Image, Pressable, Animated, StyleSheet } from "react-native";
+import { View, Text, Pressable, Animated, StyleSheet } from "react-native";
+import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useColors, radius, type, hueForTitle, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
@@ -98,7 +99,7 @@ export const MovieCard = memo(function MovieCard({
       <Animated.View style={{ opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }}>
         <View style={styles.image}>
           {poster ? (
-            <Image source={{ uri: poster }} style={styles.posterImage} resizeMode="cover" />
+            <Image source={{ uri: poster }} style={styles.posterImage} contentFit="cover" />
           ) : (
             <Text style={styles.placeholderText}>{title[0]?.toUpperCase()}</Text>
           )}

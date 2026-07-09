@@ -1,5 +1,6 @@
 import { ReactNode, useMemo } from "react";
-import { View, Text, Image, ScrollView, Pressable, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from "react-native";
+import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import Reanimated from "react-native-reanimated";
@@ -70,7 +71,7 @@ export function MovieDetailView({
           <Reanimated.View style={[styles.hero, swipeDownStyle]}>
             {heroImage ? (
               <>
-                <Image source={{ uri: heroImage }} style={styles.heroImage} />
+                <Image source={{ uri: heroImage }} style={styles.heroImage} contentFit="cover" />
                 <LinearGradient colors={["transparent", colors.background]} style={styles.heroGradient} pointerEvents="none" />
               </>
             ) : (
@@ -117,7 +118,7 @@ export function MovieDetailView({
                 {cast.slice(0, 20).map((c) => (
                   <View key={c.id} style={styles.castCard}>
                     {c.profile_path ? (
-                      <Image source={{ uri: profileUrl(c.profile_path)! }} style={styles.castImage} />
+                      <Image source={{ uri: profileUrl(c.profile_path)! }} style={styles.castImage} contentFit="cover" />
                     ) : (
                       <View style={[styles.castImage, styles.castImagePlaceholder]}>
                         <Ionicons name="person" size={24} color={colors.textFaint} />
