@@ -55,6 +55,11 @@ function createCache<T>(name: string, ttlMs: number) {
     storage.removeItem(storageKey(id)).catch(() => {});
   }
 
+  function clearMemory() {
+    map.clear();
+    inFlight.clear();
+  }
+
   async function getOrFetch(id: number, fetcher: () => Promise<T>): Promise<T> {
     const cached = get(id);
     if (cached) return cached;
@@ -104,7 +109,7 @@ function createCache<T>(name: string, ttlMs: number) {
     }
   }
 
-  return { get, set, invalidate, getOrFetch };
+  return { get, set, invalidate, getOrFetch, clearMemory };
 }
 
 // Show metadata and episode lists are effectively static day-to-day, and
@@ -142,4 +147,19 @@ export function invalidateShow(showId: number) {
   showInfoCache.invalidate(showId);
   episodesCache.invalidate(showId);
   watchedCache.invalidate(showId);
+}
+
+// Called on sign-out (see context/AuthContext.tsx) — watchedCache holds
+// per-user data (a specific account's watched/unwatched checkmarks) keyed
+// only by show id, with no user id in the key at all, so without this a
+// different account signing in on the same device would see the previous
+// user's watched status for any show they both track. show/episodes are
+// public metadata (harmless to keep), but they share this same underlying
+// storage instance, so a full wipe is simplest — refetching them for the
+// new user is cheap and correctness-neutral either way.
+export async function clearAllShowDataCaches(): Promise<void> {
+  showInfoCache.clearMemory();
+  episodesCache.clearMemory();
+  watchedCache.clearMemory();
+  await storage.clear().catch(() => {});
 }

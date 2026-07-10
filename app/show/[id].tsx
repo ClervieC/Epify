@@ -18,6 +18,18 @@ import Reanimated from "react-native-reanimated";
 import { getShow, getShowCast, getShowEpisodes, CastMember, TVMazeShow, TVMazeEpisode } from "../../lib/tvmaze";
 import { getCachedEpisodes, getCachedShow, getCachedWatchedEpisodes } from "../../lib/showDataCache";
 import {
+  findTmdbTvFromTvdbId,
+  findTvmazeShowFromTmdbTv,
+  getTvTrailerUrl,
+  getTvWatchProviders,
+  getTvRecommendations,
+  posterUrl,
+  WatchProviders,
+  TMDBTvResult,
+} from "../../lib/tmdb";
+import { WatchInfo } from "../../components/WatchInfo";
+import { RecommendationsRow, RecommendationItem } from "../../components/RecommendationsRow";
+import {
   addShowToList,
   bulkIncrementRewatch,
   createList,
@@ -41,10 +53,12 @@ import { useLanguage, Translations } from "../../lib/i18n";
 import { useGrowIn, useFadeIn, useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { CommentsSection } from "../../components/CommentsSection";
+import { ReportModal } from "../../components/ReportModal";
 import { Sheet } from "../../components/Sheet";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
 import { useRewatchPrompt } from "../../context/RewatchPromptContext";
 import { getCurrentUserId } from "../../lib/supabase";
+import { useGoBack } from "../../lib/useGoBack";
 import {
   deleteComment,
   fetchShowComments,
@@ -61,6 +75,7 @@ function stripHtml(html: string | null) {
 export default function ShowDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const goBack = useGoBack("/(tabs)");
   const showId = Number(id);
 
   const [tab, setTab] = useState<"about" | "episodes">("episodes");
@@ -72,21 +87,34 @@ export default function ShowDetailScreen() {
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const [listPickerOpen, setListPickerOpen] = useState(false);
   const [lists, setLists] = useState<ShowList[]>([]);
   const [newListName, setNewListName] = useState("");
   const [showComments, setShowComments] = useState<EnrichedComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [myUserId, setMyUserId] = useState<string | null>(null);
+  // Only the very first load should pick the default tab based on
+  // list-membership — otherwise switching to Episodes and then coming back
+  // to this screen (e.g. after adding the show) would keep bouncing the
+  // tab back to Info on every refocus.
+  const initialTabSet = useRef(false);
+  const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
+  const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
+  const [recommendations, setRecommendations] = useState<TMDBTvResult[]>([]);
+  // Per-recommendation cache of the TVmaze id each one resolves to on tap,
+  // mirroring the same resolve-on-tap pattern Explore uses for its own TMDB
+  // discover cards.
+  const resolvedRecommendations = useRef<Map<number, number | null>>(new Map());
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const underlineGrow = useGrowIn(tab);
   const contentFade = useFadeIn(!loading);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const askPreviousEpisodes = usePreviousEpisodesPrompt();
   const askRewatch = useRewatchPrompt();
-  const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(() => router.back());
+  const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(goBack);
 
   const load = useCallback(async () => {
     const [showData, episodeData, userShows, watchedData] = await Promise.all([
@@ -97,15 +125,66 @@ export default function ShowDetailScreen() {
     ]);
     setShow(showData);
     setEpisodes(episodeData);
-    setUserShow(userShows.find((s) => s.tvmaze_id === showId) ?? null);
+    const matchedUserShow = userShows.find((s) => s.tvmaze_id === showId) ?? null;
+    setUserShow(matchedUserShow);
     setWatched(watchedData);
+    // A show you're not already tracking has no watch progress worth
+    // landing on Episodes for — Info (overview, cast) is the more useful
+    // default there, same idea as a movie's own detail page leading with
+    // its overview rather than anything watch-related.
+    if (!initialTabSet.current) {
+      initialTabSet.current = true;
+      if (!matchedUserShow) setTab("about");
+    }
     // Cast only ever shows on the Info tab (default tab is Episodes), and is
     // never prefetched elsewhere — no reason to make the default view wait
     // on it too.
     getShowCast(showId)
       .then(setCast)
       .catch(() => {});
-  }, [showId]);
+
+    // TMDB-only data (trailer, watch providers, recommendations) — needs
+    // this show's TMDB tv id first, bridged via its TVmaze externals (see
+    // the state comment above). Not every show has a thetvdb id on file, in
+    // which case these sections just stay empty (WatchInfo/RecommendationsRow
+    // both render nothing when there's nothing to show).
+    const tvdbId = showData.externals?.thetvdb;
+    if (tvdbId) {
+      findTmdbTvFromTvdbId(tvdbId).then((tmdbTvId) => {
+        if (!tmdbTvId) return;
+        getTvTrailerUrl(tmdbTvId).then(setTrailerUrl).catch(() => {});
+        getTvWatchProviders(tmdbTvId, language).then(setWatchProviders).catch(() => {});
+        getTvRecommendations(tmdbTvId).then(setRecommendations).catch(() => {});
+      });
+    }
+  }, [showId, language]);
+
+  // Resolve-on-tap (not upfront for all ~12 recommendations at once) — same
+  // pattern as Explore's own TMDB discover cards (see resolveTvmazeShow in
+  // app/(tabs)/explore.tsx). A show with no TVmaze match at all (no tvdb id
+  // on file for that TMDB title) opens the read-only TMDB-only fallback
+  // page (app/show/tmdb/[id].tsx) instead of a dead-end "not found" alert.
+  async function openRecommendation(rec: TMDBTvResult) {
+    const cached = resolvedRecommendations.current.get(rec.id);
+    if (cached) {
+      router.push(`/show/${cached}`);
+      return;
+    }
+    if (cached === null) {
+      router.push(`/show/tmdb/${rec.id}`);
+      return;
+    }
+    const resolved = await findTvmazeShowFromTmdbTv(rec.id);
+    resolvedRecommendations.current.set(rec.id, resolved?.id ?? null);
+    router.push(resolved ? `/show/${resolved.id}` : `/show/tmdb/${rec.id}`);
+  }
+
+  const recommendationItems: RecommendationItem[] = recommendations.map((r) => ({
+    key: r.id,
+    title: r.name,
+    posterUrl: posterUrl(r.poster_path, "w200"),
+    onPress: () => openRecommendation(r),
+  }));
 
   useFocusEffect(
     useCallback(() => {
@@ -378,12 +457,22 @@ export default function ShowDetailScreen() {
             {show.image && <Image source={{ uri: show.image.original }} style={styles.heroImage} />}
             <LinearGradient colors={["transparent", colors.background]} style={styles.heroGradient} pointerEvents="none" />
             <View style={styles.heroTopRow}>
-              <Pressable style={styles.iconBtn} onPress={() => router.back()}>
+              <Pressable
+                style={styles.iconBtn}
+                onPress={goBack}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+              >
                 <Ionicons name="chevron-down" size={22} color="#fff" />
               </Pressable>
               <View style={{ flexDirection: "row", gap: 10 }}>
                 {userShow && (
-                  <Pressable style={styles.iconBtn} onPress={handleToggleFavorite}>
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={handleToggleFavorite}
+                    accessibilityRole="button"
+                    accessibilityLabel={userShow.is_favorite ? t.showDetail.removeFavorite : t.showDetail.addFavorite}
+                  >
                     <Ionicons
                       name={userShow.is_favorite ? "star" : "star-outline"}
                       size={19}
@@ -391,7 +480,12 @@ export default function ShowDetailScreen() {
                     />
                   </Pressable>
                 )}
-                <Pressable style={styles.iconBtn} onPress={() => setMenuOpen(true)}>
+                <Pressable
+                  style={styles.iconBtn}
+                  onPress={() => setMenuOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="More options"
+                >
                   <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
                 </Pressable>
               </View>
@@ -484,6 +578,9 @@ export default function ShowDetailScreen() {
                   </>
                 )}
 
+                <WatchInfo trailerUrl={trailerUrl} providers={watchProviders} />
+                <RecommendationsRow items={recommendationItems} />
+
                 <View style={styles.divider} />
                 <Text style={styles.sectionHeader}>{t.showDetail.comments}</Text>
                 <CommentsSection
@@ -493,6 +590,7 @@ export default function ShowDetailScreen() {
                   onSubmit={handlePostShowComment}
                   onDelete={handleDeleteShowComment}
                   onToggleReaction={handleToggleShowCommentReaction}
+                  reportTargetType="comment"
                 />
               </View>
             ) : (
@@ -587,6 +685,16 @@ export default function ShowDetailScreen() {
               <Ionicons name="trash-outline" size={20} color={colors.red} />
               <Text style={[styles.menuItemText, { color: colors.red }]}>{t.showDetail.removeFromList}</Text>
             </Pressable>
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                setReporting(true);
+              }}
+            >
+              <Ionicons name="flag-outline" size={20} color={colors.text} />
+              <Text style={styles.menuItemText}>{t.report.reportShow}</Text>
+            </Pressable>
           </>
         ) : (
           <>
@@ -604,9 +712,25 @@ export default function ShowDetailScreen() {
               <Ionicons name="list-outline" size={20} color={colors.text} />
               <Text style={styles.menuItemText}>{t.showDetail.addToAList}</Text>
             </Pressable>
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                setReporting(true);
+              }}
+            >
+              <Ionicons name="flag-outline" size={20} color={colors.text} />
+              <Text style={styles.menuItemText}>{t.report.reportShow}</Text>
+            </Pressable>
           </>
         )}
       </Sheet>
+
+      <ReportModal
+        visible={reporting}
+        onClose={() => setReporting(false)}
+        target={{ targetType: "show", targetTvmazeShowId: showId }}
+      />
 
       <Sheet visible={listPickerOpen} onClose={() => setListPickerOpen(false)}>
         <Text style={styles.menuSheetTitle}>{t.showDetail.addToAList}</Text>

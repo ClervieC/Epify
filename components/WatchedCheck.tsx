@@ -50,7 +50,12 @@ export function WatchedCheck({ watched, timesWatched, onToggle, onRewatch, size 
   const rewatched = watched && (timesWatched ?? 1) > 1;
 
   return (
-    <Pressable onPress={handlePress} hitSlop={10}>
+    <Pressable
+      onPress={handlePress}
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel={watched ? "Mark as not watched" : "Mark as watched"}
+    >
       <Animated.View
         style={[
           styles.check,

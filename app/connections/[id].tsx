@@ -8,10 +8,12 @@ import { fetchFollowerIds, fetchFollowingIds } from "../../lib/follows";
 import { fetchProfiles, Profile } from "../../lib/profiles";
 import { UserRow } from "../../components/UserRow";
 import { EmptyState } from "../../components/EmptyState";
+import { useGoBack } from "../../lib/useGoBack";
 
 export default function ConnectionsScreen() {
   const { id, type } = useLocalSearchParams<{ id: string; type: "followers" | "following" }>();
   const router = useRouter();
+  const goBack = useGoBack("/(tabs)/profile");
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -41,7 +43,7 @@ export default function ConnectionsScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>{isFollowers ? t.social.followersTitle : t.social.followingTitle}</Text>

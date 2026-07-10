@@ -11,6 +11,8 @@ import { FollowButton } from "../../components/FollowButton";
 import { ShowCard } from "../../components/ShowCard";
 import { Avatar } from "../../components/Avatar";
 import { EmptyState } from "../../components/EmptyState";
+import { ReportModal } from "../../components/ReportModal";
+import { useGoBack } from "../../lib/useGoBack";
 
 const AVG_EPISODE_MINUTES = 42;
 
@@ -25,6 +27,7 @@ function formatTvTime(totalMinutes: number) {
 export default function UserProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const goBack = useGoBack("/(tabs)/profile");
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -37,6 +40,7 @@ export default function UserProfileScreen() {
   const [episodeCount, setEpisodeCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [reporting, setReporting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -95,11 +99,23 @@ export default function UserProfileScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <View style={{ width: 24 }} />
+        <Pressable
+          onPress={() => setReporting(true)}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={t.report.reportUser}
+        >
+          <Ionicons name="flag-outline" size={20} color={colors.textFaint} />
+        </Pressable>
       </View>
+      <ReportModal
+        visible={reporting}
+        onClose={() => setReporting(false)}
+        target={{ targetType: "user", targetUserId: profile.user_id }}
+      />
 
       <View style={styles.profileHeader}>
         <Avatar name={profile.username} size="lg" />

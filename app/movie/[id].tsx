@@ -10,7 +10,19 @@ import {
   fetchMovieFeelingCounts,
   UserMovie,
 } from "../../lib/userMovies";
-import { searchMovie, getMovieDetails, getMovieCast, TMDBMovieDetails, TMDBCastMember } from "../../lib/tmdb";
+import {
+  searchMovie,
+  getMovieDetails,
+  getMovieCast,
+  getMovieTrailerUrl,
+  getMovieWatchProviders,
+  getMovieRecommendations,
+  posterUrl,
+  TMDBMovieDetails,
+  TMDBCastMember,
+  WatchProviders,
+  TMDBSearchResult,
+} from "../../lib/tmdb";
 import { useLanguage } from "../../lib/i18n";
 import { getCurrentUserId } from "../../lib/supabase";
 import {
@@ -24,6 +36,8 @@ import { Pill } from "../../components/Pill";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { MovieDetailView, MovieDetailLoading } from "../../components/MovieDetailView";
 import { MovieRatingSection } from "../../components/MovieRatingSection";
+import { RecommendationItem } from "../../components/RecommendationsRow";
+import { useGoBack } from "../../lib/useGoBack";
 
 // user_movies (from the TV Time import, or added via Explore/the watchlist)
 // only ever has a title/year, never a TMDB id for older rows, so the poster/
@@ -35,13 +49,17 @@ import { MovieRatingSection } from "../../components/MovieRatingSection";
 export default function MovieDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { t } = useLanguage();
+  const goBack = useGoBack("/(tabs)/movies");
+  const { t, language } = useLanguage();
 
   const [movie, setMovie] = useState<UserMovie | null>(null);
   const [loading, setLoading] = useState(true);
   const [tmdb, setTmdb] = useState<TMDBMovieDetails | null>(null);
   const [tmdbNotFound, setTmdbNotFound] = useState(false);
   const [cast, setCast] = useState<TMDBCastMember[]>([]);
+  const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
+  const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
+  const [recommendations, setRecommendations] = useState<TMDBSearchResult[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -73,12 +91,21 @@ export default function MovieDetailScreen() {
         getMovieCast(match.id)
           .then((c) => active && setCast(c))
           .catch(() => {});
+        getMovieTrailerUrl(match.id)
+          .then((url) => active && setTrailerUrl(url))
+          .catch(() => {});
+        getMovieWatchProviders(match.id, language)
+          .then((p) => active && setWatchProviders(p))
+          .catch(() => {});
+        getMovieRecommendations(match.id)
+          .then((r) => active && setRecommendations(r))
+          .catch(() => {});
       })
       .catch(() => active && setTmdbNotFound(true));
     return () => {
       active = false;
     };
-  }, [movie]);
+  }, [movie, language]);
 
   // Comments/feeling-counts are keyed by TMDB id — movie.tmdb_id if this row
   // already has one (the common case), otherwise whatever the title/year
@@ -119,7 +146,7 @@ export default function MovieDetailScreen() {
       // Rewatch prompt's "unwatch" choice — the row is gone, nothing left to
       // show here.
       await setMovieWatched(movie!.title, movie!.year, false);
-      router.back();
+      goBack();
     } else {
       const updated = await setMovieWatched(
         movie!.title,
@@ -171,6 +198,13 @@ export default function MovieDetailScreen() {
     toggleMovieCommentReaction(id, currentlyReacted).catch(refreshComments);
   }
 
+  const recommendationItems: RecommendationItem[] = recommendations.map((r) => ({
+    key: r.id,
+    title: r.title,
+    posterUrl: posterUrl(r.poster_path, "w200"),
+    onPress: () => router.push(`/movie/tmdb/${r.id}`),
+  }));
+
   return (
     <MovieDetailView
       title={movie.title}
@@ -178,7 +212,11 @@ export default function MovieDetailScreen() {
       tmdb={tmdb}
       tmdbNotFound={tmdbNotFound}
       cast={cast}
-      onBack={() => router.back()}
+      tmdbId={commentTmdbId}
+      trailerUrl={trailerUrl}
+      watchProviders={watchProviders}
+      recommendations={recommendationItems}
+      onBack={goBack}
       isFavorite={movie.is_favorite}
       onToggleFavorite={handleToggleFavorite}
       watchedPills={

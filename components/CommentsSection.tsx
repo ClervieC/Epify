@@ -6,6 +6,7 @@ import { useLanguage } from "../lib/i18n";
 import { Profile } from "../lib/profiles";
 import { Avatar } from "./Avatar";
 import { EmptyState } from "./EmptyState";
+import { ReportModal } from "./ReportModal";
 
 // Structural rather than importing lib/comments.ts's EnrichedComment directly
 // — lib/movieComments.ts's EnrichedMovieComment has a different target key
@@ -28,6 +29,10 @@ interface CommentsSectionProps {
   onSubmit: (body: string) => Promise<void>;
   onDelete: (id: string) => void;
   onToggleReaction: (id: string, currentlyReacted: boolean) => void;
+  // Which reports.ts target column a report on one of these comments should
+  // set — "comment" for show/episode comments, "movie_comment" for movie
+  // ones (see the shared-shape note on CommentLike above).
+  reportTargetType: "comment" | "movie_comment";
 }
 
 export function CommentsSection({
@@ -37,10 +42,12 @@ export function CommentsSection({
   onSubmit,
   onDelete,
   onToggleReaction,
+  reportTargetType,
 }: CommentsSectionProps) {
   const [text, setText] = useState("");
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState(false);
+  const [reportingCommentId, setReportingCommentId] = useState<string | null>(null);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -75,6 +82,8 @@ export function CommentsSection({
           style={[styles.sendBtn, (!text.trim() || posting) && styles.sendBtnDisabled]}
           onPress={handleSubmit}
           disabled={!text.trim() || posting}
+          accessibilityRole="button"
+          accessibilityLabel="Send comment"
         >
           {posting ? (
             <ActivityIndicator size="small" color={colors.onAccent} />
@@ -98,9 +107,25 @@ export function CommentsSection({
                 {c.author?.username ?? t.comments.unknownUser}
               </Text>
               <Text style={styles.commentDate}>{c.created_at.slice(0, 10)}</Text>
-              {c.user_id === myUserId && (
-                <Pressable onPress={() => onDelete(c.id)} hitSlop={8} style={styles.deleteBtn}>
+              {c.user_id === myUserId ? (
+                <Pressable
+                  onPress={() => onDelete(c.id)}
+                  hitSlop={8}
+                  style={styles.deleteBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete comment"
+                >
                   <Ionicons name="trash-outline" size={14} color={colors.textFaint} />
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => setReportingCommentId(c.id)}
+                  hitSlop={8}
+                  style={styles.deleteBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.report.reportComment}
+                >
+                  <Ionicons name="flag-outline" size={14} color={colors.textFaint} />
                 </Pressable>
               )}
             </View>
@@ -109,6 +134,8 @@ export function CommentsSection({
               style={styles.reactionBtn}
               onPress={() => onToggleReaction(c.id, c.reactedByMe)}
               hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={c.reactedByMe ? "Unlike" : "Like"}
             >
               <Ionicons
                 name={c.reactedByMe ? "heart" : "heart-outline"}
@@ -124,6 +151,15 @@ export function CommentsSection({
           </View>
         ))
       )}
+      <ReportModal
+        visible={reportingCommentId !== null}
+        onClose={() => setReportingCommentId(null)}
+        target={
+          reportTargetType === "movie_comment"
+            ? { targetType: "movie_comment", targetMovieCommentId: reportingCommentId ?? "" }
+            : { targetType: "comment", targetCommentId: reportingCommentId ?? "" }
+        }
+      />
     </View>
   );
 }

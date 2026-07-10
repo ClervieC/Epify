@@ -1,5 +1,6 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { mapWithConcurrency } from "./concurrency";
+import { fetchWithTimeout } from "./fetchTimeout";
 
 // The package's default export is a legacy singleton backed by
 // window.localStorage on web (~5-10MB quota, shared with everything else
@@ -77,6 +78,10 @@ export interface TVMazeShow {
   network: { name: string; country: { name: string } | null } | null;
   webChannel: { name: string } | null;
   schedule: { time: string; days: string[] };
+  // Included by TVmaze on every /shows/{id} response by default. thetvdb is
+  // the bridge to TMDB (see lib/tmdb.ts's findTmdbTvFromTvdbId) for
+  // watch-providers/trailer/recommendations data TVmaze itself doesn't have.
+  externals: { imdb: string | null; thetvdb: number | null };
 }
 
 export interface TVMazeEpisode {
@@ -182,7 +187,7 @@ async function fetchWithRetry(path: string, priority: Priority = "low", retriesL
 
   let res: Response;
   try {
-    res = await fetch(`${BASE_URL}${path}`);
+    res = await fetchWithTimeout(`${BASE_URL}${path}`);
   } catch (err) {
     // Network failure (offline, DNS hiccup, connection reset, timeout...) —
     // fetch throws rather than resolving with a bad status in this case.
@@ -225,11 +230,13 @@ async function get<T>(path: string, priority: Priority = "low"): Promise<T> {
 
 // High priority: typed interactively into Explore's search box, so it should
 // jump ahead of whatever background bulk fetches (Watch List, genre-bias
-// pass) are already queued rather than wait behind them.
+// pass) are already queued rather than wait behind them. Cached — unlike
+// most of this file's calls, search wasn't cached at all before, so
+// re-searching the same query (backspacing and retyping, revisiting
+// Explore) always paid the full network round trip again.
 export function searchShows(query: string) {
-  return get<{ score: number; show: TVMazeShow }[]>(
-    `/search/shows?q=${encodeURIComponent(query)}`,
-    "high"
+  return withCache(`search:${query.toLowerCase()}`, ONE_HOUR, () =>
+    get<{ score: number; show: TVMazeShow }[]>(`/search/shows?q=${encodeURIComponent(query)}`, "high")
   );
 }
 

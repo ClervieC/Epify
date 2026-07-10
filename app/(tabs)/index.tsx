@@ -10,7 +10,7 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { getShowEpisodes, TVMazeEpisode } from "../../lib/tvmaze";
 import {
@@ -24,6 +24,8 @@ import {
   WatchedEpisode,
 } from "../../lib/userShows";
 import { getCachedEpisodes, getCachedWatchedEpisodes } from "../../lib/showDataCache";
+import { fetchTmdbOnlyShows, TmdbOnlyShow } from "../../lib/tmdbOnlyShows";
+import { posterUrl } from "../../lib/tmdb";
 import { loadWatchingSnapshot, saveWatchingSnapshot, toSnapshotShow, fromSnapshotShow } from "../../lib/watchingSnapshot";
 import { prefetchLibrary } from "../../lib/backgroundPrefetch";
 import { mapWithConcurrency } from "../../lib/concurrency";
@@ -43,6 +45,7 @@ import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { useGrowIn, useFadeIn } from "../../lib/animations";
 import { useAuth } from "../../context/AuthContext";
+import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
 
 type ViewTab = "list" | "upcoming";
 
@@ -327,6 +330,8 @@ export default function ShowsScreen() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [upcomingPastDays, setUpcomingPastDays] = useState(UPCOMING_INITIAL_PAST_DAYS);
+  const [tmdbOnlyShows, setTmdbOnlyShows] = useState<TmdbOnlyShow[]>([]);
+  const router = useRouter();
   // Set right after marking an episode watched (never on unwatch) — opens
   // the quick feeling picker for that specific episode. Tapping outside
   // (Sheet's backdrop) or picking nothing just closes it without saving.
@@ -558,6 +563,9 @@ export default function ShowsScreen() {
       // instant later, without competing with the fetch that just populated
       // what's visible right now.
       prefetchLibrary();
+      fetchTmdbOnlyShows()
+        .then(setTmdbOnlyShows)
+        .catch(() => {});
     } catch (err) {
       console.warn("loadData failed", err);
     } finally {
@@ -1052,6 +1060,16 @@ export default function ShowsScreen() {
       };
     }, [upcoming, language, expandedGroups]);
 
+  // Re-tapping the Shows tab now does exactly what tapping "My list"/
+  // "Upcoming" already does (see goToWatchList/goToUpcoming below) — a fresh
+  // loadData(), which resets history/past-days state and remounts both
+  // FlatLists at offset 0 (see loadGeneration). That naturally lands on
+  // Watch Next/today since nothing's been lazily loaded above it yet,
+  // instead of trying to scroll to a computed anchor in a list that may
+  // already have History/past days loaded above it — that computed-anchor
+  // approach was landing too high up once history had loaded.
+  useScrollToTopOnTabPress(loadData);
+
   const renderUpcomingRow = useCallback(
     ({ item: row }: { item: UpcomingRow }) => {
       if (row.type === "header") {
@@ -1152,6 +1170,34 @@ export default function ShowsScreen() {
             showsVerticalScrollIndicator={false}
             onScroll={onWatchListScroll}
             scrollEventThrottle={32}
+            ListFooterComponent={
+              tmdbOnlyShows.length > 0 ? (
+                <View style={styles.tmdbOnlySection}>
+                  <Text style={styles.tmdbOnlySectionTitle}>{t.shows.tmdbOnlyTitle}</Text>
+                  <View style={styles.tmdbOnlyRow}>
+                    {tmdbOnlyShows.map((s) => (
+                      <Pressable
+                        key={s.id}
+                        style={styles.tmdbOnlyCard}
+                        onPress={() => router.push(`/show/tmdb/${s.tmdb_id}`)}
+                      >
+                        {s.poster_path ? (
+                          <Animated.Image
+                            source={{ uri: posterUrl(s.poster_path, "w200") ?? undefined }}
+                            style={styles.tmdbOnlyPoster}
+                          />
+                        ) : (
+                          <View style={[styles.tmdbOnlyPoster, styles.tmdbOnlyPosterFallback]} />
+                        )}
+                        <Text style={styles.tmdbOnlyCardTitle} numberOfLines={2}>
+                          {s.title}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              ) : null
+            }
           />
           {loadingHistory && (
             <View style={styles.historyLoadingOverlay} pointerEvents="none">
@@ -1233,6 +1279,20 @@ function createStyles(colors: Colors) {
     marginTop: 8,
   },
   content: { padding: 16 },
+  tmdbOnlySection: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 24 },
+  tmdbOnlySectionTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.textMuted,
+    marginBottom: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  tmdbOnlyRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  tmdbOnlyCard: { width: 90 },
+  tmdbOnlyPoster: { width: 90, height: 135, borderRadius: radius.md, backgroundColor: colors.pillBg },
+  tmdbOnlyPosterFallback: { alignItems: "center", justifyContent: "center" },
+  tmdbOnlyCardTitle: { fontSize: 12, color: colors.text, marginTop: 6, fontWeight: "600" },
   groupHeaderRow: {
     height: HEADER_HEIGHT,
     flexDirection: "row",

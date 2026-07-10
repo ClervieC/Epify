@@ -50,6 +50,7 @@ export function MovieRatingSection({
         {[1, 2, 3, 4, 5].map((n) => (
           <RatingStar
             key={n}
+            index={n}
             filled={!!(rating && rating >= n)}
             onPress={() => onRate(n)}
             colors={colors}
@@ -97,6 +98,7 @@ export function MovieRatingSection({
         onSubmit={onSubmitComment}
         onDelete={onDeleteComment}
         onToggleReaction={onToggleReaction}
+        reportTargetType="movie_comment"
       />
     </View>
   );
@@ -105,11 +107,13 @@ export function MovieRatingSection({
 type Styles = ReturnType<typeof createStyles>;
 
 function RatingStar({
+  index,
   filled,
   onPress,
   colors,
   styles,
 }: {
+  index: number;
   filled: boolean;
   onPress: () => void;
   colors: Colors;
@@ -118,7 +122,14 @@ function RatingStar({
   const { scale, onPressIn, onPressOut } = useScalePress(0.75);
 
   return (
-    <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={onPress} style={styles.starCol}>
+    <Pressable
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      onPress={onPress}
+      style={styles.starCol}
+      accessibilityRole="button"
+      accessibilityLabel={`Rate ${index} star${index > 1 ? "s" : ""}`}
+    >
       <Animated.View style={{ transform: [{ scale }] }}>
         <Ionicons name={filled ? "star" : "star-outline"} size={28} color={filled ? colors.starOn : colors.starOff} />
       </Animated.View>

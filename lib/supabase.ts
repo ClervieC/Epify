@@ -1,7 +1,9 @@
 import "react-native-url-polyfill/auto";
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
-import { Alert } from "react-native";
+import { Platform } from "react-native";
 import { createClient } from "@supabase/supabase-js";
+import { fetchWithTimeout } from "./fetchTimeout";
+import { alert } from "./alert";
 
 // The package's default export is a legacy singleton backed by
 // window.localStorage on web (~5-10MB, shared with the unbounded TVmaze/TMDB
@@ -57,7 +59,7 @@ async function resilientFetch(input: RequestInfo | URL, init?: RequestInit): Pro
 
   while (true) {
     try {
-      const res = await fetch(input, init);
+      const res = await fetchWithTimeout(input, init);
       if (isWrite && res.status >= 500 && attempt < MAX_WRITE_RETRIES) {
         attempt++;
         await sleep(backoffDelay(attempt));
@@ -83,7 +85,7 @@ async function resilientFetch(input: RequestInfo | URL, init?: RequestInit): Pro
 
 function notifyWriteFailed() {
   const { title, message } = WRITE_FAILED_TEXT[alertLanguage];
-  Alert.alert(title, message);
+  alert(title, message);
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -91,7 +93,15 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     storage: authStorage,
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false,
+    // Lets a clicked email-confirmation (or magic-link/OAuth) redirect land
+    // on the site with the session already picked up from the URL — the
+    // client parses the #access_token fragment, stores it, and fires
+    // onAuthStateChange, which AuthContext already listens for (see
+    // context/AuthContext.tsx), so no extra glue is needed here. Only
+    // meaningful on web: there's no browser location/URL fragment to detect
+    // on native, and the underlying window.location access this relies on
+    // isn't safe to leave on there.
+    detectSessionInUrl: Platform.OS === "web",
   },
   global: {
     fetch: resilientFetch,

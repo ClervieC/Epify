@@ -75,6 +75,20 @@ export async function loadWatchingSnapshot(): Promise<TrackedShowSnapshot[] | nu
   }
 }
 
+// Called on sign-out (see context/AuthContext.tsx) — this key has no user id
+// in it at all, so without clearing it, a different account signing in on
+// the same device would instantly render whichever account was previously
+// signed in here's watching list, straight from disk, before any fresh
+// fetch for the new user overwrites it.
+export async function clearWatchingSnapshot(): Promise<void> {
+  try {
+    await storage.removeItem(STORAGE_KEY);
+  } catch {
+    // Best-effort — worst case the next sign-in briefly shows a stale
+    // snapshot until the real fetch lands, same as any other cache miss.
+  }
+}
+
 // Structurally matches app/(tabs)/index.tsx's TrackedShow — expressed as a
 // generic bound rather than an import, so this module stays free of any
 // UI-layer dependency (see the comment on TrackedShowSnapshot above).

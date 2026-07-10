@@ -8,9 +8,11 @@ import { fetchNotifications, EnrichedNotification } from "../lib/notifications";
 import { useNotifications } from "../context/NotificationsContext";
 import { Avatar } from "../components/Avatar";
 import { EmptyState } from "../components/EmptyState";
+import { useGoBack } from "../lib/useGoBack";
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const goBack = useGoBack("/(tabs)/profile");
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -36,7 +38,7 @@ export default function NotificationsScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>{t.social.notifications}</Text>

@@ -507,3 +507,127 @@ as $$
 $$;
 
 grant execute on function public.movie_feeling_counts(integer) to authenticated;
+
+-- ============================================================
+-- Admin flag + content/user reporting. Purely additive — safe to run once
+-- against an existing database.
+-- ============================================================
+
+-- Set manually on your own row from the Supabase dashboard (Table Editor ->
+-- profiles -> your row -> is_admin = true). No client code ever sets this —
+-- see the RLS policies below, which don't grant users update access to it.
+alter table public.profiles add column if not exists is_admin boolean not null default false;
+
+create type report_target as enum ('user', 'comment', 'movie_comment', 'show', 'episode', 'movie');
+create type report_status as enum ('open', 'resolved', 'dismissed');
+
+create table if not exists public.reports (
+  id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references auth.users (id) on delete cascade,
+  target_type report_target not null,
+  -- Exactly one of these is set, matching target_type: a uuid FK for
+  -- user/comment/movie_comment targets (rows that exist in this database),
+  -- or a plain external id for show/episode (TVmaze) and movie (TMDB),
+  -- which have no local row to foreign-key to.
+  target_user_id uuid references auth.users (id) on delete cascade,
+  target_comment_id uuid references public.comments (id) on delete cascade,
+  target_movie_comment_id uuid references public.movie_comments (id) on delete cascade,
+  target_tvmaze_show_id integer,
+  target_tvmaze_episode_id integer,
+  target_tmdb_id integer,
+  reason text not null check (char_length(trim(reason)) between 1 and 500),
+  status report_status not null default 'open',
+  -- Admin-only moderation note (why resolved/dismissed) — never shown to
+  -- the reporter.
+  resolution_note text,
+  resolved_by uuid references auth.users (id) on delete set null,
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+alter table public.reports enable row level security;
+
+-- Reporters can file reports and see their own (so a future "my reports"
+-- view could show status), but never anyone else's — a report often names
+-- a specific person, which isn't something to expose broadly.
+create policy "Users create their own reports"
+  on public.reports
+  for insert
+  with check (auth.uid() = reporter_id);
+
+create policy "Users view their own reports"
+  on public.reports
+  for select
+  using (auth.uid() = reporter_id);
+
+-- Admins see and act on every report. Checked directly against
+-- profiles.is_admin — profiles is already readable by any authenticated
+-- user (see "Profiles are viewable by authenticated users" above), so this
+-- doesn't need a SECURITY DEFINER function to avoid an RLS deadlock.
+create policy "Admins view all reports"
+  on public.reports
+  for select
+  using (exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin));
+
+create policy "Admins update reports"
+  on public.reports
+  for update
+  using (exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin))
+  with check (exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin));
+
+create index if not exists reports_status_idx on public.reports (status, created_at desc);
+create index if not exists reports_reporter_idx on public.reports (reporter_id);
+
+-- ============================================================
+-- TMDB-only show bookmarks — for shows not yet indexed by TVmaze (this
+-- app's real source for episode-level tracking; see comments throughout
+-- lib/tvmaze.ts). Deliberately a separate table rather than widening
+-- user_shows.tvmaze_id to nullable: nearly the whole app (Watch Next,
+-- watched-episode tracking, the offline snapshot, comments/reports, ...)
+-- assumes every tracked show has a real TVmaze id, and threading "maybe
+-- null" through all of that for a genuinely rare case (a show TVmaze
+-- doesn't have yet) would be a much bigger, riskier change than this
+-- simple bookmark list — which auto-upgrades to a real tracked user_shows
+-- row the moment TVmaze does pick the show up (see the resolve check in
+-- app/show/tmdb/[id].tsx). Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.tmdb_only_shows (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  tmdb_id integer not null,
+  title text not null,
+  poster_path text,
+  created_at timestamptz not null default now(),
+  unique (user_id, tmdb_id)
+);
+
+alter table public.tmdb_only_shows enable row level security;
+
+create policy "Users manage their own tmdb-only show bookmarks"
+  on public.tmdb_only_shows
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+-- ============================================================
+-- Show stats cache — the "watch time"/"episodes watched" detail page
+-- (episodes/week, remaining episodes, genre breakdown) needs several TVmaze
+-- calls per tracked show plus a full scan of watched_episodes, too slow to
+-- redo on every visit. One row per user holding the last computed result as
+-- JSON; the client repaints from this instantly and only recomputes (then
+-- overwrites this row) when it's missing or older than the screen's own TTL.
+-- Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.show_stats_cache (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  payload jsonb not null,
+  computed_at timestamptz not null default now()
+);
+
+alter table public.show_stats_cache enable row level security;
+
+create policy "Users manage their own show stats cache"
+  on public.show_stats_cache
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);

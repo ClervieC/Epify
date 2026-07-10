@@ -13,6 +13,7 @@ import { WatchedCheck } from "../../components/WatchedCheck";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { useGrowIn, useMountIn, useScalePress } from "../../lib/animations";
+import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
 
 const SCREEN_PADDING = 16;
 const GAP = 12;
@@ -49,6 +50,12 @@ export default function MoviesScreen() {
   const { width } = useWindowDimensions();
   const columns = Math.max(3, Math.floor((width - SCREEN_PADDING * 2 + GAP) / (TARGET_COLUMN_WIDTH + GAP)));
   const underlineGrow = useGrowIn(tab);
+  const listRef = useRef<FlatList<Block>>(null);
+  const upcomingListRef = useRef<FlatList<UpcomingEntry>>(null);
+  useScrollToTopOnTabPress(() => {
+    const ref = tab === "list" ? listRef : upcomingListRef;
+    ref.current?.scrollToOffset({ offset: 0, animated: true });
+  });
 
   const lastLoadedAt = useRef(0);
   const reload = useCallback(() => {
@@ -186,6 +193,7 @@ export default function MoviesScreen() {
           </View>
         ) : (
           <FlatList
+            ref={listRef}
             contentContainerStyle={styles.list}
             data={blocks}
             keyExtractor={(block) => block.key}
@@ -227,6 +235,7 @@ export default function MoviesScreen() {
         </View>
       ) : (
         <FlatList
+          ref={upcomingListRef}
           contentContainerStyle={styles.upcomingList}
           data={upcoming}
           keyExtractor={(entry) => entry.movie.id}

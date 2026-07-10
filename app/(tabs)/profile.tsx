@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Alert, ActivityIndicator, Platform, Switch, Linking } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, ActivityIndicator, Platform, Switch, Linking } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
@@ -13,16 +13,20 @@ import { importTvTimeCsv, importTvTimeJson, ImportProgress } from "../../lib/tvt
 import { useColors, useThemeMode, radius, type, Colors, ThemeMode } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { Language } from "../../lib/userSettings";
-import { fetchMyProfile, createProfile, Profile } from "../../lib/profiles";
+import { fetchMyProfile, Profile } from "../../lib/profiles";
 import { fetchFollowCounts } from "../../lib/follows";
+import { changePassword, exportMyData, deleteAccount } from "../../lib/account";
+import { fetchOpenReportCount } from "../../lib/reports";
+import { loadProfileSnapshot, saveProfileSnapshot } from "../../lib/profileSnapshot";
+import { alert } from "../../lib/alert";
+import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
 import { useNotifications } from "../../context/NotificationsContext";
 import { ShowCard } from "../../components/ShowCard";
 import { MovieCard } from "../../components/MovieCard";
 import { Pill } from "../../components/Pill";
 import { Avatar } from "../../components/Avatar";
 import { EmptyState } from "../../components/EmptyState";
-
-const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+import { Sheet } from "../../components/Sheet";
 
 const AVG_EPISODE_MINUTES = 42;
 // TMDB runtime per movie isn't fetched in bulk here (that's up to 700+ calls
@@ -63,10 +67,14 @@ export default function ProfileScreen() {
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [usernameInput, setUsernameInput] = useState("");
-  const [usernameError, setUsernameError] = useState<string | null>(null);
-  const [savingUsername, setSavingUsername] = useState(false);
   const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [exportingData, setExportingData] = useState(false);
+  const [openReportCount, setOpenReportCount] = useState(0);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const { unreadCount, refresh: refreshNotifications } = useNotifications();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -74,18 +82,54 @@ export default function ProfileScreen() {
   const { themeMode, setThemeMode } = useThemeMode();
 
   const lastLoadedAt = useRef(0);
+  const scrollRef = useRef<ScrollView>(null);
+  useScrollToTopOnTabPress(() => scrollRef.current?.scrollTo({ y: 0, animated: true }));
+  // Seeds every list/count from the last on-disk snapshot (see
+  // lib/profileSnapshot.ts) so the screen paints instantly on open instead of
+  // sitting blank until the nine Supabase round trips below land — mirrors
+  // the Shows tab's own watchingSnapshot pattern. Runs once, before the first
+  // load() below overwrites it with fresh data.
+  useEffect(() => {
+    let active = true;
+    loadProfileSnapshot().then((snapshot) => {
+      if (!active || !snapshot) return;
+      setShows(snapshot.shows);
+      setMovies(snapshot.movies);
+      setFavoriteMovies(snapshot.favoriteMovies);
+      setFavorites(snapshot.favorites);
+      setLists(snapshot.lists);
+      setListItems(snapshot.listItems);
+      setEpisodeCount(snapshot.episodeCount);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const load = useCallback(() => {
     lastLoadedAt.current = Date.now();
-    fetchUserShows().then(setShows);
-    fetchUserMovies().then(setMovies);
-    fetchFavoriteMovies().then(setFavoriteMovies);
-    fetchFavorites().then(setFavorites);
-    fetchLists().then(setLists);
-    fetchAllListItems().then(setListItems);
-    fetchEpisodeCount().then(setEpisodeCount);
+    Promise.all([
+      fetchUserShows(),
+      fetchUserMovies(),
+      fetchFavoriteMovies(),
+      fetchFavorites(),
+      fetchLists(),
+      fetchAllListItems(),
+      fetchEpisodeCount(),
+    ]).then(([shows, movies, favoriteMovies, favorites, lists, listItems, episodeCount]) => {
+      setShows(shows);
+      setMovies(movies);
+      setFavoriteMovies(favoriteMovies);
+      setFavorites(favorites);
+      setLists(lists);
+      setListItems(listItems);
+      setEpisodeCount(episodeCount);
+      saveProfileSnapshot({ shows, movies, favoriteMovies, favorites, lists, listItems, episodeCount });
+    });
     fetchMyProfile().then((p) => {
       setProfile(p);
       if (p) fetchFollowCounts(p.user_id).then(setFollowCounts);
+      if (p?.is_admin) fetchOpenReportCount().then(setOpenReportCount).catch(() => {});
     });
   }, []);
 
@@ -101,24 +145,6 @@ export default function ProfileScreen() {
     setFavoriteMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
   }, []);
 
-  async function handleSaveUsername() {
-    setUsernameError(null);
-    if (!USERNAME_RE.test(usernameInput)) {
-      setUsernameError(t.signup.usernameInvalid);
-      return;
-    }
-    setSavingUsername(true);
-    try {
-      const created = await createProfile(usernameInput);
-      setProfile(created);
-      fetchFollowCounts(created.user_id).then(setFollowCounts);
-    } catch {
-      setUsernameError(t.signup.usernameTaken);
-    } finally {
-      setSavingUsername(false);
-    }
-  }
-
   useFocusEffect(
     useCallback(() => {
       // Unconditional (unlike load() below) — app/(tabs)/_layout.tsx's own
@@ -131,6 +157,56 @@ export default function ProfileScreen() {
       load();
     }, [load, refreshNotifications])
   );
+
+  async function handleChangePassword() {
+    setPasswordError(null);
+    if (newPassword.length < 6) {
+      setPasswordError(t.profile.changePasswordTooShort);
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await changePassword(newPassword);
+      setNewPassword("");
+      setChangePasswordOpen(false);
+      alert(t.profile.changePassword, t.profile.changePasswordSuccess);
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  async function handleDownloadData() {
+    setExportingData(true);
+    try {
+      await exportMyData();
+    } catch {
+      alert(t.profile.downloadMyData, t.profile.downloadMyDataFailed);
+    } finally {
+      setExportingData(false);
+    }
+  }
+
+  function handleDeleteAccount() {
+    alert(t.profile.deleteAccountConfirmTitle, t.profile.deleteAccountConfirmMessage, [
+      { text: t.profile.deleteAccountConfirmButton, style: "destructive", onPress: confirmDeleteAccount },
+      { text: t.common.cancel, style: "cancel" },
+    ]);
+  }
+
+  async function confirmDeleteAccount() {
+    setDeletingAccount(true);
+    try {
+      await deleteAccount();
+      // deleteAccount() already signs out — AuthContext's session listener
+      // (see context/AuthContext.tsx) takes it from there and redirects to
+      // login, same as a normal sign-out.
+    } catch {
+      setDeletingAccount(false);
+      alert(t.profile.deleteAccount, t.profile.deleteAccountFailed);
+    }
+  }
 
   async function handleCreateList() {
     if (!newListName.trim()) return;
@@ -152,7 +228,7 @@ export default function ProfileScreen() {
     const isJson = name.endsWith(".json");
     const isCsv = name.endsWith(".csv");
     if (!isJson && !isCsv) {
-      Alert.alert(t.profile.importInvalidFileTitle, t.profile.importInvalidFileMsg);
+      alert(t.profile.importInvalidFileTitle, t.profile.importInvalidFileMsg);
       return;
     }
 
@@ -178,12 +254,12 @@ export default function ProfileScreen() {
             )
           : "";
 
-      Alert.alert(
+      alert(
         t.profile.importDoneTitle,
         t.profile.importDone(summary.showsImported, summary.episodesImported, summary.moviesImported) + unmatchedNote
       );
     } catch (e) {
-      Alert.alert(t.profile.importFailedTitle, e instanceof Error ? e.message : t.profile.importFailedUnknown);
+      alert(t.profile.importFailedTitle, e instanceof Error ? e.message : t.profile.importFailedUnknown);
     } finally {
       setImporting(false);
       setImportProgress(null);
@@ -201,7 +277,7 @@ export default function ProfileScreen() {
   const movieTime = formatTvTime(movieWatchCount * AVG_MOVIE_MINUTES);
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView ref={scrollRef} style={styles.container} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
         <Avatar name={displayName} size="md" />
         <View style={styles.headerInfo}>
@@ -212,13 +288,18 @@ export default function ProfileScreen() {
             </Text>
           )}
         </View>
-        <Pressable style={styles.bellBtn} onPress={() => router.push("/notifications")}>
+        <Pressable
+          style={styles.bellBtn}
+          onPress={() => router.push("/notifications")}
+          accessibilityRole="button"
+          accessibilityLabel={t.social.notifications}
+        >
           <Ionicons name="notifications-outline" size={20} color={colors.text} />
           {unreadCount > 0 && <View style={styles.bellBadge} />}
         </Pressable>
       </View>
 
-      {profile ? (
+      {profile && (
         <View style={styles.followRow}>
           <Pressable
             style={styles.followStat}
@@ -234,29 +315,6 @@ export default function ProfileScreen() {
             <Text style={styles.followNumber}>{followCounts.following}</Text>
             <Text style={styles.followLabel}>{t.profile.following}</Text>
           </Pressable>
-        </View>
-      ) : (
-        <View style={styles.usernamePrompt}>
-          <Text style={styles.usernamePromptTitle}>{t.social.setUsernameTitle}</Text>
-          <Text style={styles.usernamePromptDesc}>{t.social.setUsernameDesc}</Text>
-          <View style={styles.newListRow}>
-            <TextInput
-              style={styles.newListInput}
-              placeholder={t.social.usernamePlaceholder}
-              placeholderTextColor={colors.textFaint}
-              autoCapitalize="none"
-              value={usernameInput}
-              onChangeText={setUsernameInput}
-            />
-            <Pressable style={styles.newListBtn} onPress={handleSaveUsername} disabled={savingUsername}>
-              {savingUsername ? (
-                <ActivityIndicator color={colors.onAccent} />
-              ) : (
-                <Ionicons name="checkmark" size={20} color={colors.onAccent} />
-              )}
-            </Pressable>
-          </View>
-          {usernameError && <Text style={styles.usernameError}>{usernameError}</Text>}
         </View>
       )}
 
@@ -274,6 +332,7 @@ export default function ProfileScreen() {
           value={`${tvTime.months}${t.profile.months[0]} ${tvTime.days}${t.profile.days[0]} ${tvTime.hours}${t.profile.hours[0]}`}
           colors={colors}
           styles={styles}
+          onPress={() => router.push("/stats/shows")}
         />
         <StatCard
           icon="checkmark-circle-outline"
@@ -281,6 +340,7 @@ export default function ProfileScreen() {
           value={episodeCount.toLocaleString()}
           colors={colors}
           styles={styles}
+          onPress={() => router.push("/stats/shows")}
         />
         <StatCard
           icon="time-outline"
@@ -492,9 +552,77 @@ export default function ProfileScreen() {
         <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
       </Pressable>
 
+      <SectionHeader title={t.profile.account} styles={styles} />
+      {profile?.is_admin && (
+        <Pressable style={styles.importRow} onPress={() => router.push("/admin")}>
+          <View>
+            <Ionicons name="shield-outline" size={20} color={colors.accent} />
+            {openReportCount > 0 && <View style={styles.adminBadge} />}
+          </View>
+          <Text style={[styles.importRowTitle, { flex: 1, color: colors.accent }]}>{t.profile.admin}</Text>
+          {openReportCount > 0 && (
+            <View style={styles.adminCountPill}>
+              <Text style={styles.adminCountPillText}>{openReportCount}</Text>
+            </View>
+          )}
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        </Pressable>
+      )}
+      <Pressable style={styles.importRow} onPress={() => setChangePasswordOpen(true)}>
+        <Ionicons name="key-outline" size={20} color={colors.text} />
+        <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.changePassword}</Text>
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+      </Pressable>
+      <Pressable style={styles.importRow} onPress={handleDownloadData} disabled={exportingData}>
+        <Ionicons name="download-outline" size={20} color={colors.text} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.importRowTitle}>{t.profile.downloadMyData}</Text>
+          <Text style={styles.importRowSubtitle}>{t.profile.downloadMyDataDesc}</Text>
+        </View>
+        {exportingData ? (
+          <ActivityIndicator color={colors.black} />
+        ) : (
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        )}
+      </Pressable>
+      <Pressable style={styles.importRow} onPress={handleDeleteAccount} disabled={deletingAccount}>
+        <Ionicons name="trash-outline" size={20} color={colors.red} />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.importRowTitle, { color: colors.red }]}>{t.profile.deleteAccount}</Text>
+          <Text style={styles.importRowSubtitle}>{t.profile.deleteAccountDesc}</Text>
+        </View>
+        {deletingAccount && <ActivityIndicator color={colors.red} />}
+      </Pressable>
+
       <Pressable style={styles.signOut} onPress={() => supabase.auth.signOut()}>
         <Text style={styles.signOutText}>{t.profile.signOut}</Text>
       </Pressable>
+
+      <Sheet visible={changePasswordOpen} onClose={() => setChangePasswordOpen(false)}>
+        <Text style={styles.sectionTitle}>{t.profile.changePassword}</Text>
+        <TextInput
+          style={styles.newListInput}
+          placeholder={t.profile.newPassword}
+          placeholderTextColor={colors.textFaint}
+          secureTextEntry
+          value={newPassword}
+          onChangeText={setNewPassword}
+        />
+        {passwordError && <Text style={{ color: colors.red, marginBottom: 8 }}>{passwordError}</Text>}
+        <Pressable
+          style={styles.modalSubmitBtn}
+          onPress={handleChangePassword}
+          disabled={changingPassword}
+          accessibilityRole="button"
+          accessibilityLabel={t.profile.changePasswordConfirm}
+        >
+          {changingPassword ? (
+            <ActivityIndicator color={colors.onAccent} />
+          ) : (
+            <Text style={styles.modalSubmitBtnText}>{t.profile.changePasswordConfirm}</Text>
+          )}
+        </Pressable>
+      </Sheet>
     </ScrollView>
   );
 }
@@ -518,21 +646,25 @@ function StatCard({
   value,
   colors,
   styles,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   value: string;
   colors: Colors;
   styles: ProfileStyles;
+  onPress?: () => void;
 }) {
+  const Wrapper = onPress ? Pressable : View;
   return (
-    <View style={styles.statCard}>
+    <Wrapper style={styles.statCard} onPress={onPress}>
       <View style={styles.statCardIcon}>
         <Ionicons name={icon} size={16} color={colors.accent} />
       </View>
       <Text style={styles.statCardLabel}>{label}</Text>
       <Text style={styles.statCardValue}>{value}</Text>
-    </View>
+      {onPress && <Ionicons name="chevron-forward" size={14} color={colors.textFaint} style={styles.statCardChevron} />}
+    </Wrapper>
   );
 }
 
@@ -608,6 +740,25 @@ function createStyles(colors: Colors) {
     borderRadius: 4,
     backgroundColor: colors.red,
   },
+  adminBadge: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.red,
+    borderWidth: 1.5,
+    borderColor: colors.surface,
+  },
+  adminCountPill: {
+    backgroundColor: colors.red,
+    borderRadius: radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginRight: 4,
+  },
+  adminCountPillText: { color: "#ffffff", fontSize: 11, fontWeight: "800" },
   followRow: {
     flexDirection: "row",
     marginHorizontal: 16,
@@ -620,17 +771,6 @@ function createStyles(colors: Colors) {
   followStatBorder: { borderLeftWidth: 1, borderLeftColor: colors.border },
   followNumber: { fontSize: type.title, fontWeight: "800", color: colors.text },
   followLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  usernamePrompt: {
-    marginHorizontal: 16,
-    marginTop: 4,
-    marginBottom: 4,
-    padding: 16,
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.md,
-  },
-  usernamePromptTitle: { fontWeight: "800", fontSize: type.body, color: colors.text },
-  usernamePromptDesc: { fontSize: 13, color: colors.textMuted, marginTop: 4, marginBottom: 12 },
-  usernameError: { fontSize: 12, color: colors.red, marginTop: 8 },
   sectionHeader: {
     paddingHorizontal: 16,
     paddingTop: 24,
@@ -646,6 +786,7 @@ function createStyles(colors: Colors) {
     borderRadius: radius.md,
     padding: 12,
   },
+  statCardChevron: { position: "absolute", top: 12, right: 12 },
   statCardIcon: {
     width: 26,
     height: 26,
@@ -693,6 +834,14 @@ function createStyles(colors: Colors) {
     alignItems: "center",
     justifyContent: "center",
   },
+  modalSubmitBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.sm,
+    padding: 14,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  modalSubmitBtnText: { color: colors.onAccent, fontWeight: "700", fontSize: 15 },
   createList: {
     flexDirection: "row",
     alignItems: "center",

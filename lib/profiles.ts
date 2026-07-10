@@ -3,6 +3,7 @@ import { supabase, getCurrentUserId } from "./supabase";
 export interface Profile {
   user_id: string;
   username: string;
+  is_admin: boolean;
 }
 
 export async function fetchMyProfile(): Promise<Profile | null> {

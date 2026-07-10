@@ -10,7 +10,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   Image,
-  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect, useNavigation } from "expo-router";
@@ -42,6 +41,7 @@ import { useLanguage, Translations } from "../../lib/i18n";
 import { useScalePress, useMountIn, useGrowIn } from "../../lib/animations";
 import { mapWithConcurrency } from "../../lib/concurrency";
 import { EmptyState } from "../../components/EmptyState";
+import { alert } from "../../lib/alert";
 
 type ExploreTab = "shows" | "movies";
 type Category<T> = { key: string; title: string; data: T[] };
@@ -53,6 +53,18 @@ export default function ExploreScreen() {
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<TVMazeShow[]>([]);
   const [movieSearchResults, setMovieSearchResults] = useState<TMDBSearchResult[]>([]);
+  // True while a debounced search is in flight — without this, the results
+  // grid briefly showed "No results for X" (searchResults/movieSearchResults
+  // still empty from the previous query, or from the initial empty state)
+  // before the real results popped in, which read as the search being slow
+  // even when the network round trip itself was normal.
+  const [searching, setSearching] = useState(false);
+  // Bumped on every keystroke's scheduled search — lets a slow, stale
+  // request's results be discarded if a newer one has already landed
+  // (typing "batman", then quickly backspacing to "bat" shouldn't have the
+  // slower "batman" response overwrite "bat"'s results just because it
+  // happened to resolve later).
+  const searchGeneration = useRef(0);
   const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
   const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
   const [movieTmdbMap, setMovieTmdbMap] = useState<Map<number, UserMovie>>(new Map());
@@ -81,6 +93,7 @@ export default function ExploreScreen() {
   // later one (each render closes over its own fresh variable) — a ref
   // persists across renders like a real instance field would.
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scrollRef = useRef<ScrollView>(null);
 
   // TMDB's own curated lists (popular/top rated/now playing or on-the-air/
   // upcoming) replace what used to be a client-side sample of TVmaze's shows
@@ -95,7 +108,7 @@ export default function ExploreScreen() {
           [
             { key: "popularTv", title: t.explore.categoryPopularMovies, data: popular },
             { key: "topRatedTv", title: t.explore.categoryTopRatedMovies, data: topRated },
-            { key: "onTheAirTv", title: t.explore.categoryNowPlayingMovies, data: onTheAir },
+            { key: "onTheAirTv", title: t.explore.categoryOnTheAirTv, data: onTheAir },
             { key: "upcomingTv", title: t.explore.categoryUpcomingMovies, data: upcoming },
           ].filter((c) => c.data.length > 0),
         );
@@ -170,25 +183,47 @@ export default function ExploreScreen() {
           ),
         );
       });
-      // Clear the search on the way out, so coming back to a fresh Explore
-      // (from another tab) never shows a stale query/result set.
       return () => {
         active = false;
-        setQuery("");
-        setSearchResults([]);
-        setMovieSearchResults([]);
       };
     }, []),
   );
 
   // Re-tapping the Explore tab while already on it doesn't change focus (no
-  // navigation happens), so the blur cleanup above never runs — this listens
-  // for that specific re-tap to clear the search the same way.
+  // navigation happens), so it needs its own listener to clear the search.
   useEffect(() => {
     const unsubscribe = (navigation as any).addListener("tabPress", () => {
       setQuery("");
       setSearchResults([]);
       setMovieSearchResults([]);
+      // Whichever of the three ScrollViews below is actually mounted right
+      // now (search results / shows discover / movies discover — only one
+      // ever is) gets this same ref.
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  // Clears the search when the user actually leaves Explore for a sibling
+  // tab (Shows/Movies/Profile) — deliberately NOT done via useFocusEffect's
+  // blur (as this used to be): that also fires when a screen is pushed on
+  // the *root* stack on top of the tabs (e.g. opening a search result's
+  // detail page), which wiped the search out from under the user the
+  // moment they tapped a result — pressing back then landed on an empty
+  // Explore instead of back on their results. Listening to the *tabs*
+  // navigator's own state instead only fires on an actual tab change,
+  // since a root-stack push never touches the tabs navigator's state.
+  useEffect(() => {
+    const tabNavigation = navigation.getParent();
+    if (!tabNavigation) return;
+    const unsubscribe = tabNavigation.addListener("state", () => {
+      const state = tabNavigation.getState();
+      const focusedRouteName = state?.routes[state.index]?.name;
+      if (focusedRouteName && focusedRouteName !== "explore") {
+        setQuery("");
+        setSearchResults([]);
+        setMovieSearchResults([]);
+      }
     });
     return unsubscribe;
   }, [navigation]);
@@ -197,19 +232,27 @@ export default function ExploreScreen() {
     setQuery(text);
     clearTimeout(timer.current);
     if (!text.trim()) {
+      searchGeneration.current++;
+      setSearching(false);
       setSearchResults([]);
       setMovieSearchResults([]);
       return;
     }
+    const generation = ++searchGeneration.current;
+    setSearching(true);
     timer.current = setTimeout(async () => {
       // Neither source failing should block the other's results.
       const [shows, movies] = await Promise.all([
         searchShows(text).catch(() => []),
         searchMovies(text).catch(() => []),
       ]);
+      // A newer keystroke already superseded this request — its own
+      // (presumably faster, cached-by-then) results win instead.
+      if (generation !== searchGeneration.current) return;
       setSearchResults(shows.map((d) => d.show));
       setMovieSearchResults(movies);
-    }, 400);
+      setSearching(false);
+    }, 300);
   }
 
   async function quickAdd(show: TVMazeShow) {
@@ -301,16 +344,31 @@ export default function ExploreScreen() {
     if (cached) return cached;
     const resolved = await findTvmazeShowFromTmdbTv(show.id);
     if (!resolved) {
-      Alert.alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
+      alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
       return null;
     }
     setResolvedTvShows((prev) => new Map(prev).set(show.id, resolved));
     return resolved;
   }
 
+  // Doesn't go through resolveTvmazeShow (which alerts on failure) — opening
+  // is the one action here that has a working fallback for a show TVmaze
+  // doesn't have at all (see app/show/tmdb/[id].tsx), unlike adding to a
+  // list or favoriting, which genuinely can't do anything without a TVmaze
+  // id to attach that state to.
   async function openTmdbShow(show: TMDBTvResult) {
-    const resolved = await resolveTvmazeShow(show);
-    if (resolved) router.push(`/show/${resolved.id}`);
+    const cached = resolvedTvShows.get(show.id);
+    if (cached) {
+      router.push(`/show/${cached.id}`);
+      return;
+    }
+    const resolved = await findTvmazeShowFromTmdbTv(show.id);
+    if (resolved) {
+      setResolvedTvShows((prev) => new Map(prev).set(show.id, resolved));
+      router.push(`/show/${resolved.id}`);
+    } else {
+      router.push(`/show/tmdb/${show.id}`);
+    }
   }
 
   async function quickAddTmdbShow(show: TMDBTvResult) {
@@ -338,7 +396,12 @@ export default function ExploreScreen() {
           onChangeText={onChangeText}
         />
         {isSearching && (
-          <Pressable onPress={() => onChangeText("")} hitSlop={8}>
+          <Pressable
+            onPress={() => onChangeText("")}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+          >
             <Ionicons name="close-circle" size={18} color={colors.textFaint} />
           </Pressable>
         )}
@@ -358,9 +421,13 @@ export default function ExploreScreen() {
       )}
 
       {isSearching ? (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.searchScroll}>
+        <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false} contentContainerStyle={styles.searchScroll}>
           {searchResults.length === 0 && movieSearchResults.length === 0 ? (
-            <EmptyState icon="search-outline" title={t.explore.noResults(query)} />
+            searching ? (
+              <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
+            ) : (
+              <EmptyState icon="search-outline" title={t.explore.noResults(query)} />
+            )
           ) : (
             <>
               {searchResults.length > 0 && (
@@ -411,6 +478,7 @@ export default function ExploreScreen() {
         </ScrollView>
       ) : subTab === "shows" ? (
         <ScrollView
+          ref={scrollRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.categoriesScroll}
         >
@@ -450,6 +518,7 @@ export default function ExploreScreen() {
         </ScrollView>
       ) : (
         <ScrollView
+          ref={scrollRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.categoriesScroll}
         >

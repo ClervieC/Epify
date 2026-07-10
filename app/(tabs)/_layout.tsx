@@ -5,17 +5,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { useColors, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useNotifications } from "../../context/NotificationsContext";
+import { useActivityUnseen } from "../../context/ActivityContext";
 
 interface TabBarProps {
   state: { routes: { key: string; name: string }[]; index: number };
   navigation: any;
   unreadCount: number;
+  hasUnseenActivity: boolean;
 }
 
 const ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   index: "tv-outline",
   movies: "film-outline",
   explore: "search-outline",
+  activity: "pulse-outline",
   profile: "person-outline",
 };
 
@@ -24,11 +27,12 @@ function tabLabels(t: Translations): Record<string, string> {
     index: t.tabs.shows,
     movies: t.tabs.movies,
     explore: t.tabs.explore,
+    activity: t.tabs.activity,
     profile: t.tabs.profile,
   };
 }
 
-function CustomTabBar({ state, navigation, unreadCount }: TabBarProps) {
+function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity }: TabBarProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -65,6 +69,7 @@ function CustomTabBar({ state, navigation, unreadCount }: TabBarProps) {
             <View>
               <Ionicons name={ICONS[route.name]} size={22} color={color} />
               {route.name === "profile" && unreadCount > 0 && <View style={styles.badge} />}
+              {route.name === "activity" && hasUnseenActivity && <View style={styles.badge} />}
             </View>
             <Text style={[styles.label, { color }]}>{labels[route.name]}</Text>
           </Pressable>
@@ -79,6 +84,7 @@ const MIN_REFETCH_INTERVAL_MS = 10_000;
 export default function TabsLayout() {
   const { t } = useLanguage();
   const { unreadCount, refresh } = useNotifications();
+  const { hasUnseen: hasUnseenActivity, refresh: refreshActivity } = useActivityUnseen();
   const lastFetchedAt = useRef(0);
 
   // (tabs) is one Stack.Screen among several siblings (episode/[id], show/[id],
@@ -97,17 +103,19 @@ export default function TabsLayout() {
       if (now - lastFetchedAt.current < MIN_REFETCH_INTERVAL_MS) return;
       lastFetchedAt.current = now;
       refresh();
-    }, [refresh])
+      refreshActivity();
+    }, [refresh, refreshActivity])
   );
 
   return (
     <Tabs
       screenOptions={{ headerShown: false }}
-      tabBar={(props) => <CustomTabBar {...(props as any)} unreadCount={unreadCount} />}
+      tabBar={(props) => <CustomTabBar {...(props as any)} unreadCount={unreadCount} hasUnseenActivity={hasUnseenActivity} />}
     >
       <Tabs.Screen name="index" options={{ title: t.tabs.shows }} />
       <Tabs.Screen name="movies" options={{ title: t.tabs.movies }} />
       <Tabs.Screen name="explore" options={{ title: t.tabs.explore }} />
+      <Tabs.Screen name="activity" options={{ title: t.tabs.activity }} />
       <Tabs.Screen name="profile" options={{ title: t.tabs.profile }} />
     </Tabs>
   );

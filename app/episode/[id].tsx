@@ -36,6 +36,7 @@ import { useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/anim
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { CommentsSection } from "../../components/CommentsSection";
 import { CharacterVote } from "../../components/CharacterVote";
+import { ReportModal } from "../../components/ReportModal";
 import { getCurrentUserId } from "../../lib/supabase";
 import {
   deleteComment,
@@ -79,6 +80,7 @@ export default function EpisodeDetailScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [positioned, setPositioned] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const listRef = useRef<FlatList<TVMazeEpisode>>(null);
   const hasScrolledToInitial = useRef(false);
   const colors = useColors();
@@ -268,11 +270,29 @@ export default function EpisodeDetailScreen() {
       <View style={styles.container}>
         <View style={[styles.overlay, { right: SIDEBAR_WIDTH }]} pointerEvents="box-none">
           <View style={styles.overlayTopRow}>
-            <Pressable style={styles.iconBtn} onPress={() => router.replace("/(tabs)")}>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => router.replace("/(tabs)")}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
               <Ionicons name="chevron-down" size={22} color="#fff" />
             </Pressable>
-            <Pressable style={styles.iconBtn} onPress={() => shareEpisode(currentEpisode)}>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => shareEpisode(currentEpisode)}
+              accessibilityRole="button"
+              accessibilityLabel="Share"
+            >
               <Ionicons name="share-outline" size={20} color="#fff" />
+            </Pressable>
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => setReporting(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t.report.reportEpisode}
+            >
+              <Ionicons name="flag-outline" size={18} color="#fff" />
             </Pressable>
           </View>
           {show && (
@@ -287,6 +307,8 @@ export default function EpisodeDetailScreen() {
           style={[styles.sideNavBtn, styles.sideNavBtnLeft, atStart && styles.sideNavBtnDisabled]}
           onPress={() => goToIndex(currentIndex - 1)}
           disabled={atStart}
+          accessibilityRole="button"
+          accessibilityLabel="Previous episode"
         >
           <Ionicons name="chevron-back" size={22} color="#fff" />
         </Pressable>
@@ -294,6 +316,8 @@ export default function EpisodeDetailScreen() {
           style={[styles.sideNavBtn, styles.sideNavBtnRight, atEnd && styles.sideNavBtnDisabled]}
           onPress={() => goToIndex(currentIndex + 1)}
           disabled={atEnd}
+          accessibilityRole="button"
+          accessibilityLabel="Next episode"
         >
           <Ionicons name="chevron-forward" size={22} color="#fff" />
         </Pressable>
@@ -330,6 +354,11 @@ export default function EpisodeDetailScreen() {
             t={t}
           />
         </View>
+        <ReportModal
+          visible={reporting}
+          onClose={() => setReporting(false)}
+          target={{ targetType: "episode", targetTvmazeShowId: showIdNum, targetTvmazeEpisodeId: currentEpisode.id }}
+        />
       </View>
     );
   }
@@ -338,7 +367,12 @@ export default function EpisodeDetailScreen() {
     <View style={styles.container}>
       <View style={styles.overlay} pointerEvents="box-none">
         <View style={styles.overlayTopRow}>
-          <Pressable style={styles.iconBtn} onPress={() => router.replace("/(tabs)")}>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={() => router.replace("/(tabs)")}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
             <Ionicons name="chevron-down" size={22} color="#fff" />
           </Pressable>
           <View style={styles.dotsRow}>
@@ -346,8 +380,21 @@ export default function EpisodeDetailScreen() {
               <View key={i} style={[styles.dot, i === currentIndex && styles.dotActive]} />
             ))}
           </View>
-          <Pressable style={styles.iconBtn} onPress={() => shareEpisode(episodes[currentIndex])}>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={() => shareEpisode(episodes[currentIndex])}
+            accessibilityRole="button"
+            accessibilityLabel="Share"
+          >
             <Ionicons name="share-outline" size={20} color="#fff" />
+          </Pressable>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={() => setReporting(true)}
+            accessibilityRole="button"
+            accessibilityLabel={t.report.reportEpisode}
+          >
+            <Ionicons name="flag-outline" size={18} color="#fff" />
           </Pressable>
         </View>
         {show && (
@@ -406,6 +453,15 @@ export default function EpisodeDetailScreen() {
           <ActivityIndicator color={colors.black} />
         </View>
       )}
+      <ReportModal
+        visible={reporting}
+        onClose={() => setReporting(false)}
+        target={{
+          targetType: "episode",
+          targetTvmazeShowId: showIdNum,
+          targetTvmazeEpisodeId: episodes[currentIndex]?.id,
+        }}
+      />
     </View>
   );
 }
@@ -791,6 +847,7 @@ function EpisodePage({
               onSubmit={handlePostComment}
               onDelete={handleDeleteComment}
               onToggleReaction={handleToggleReaction}
+              reportTargetType="comment"
             />
           </>
         )}
@@ -815,7 +872,14 @@ function RatingStar({
   const { scale, onPressIn, onPressOut } = useScalePress(0.75);
 
   return (
-    <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={onPress} style={styles.starCol}>
+    <Pressable
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      onPress={onPress}
+      style={styles.starCol}
+      accessibilityRole="button"
+      accessibilityLabel={`Rate ${index} star${index > 1 ? "s" : ""}`}
+    >
       <Animated.View style={{ transform: [{ scale }] }}>
         <Ionicons
           name={filled ? "star" : "star-outline"}

@@ -7,10 +7,12 @@ import { useColors, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { ShowCard } from "../../components/ShowCard";
 import { EmptyState } from "../../components/EmptyState";
+import { useGoBack } from "../../lib/useGoBack";
 
 export default function ListDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const goBack = useGoBack("/(tabs)/profile");
   const [list, setList] = useState<ShowList | null>(null);
   const [items, setItems] = useState<ListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +47,7 @@ export default function ListDetailScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>{list?.name ?? t.listDetail.title}</Text>

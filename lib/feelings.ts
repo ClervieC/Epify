@@ -6,4 +6,7 @@ export const FEELING_EMOJIS = [
   { key: "heartbroken", emoji: "💔" },
   { key: "mindblown", emoji: "🤯" },
   { key: "bored", emoji: "😴" },
+  { key: "touched", emoji: "🥹" },
+  { key: "thrilled", emoji: "🤩" },
+  { key: "confused", emoji: "😕" },
 ] as const;

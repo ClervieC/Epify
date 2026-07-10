@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
+import { useGoBack } from "../../lib/useGoBack";
 
 const CONTENT = {
   en: {
@@ -78,6 +79,7 @@ const CONTENT = {
 
 export default function TermsScreen() {
   const router = useRouter();
+  const goBack = useGoBack("/(auth)/login");
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { language } = useLanguage();
@@ -86,7 +88,7 @@ export default function TermsScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
+        <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>{content.title}</Text>

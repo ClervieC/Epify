@@ -8,5 +8,12 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
-  ]
+  ],
+  // Edge Functions run on Deno, a separate runtime/type environment from
+  // the app itself (React Native + web) — including them here would mean
+  // every `Deno.*` global and remote https:// import fails this project's
+  // Node-flavored type-checking for no benefit, since they're never bundled
+  // into the app; they're deployed straight to Supabase instead (see
+  // supabase/functions/*/index.ts's own deploy instructions).
+  "exclude": ["supabase/functions/**"]
 }

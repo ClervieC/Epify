@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ export default function LoginScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
+  const passwordRef = useRef<TextInput>(null);
 
   async function handleLogin() {
     setError(null);
@@ -48,16 +49,21 @@ export default function LoginScreen() {
         placeholderTextColor={colors.textFaint}
         autoCapitalize="none"
         keyboardType="email-address"
+        returnKeyType="next"
         value={email}
         onChangeText={setEmail}
+        onSubmitEditing={() => passwordRef.current?.focus()}
       />
       <TextInput
+        ref={passwordRef}
         style={styles.input}
         placeholder={t.login.password}
         placeholderTextColor={colors.textFaint}
         secureTextEntry
+        returnKeyType="go"
         value={password}
         onChangeText={setPassword}
+        onSubmitEditing={handleLogin}
       />
 
       {error && <Text style={styles.error}>{error}</Text>}
@@ -71,7 +77,10 @@ export default function LoginScreen() {
       </Pressable>
 
       <Link href="/(auth)/signup" style={styles.link}>
-        {t.login.noAccount}
+        <Text style={styles.link}>
+          {t.login.noAccountPrompt}{" "}
+          <Text style={styles.linkAccent}>{t.signup.signUp}</Text>
+        </Text>
       </Link>
     </View>
   );
@@ -117,6 +126,12 @@ function createStyles(colors: Colors) {
     },
     buttonText: { color: colors.onAccent, fontWeight: "700", fontSize: 16 },
     error: { color: colors.red, marginBottom: 12, textAlign: "center" },
-    link: { color: colors.textMuted, textAlign: "center", marginTop: 20 },
+    link: {
+      color: colors.textMuted,
+      textAlign: "center",
+      marginTop: 20,
+      fontSize: 15,
+    },
+    linkAccent: { color: colors.accent, fontWeight: "700" },
   });
 }

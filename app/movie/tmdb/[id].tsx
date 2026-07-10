@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, StyleSheet } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
-import { getMovieDetails, getMovieCast, TMDBMovieDetails, TMDBCastMember } from "../../../lib/tmdb";
+import {
+  getMovieDetails,
+  getMovieCast,
+  getMovieTrailerUrl,
+  getMovieWatchProviders,
+  getMovieRecommendations,
+  posterUrl,
+  TMDBMovieDetails,
+  TMDBCastMember,
+  WatchProviders,
+  TMDBSearchResult,
+} from "../../../lib/tmdb";
 import {
   fetchUserMovieByTmdbId,
   addMovieToWatchlist,
@@ -26,6 +37,8 @@ import { Pill } from "../../../components/Pill";
 import { WatchedCheck } from "../../../components/WatchedCheck";
 import { MovieDetailView, MovieDetailLoading } from "../../../components/MovieDetailView";
 import { MovieRatingSection } from "../../../components/MovieRatingSection";
+import { RecommendationItem } from "../../../components/RecommendationsRow";
+import { useGoBack } from "../../../lib/useGoBack";
 
 // Reached from Explore (discover categories or search) for a movie that
 // isn't necessarily in the user's own list yet — unlike app/movie/[id].tsx,
@@ -36,7 +49,8 @@ import { MovieRatingSection } from "../../../components/MovieRatingSection";
 export default function TmdbMovieDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { t } = useLanguage();
+  const goBack = useGoBack("/(tabs)/movies");
+  const { t, language } = useLanguage();
   const tmdbId = Number(id);
 
   const [tmdb, setTmdb] = useState<TMDBMovieDetails | null>(null);
@@ -44,6 +58,9 @@ export default function TmdbMovieDetailScreen() {
   const [cast, setCast] = useState<TMDBCastMember[]>([]);
   const [userRow, setUserRow] = useState<UserMovie | null>(null);
   const [userRowLoaded, setUserRowLoaded] = useState(false);
+  const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
+  const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
+  const [recommendations, setRecommendations] = useState<TMDBSearchResult[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -78,10 +95,19 @@ export default function TmdbMovieDetailScreen() {
       getMovieCast(tmdbId)
         .then((c) => active && setCast(c))
         .catch(() => {});
+      getMovieTrailerUrl(tmdbId)
+        .then((url) => active && setTrailerUrl(url))
+        .catch(() => {});
+      getMovieWatchProviders(tmdbId, language)
+        .then((p) => active && setWatchProviders(p))
+        .catch(() => {});
+      getMovieRecommendations(tmdbId)
+        .then((r) => active && setRecommendations(r))
+        .catch(() => {});
       return () => {
         active = false;
       };
-    }, [tmdbId])
+    }, [tmdbId, language])
   );
 
   const [myUserId, setMyUserId] = useState<string | null>(null);
@@ -170,6 +196,13 @@ export default function TmdbMovieDetailScreen() {
     toggleMovieCommentReaction(id, currentlyReacted).catch(refreshComments);
   }
 
+  const recommendationItems: RecommendationItem[] = recommendations.map((r) => ({
+    key: r.id,
+    title: r.title,
+    posterUrl: posterUrl(r.poster_path, "w200"),
+    onPress: () => router.push(`/movie/tmdb/${r.id}`),
+  }));
+
   const watchedDate = userRow?.watched_at
     ? new Date(userRow.watched_at).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
     : null;
@@ -181,7 +214,11 @@ export default function TmdbMovieDetailScreen() {
       tmdb={tmdb}
       tmdbNotFound={tmdbNotFound}
       cast={cast}
-      onBack={() => router.back()}
+      tmdbId={tmdbId}
+      trailerUrl={trailerUrl}
+      watchProviders={watchProviders}
+      recommendations={recommendationItems}
+      onBack={goBack}
       isFavorite={userRow?.is_favorite ?? false}
       onToggleFavorite={handleToggleFavorite}
       watchedPills={

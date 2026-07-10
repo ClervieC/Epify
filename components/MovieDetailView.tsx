@@ -1,14 +1,17 @@
-import { ReactNode, useMemo } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import Reanimated from "react-native-reanimated";
 import { GestureDetector } from "react-native-gesture-handler";
-import { backdropUrl, posterUrl, profileUrl, TMDBMovieDetails, TMDBCastMember } from "../lib/tmdb";
+import { backdropUrl, posterUrl, profileUrl, TMDBMovieDetails, TMDBCastMember, WatchProviders } from "../lib/tmdb";
 import { useColors, radius, type, hueForTitle, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useSwipeDownToDismiss } from "../lib/animations";
+import { ReportModal } from "./ReportModal";
+import { WatchInfo } from "./WatchInfo";
+import { RecommendationsRow, RecommendationItem } from "./RecommendationsRow";
 
 interface MovieDetailViewProps {
   title: string;
@@ -16,6 +19,10 @@ interface MovieDetailViewProps {
   tmdb: TMDBMovieDetails | null;
   tmdbNotFound: boolean;
   cast: TMDBCastMember[];
+  // Null while a movie added before TMDB matching existed hasn't resolved
+  // one yet — the report button is hidden in that case (see the render
+  // below), same spirit as isFavorite/onToggleFavorite being optional.
+  tmdbId: number | null;
   // Slot for the user's own watched-date/rewatch-count pills — absent when
   // browsing a TMDB movie that isn't necessarily in the user's own history
   // (see app/movie/tmdb/[id].tsx).
@@ -29,6 +36,12 @@ interface MovieDetailViewProps {
   // watched, so the caller decides when (if ever) to pass this in rather
   // than this component gating it itself.
   extraContent?: ReactNode;
+  // TMDB-only data (TVmaze has none of this) — all optional/nullable since
+  // they load after the initial details fetch and may end up empty (not
+  // every title has a trailer or regional provider on file).
+  trailerUrl?: string | null;
+  watchProviders?: WatchProviders | null;
+  recommendations?: RecommendationItem[];
 }
 
 // Shared by app/movie/[id].tsx (a movie from the user's own watched history)
@@ -42,17 +55,22 @@ export function MovieDetailView({
   tmdb,
   tmdbNotFound,
   cast,
+  tmdbId,
   watchedPills,
   onBack,
   isFavorite,
   onToggleFavorite,
   extraContent,
+  trailerUrl,
+  watchProviders,
+  recommendations,
 }: MovieDetailViewProps) {
   const colors = useColors();
   const { t } = useLanguage();
   const posterHue = colors[hueForTitle(title)];
   const styles = useMemo(() => createStyles(colors, posterHue), [colors, posterHue]);
   const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(onBack);
+  const [reporting, setReporting] = useState(false);
 
   const heroImage = tmdb && (backdropUrl(tmdb.backdrop_path) ?? posterUrl(tmdb.poster_path, "w500"));
   const metaParts = tmdb
@@ -78,21 +96,50 @@ export function MovieDetailView({
               <Text style={styles.heroPlaceholder}>{title[0]?.toUpperCase()}</Text>
             )}
             <View style={styles.heroTopRow}>
-              <Pressable style={styles.iconBtn} onPress={onBack}>
+              <Pressable
+                style={styles.iconBtn}
+                onPress={onBack}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+              >
                 <Ionicons name="chevron-down" size={22} color="#fff" />
               </Pressable>
-              {onToggleFavorite && (
-                <Pressable style={styles.iconBtn} onPress={onToggleFavorite}>
-                  <Ionicons
-                    name={isFavorite ? "star" : "star-outline"}
-                    size={19}
-                    color={isFavorite ? colors.accent : "#fff"}
-                  />
-                </Pressable>
-              )}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {onToggleFavorite && (
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={onToggleFavorite}
+                    accessibilityRole="button"
+                    accessibilityLabel={isFavorite ? t.showDetail.removeFavorite : t.showDetail.addFavorite}
+                  >
+                    <Ionicons
+                      name={isFavorite ? "star" : "star-outline"}
+                      size={19}
+                      color={isFavorite ? colors.accent : "#fff"}
+                    />
+                  </Pressable>
+                )}
+                {tmdbId != null && (
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={() => setReporting(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t.report.reportMovie}
+                  >
+                    <Ionicons name="flag-outline" size={18} color="#fff" />
+                  </Pressable>
+                )}
+              </View>
             </View>
           </Reanimated.View>
         </GestureDetector>
+        {tmdbId != null && (
+          <ReportModal
+            visible={reporting}
+            onClose={() => setReporting(false)}
+            target={{ targetType: "movie", targetTmdbId: tmdbId }}
+          />
+        )}
 
         <View style={styles.sheet}>
           <Text style={styles.title}>
@@ -135,6 +182,9 @@ export function MovieDetailView({
               </ScrollView>
             </>
           )}
+
+          <WatchInfo trailerUrl={trailerUrl ?? null} providers={watchProviders ?? null} />
+          <RecommendationsRow items={recommendations ?? []} />
 
           {extraContent}
         </View>
