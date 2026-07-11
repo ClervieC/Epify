@@ -730,6 +730,30 @@ export default function ShowsScreen() {
 
     for (const t of tracked) {
       const showId = t.show.tvmaze_id;
+
+      // While the feeling-prompt sheet is open for this show, freeze its Watch
+      // Next row on the episode that was just marked watched instead of
+      // immediately recomputing to whatever's next. Without this, the row
+      // swapped to a different (still-unwatched) episode — or disappeared
+      // entirely — in the very same instant the checkmark should have
+      // confirmed, before the flash/bounce animations even got a frame to
+      // play. The sheet popping up on top of that made it look like the tap
+      // hadn't registered at all, since by the time it was dismissed the row
+      // underneath was already showing a different, unchecked episode.
+      if (feelingPromptItem && feelingPromptItem.show.tvmaze_id === showId) {
+        const prev = cache.get(showId);
+        const alreadyFrozen =
+          prev?.kind === "started" &&
+          prev.item.episode.id === feelingPromptItem.episode.id &&
+          prev.item.watched;
+        const frozen: EnrichedShowResult = alreadyFrozen
+          ? prev!
+          : { kind: "started", item: { ...feelingPromptItem, watched: true } };
+        nextCache.set(showId, frozen);
+        started.push(frozen.item);
+        continue;
+      }
+
       // Always computed fresh (so a newly-aired episode or an expired isNew
       // window is never missed) — the previous result is only reused when
       // it describes the exact same thing, which is what lets unaffected
@@ -751,7 +775,7 @@ export default function ShowsScreen() {
     });
 
     return { watchNext: started, haventStarted: notStarted };
-  }, [tracked]);
+  }, [tracked, feelingPromptItem]);
 
   const upcoming = useMemo<EnrichedEpisode[]>(() => {
     const result: EnrichedEpisode[] = [];
@@ -950,7 +974,14 @@ export default function ShowsScreen() {
         case "watchNextEmpty":
           return <Text style={styles.empty}>{t.shows.emptyWatchList}</Text>;
         case "watchNextItem":
-          return <WatchListEpisodeRow item={row.item} onToggleWatched={toggleWatched} styles={styles} />;
+          // onRewatch matters here now: while the feeling-prompt sheet is open
+          // for this row's show, its item is frozen watched=true (see the
+          // watchNext/haventStarted memo above) — tapping the checkmark again
+          // during that window correctly asks "rewatch or unwatch" instead of
+          // silently doing nothing.
+          return (
+            <WatchListEpisodeRow item={row.item} onToggleWatched={toggleWatched} onRewatch={rewatchEpisode} styles={styles} />
+          );
         case "notStartedHeader":
           return (
             <View style={styles.groupHeaderRow}>

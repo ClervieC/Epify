@@ -13,7 +13,9 @@
       "Bash(NODE_PATH=\"/Users/clervie/.npm/_npx/e41f203b7505f1fb/node_modules\" node pw-legal.js)",
       "Bash(NODE_PATH=\"/Users/clervie/.npm/_npx/e41f203b7505f1fb/node_modules\" node pw-splash.js)",
       "Bash(jobs -l)",
-      "Bash(grep -n \"<FlatList\\\\|</FlatList\\\\|FlatList$\\\\|FlatList \" \"/Users/clervie/Desktop/Projects/Epify/app/episode/[id].tsx\")"
+      "Bash(grep -n \"<FlatList\\\\|</FlatList\\\\|FlatList$\\\\|FlatList \" \"/Users/clervie/Desktop/Projects/Epify/app/episode/[id].tsx\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8081 --max-time 5)",
+      "Bash(grep -n \"const { watchNext, haventStarted }\\\\|feelingPromptItem\\\\|enrichedCacheRef\" \"/Users/clervie/Desktop/Projects/Epify/app/\\(tabs\\)/index.tsx\")"
     ]
   },
   "enabledPlugins": {

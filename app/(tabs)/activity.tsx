@@ -164,16 +164,22 @@ export default function ActivityScreen() {
       // when everyone you follow simply has no activity yet — the empty
       // state should say something different for each (see below), so this
       // needs its own check rather than inferring it from items.length.
+
+      // Marks seen using the timestamp of the item actually on screen (the
+      // list is sorted newest-first), not ActivityContext's own `latestAt` —
+      // that one is only refreshed by the Stack-level focus effect, which
+      // doesn't fire on a plain tab switch to Activity, so it could still be
+      // pointing at an older "latest" than what just loaded here.
+      markSeen(data[0]?.createdAt);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [markSeen]);
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
       load();
-      markSeen();
       getCurrentUserId().then(async (myId) => {
         if (!active || !myId) return;
         const following = await fetchFollowingIds(myId);
@@ -182,7 +188,7 @@ export default function ActivityScreen() {
       return () => {
         active = false;
       };
-    }, [load, markSeen])
+    }, [load])
   );
 
   useScrollToTopOnTabPress(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
