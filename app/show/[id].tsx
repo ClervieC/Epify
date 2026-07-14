@@ -58,6 +58,7 @@ import { DetailErrorState } from "../../components/DetailErrorState";
 import { Sheet } from "../../components/Sheet";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
 import { useRewatchPrompt } from "../../context/RewatchPromptContext";
+import { useAddToListPrompt } from "../../context/AddToListPromptContext";
 import { getCurrentUserId } from "../../lib/supabase";
 import { useGoBack } from "../../lib/useGoBack";
 import {
@@ -101,6 +102,10 @@ export default function ShowDetailScreen() {
   // to this screen (e.g. after adding the show) would keep bouncing the
   // tab back to Info on every refocus.
   const initialTabSet = useRef(false);
+  // Same one-shot idea for which season starts expanded — otherwise
+  // collapsing a season by hand would keep getting overridden back open on
+  // every refocus-triggered reload.
+  const initialSeasonSet = useRef(false);
   const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
   const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
   const [recommendations, setRecommendations] = useState<TMDBTvResult[]>([]);
@@ -116,6 +121,7 @@ export default function ShowDetailScreen() {
   const progressAnim = useRef(new Animated.Value(0)).current;
   const askPreviousEpisodes = usePreviousEpisodesPrompt();
   const askRewatch = useRewatchPrompt();
+  const askAddToList = useAddToListPrompt();
   const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(goBack);
 
   const load = useCallback(async () => {
@@ -137,6 +143,24 @@ export default function ShowDetailScreen() {
     if (!initialTabSet.current) {
       initialTabSet.current = true;
       if (!matchedUserShow) setTab("about");
+    }
+    // Open the season the viewer has actually reached — the earliest aired
+    // episode they haven't watched yet — rather than always landing
+    // collapsed on Season 1. If every aired episode is already watched
+    // (fully caught up), fall back to the last season instead.
+    if (!initialSeasonSet.current && episodeData.length > 0) {
+      initialSeasonSet.current = true;
+      const watchedIdSet = new Set(watchedData.map((w) => w.tvmaze_episode_id));
+      const now = Date.now();
+      const nextUnwatched = episodeData
+        .filter((e) => new Date(e.airstamp).getTime() <= now && !watchedIdSet.has(e.id))
+        .sort((a, b) => a.season - b.season || a.number - b.number)[0];
+      if (nextUnwatched) {
+        setExpandedSeason(nextUnwatched.season);
+      } else {
+        const lastSeason = Math.max(...episodeData.map((e) => e.season));
+        setExpandedSeason(lastSeason);
+      }
     }
     // Cast only ever shows on the Info tab (default tab is Episodes), and is
     // never prefetched elsewhere — no reason to make the default view wait
@@ -345,6 +369,24 @@ export default function ShowDetailScreen() {
     setListPickerOpen(false);
   }
 
+  // Marking an episode watched for a show that isn't tracked yet (e.g.
+  // opened straight from search/a recommendation) is otherwise a silent
+  // dead end — the watch is recorded but never surfaces on the Shows tab.
+  // Asks once per screen visit at most, since userShow flips non-null the
+  // moment the user says yes.
+  async function ensureInList() {
+    if (userShow || !show) return;
+    const choice = await askAddToList(show.name);
+    if (choice !== "add") return;
+    const result = await upsertUserShow({
+      tvmaze_id: show.id,
+      show_name: show.name,
+      show_image: show.image?.medium ?? null,
+      status: "watching",
+    });
+    setUserShow(result);
+  }
+
   async function toggleEpisode(ep: TVMazeEpisode) {
     const isWatched = watchedIds.has(ep.id);
 
@@ -367,6 +409,7 @@ export default function ShowDetailScreen() {
             ...prev,
             ...toMark.map((e) => ({ tvmaze_episode_id: e.id, season: e.season, number: e.number, times_watched: 1 } as WatchedEpisode)),
           ]);
+          await ensureInList();
           return;
         }
       }
@@ -384,6 +427,7 @@ export default function ShowDetailScreen() {
         ? prev.filter((w) => w.tvmaze_episode_id !== ep.id)
         : [...prev, { tvmaze_episode_id: ep.id, season: ep.season, number: ep.number, times_watched: 1 } as WatchedEpisode]
     );
+    if (!isWatched) await ensureInList();
   }
 
   async function rewatchEpisode(ep: TVMazeEpisode) {
@@ -404,6 +448,7 @@ export default function ShowDetailScreen() {
       ...prev,
       ...unwatched.map((e) => ({ tvmaze_episode_id: e.id, season: e.season, number: e.number } as WatchedEpisode)),
     ]);
+    await ensureInList();
   }
 
   async function unmarkSeasonWatched(eps: TVMazeEpisode[]) {
@@ -581,7 +626,12 @@ export default function ShowDetailScreen() {
                         .filter((c) => !!c.person)
                         .slice(0, 20)
                         .map((c) => (
-                          <View key={c.person.id} style={styles.castCard}>
+                          // person.id alone isn't unique here — TVMaze lists
+                          // the same actor once per character when they play
+                          // more than one role (dual roles, recast returning
+                          // under a new credit, etc.), so the pair is what's
+                          // actually unique.
+                          <View key={`${c.person.id}-${c.character.id}`} style={styles.castCard}>
                             {c.person.image ? (
                               <Image source={{ uri: c.person.image.medium }} style={styles.castImage} />
                             ) : (
@@ -862,20 +912,25 @@ function SeasonSection({
       </Pressable>
       <View style={[styles.seasonBar, complete && styles.seasonBarComplete]} />
       {expanded &&
-        eps.map((ep) => (
-          <Pressable key={ep.id} style={styles.episodeLine} onPress={() => onOpenEpisode(ep)}>
-            <Text style={styles.episodeLineText} numberOfLines={1}>
-              E{ep.number} · {ep.name}
-            </Text>
-            <WatchedCheck
-              watched={watchedIds.has(ep.id)}
-              timesWatched={watched.find((w) => w.tvmaze_episode_id === ep.id)?.times_watched}
-              onToggle={() => onToggleEpisode(ep)}
-              onRewatch={() => onRewatchEpisode(ep)}
-              size={26}
-            />
-          </Pressable>
-        ))}
+        eps.map((ep) => {
+          const aired = !!ep.airstamp && new Date(ep.airstamp).getTime() <= Date.now();
+          return (
+            <Pressable key={ep.id} style={styles.episodeLine} onPress={() => onOpenEpisode(ep)}>
+              <Text style={styles.episodeLineText} numberOfLines={1}>
+                E{ep.number} · {ep.name}
+              </Text>
+              {aired && (
+                <WatchedCheck
+                  watched={watchedIds.has(ep.id)}
+                  timesWatched={watched.find((w) => w.tvmaze_episode_id === ep.id)?.times_watched}
+                  onToggle={() => onToggleEpisode(ep)}
+                  onRewatch={() => onRewatchEpisode(ep)}
+                  size={26}
+                />
+              )}
+            </Pressable>
+          );
+        })}
     </View>
   );
 }

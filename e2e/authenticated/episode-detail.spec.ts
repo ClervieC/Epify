@@ -15,9 +15,32 @@ const SHOW_ID = 1; // "Under the Dome" — see show-detail.spec.ts
 async function openFirstEpisode(page: Page) {
   await page.goto(`/show/${SHOW_ID}`);
   await page.getByText("Episodes", { exact: true }).click();
-  await page.getByText("Season 1", { exact: true }).click();
-  await page.getByText(/^E1 ·/).first().click();
+  const firstEpisode = page.getByText(/^E1 ·/).first();
+  // Season 1 auto-expands on load when it's the season the account is
+  // currently on (see the "current season" effect in app/show/[id].tsx) —
+  // only tap the season header if that didn't already happen, since
+  // tapping an already-expanded season collapses it instead.
+  if (!(await firstEpisode.isVisible().catch(() => false))) {
+    await page.getByText("Season 1", { exact: true }).click();
+  }
+  await firstEpisode.click();
   await page.waitForURL(/\/episode\//, { timeout: 15_000 });
+}
+
+// The one live "Mark as ___" toggle for the episode actually open.
+// expo-router's native-stack-on-web keeps the previous screen (the show
+// page's own season list, which renders its own WatchedCheck for E1 too)
+// mounted in the DOM underneath the current one after navigating here (same
+// quirk noted in navigation.spec.ts's "Shows" tab-bar lookup), so both a
+// stale and a live "Mark as ___" button can exist at once — sometimes with
+// different labels if the state changed since the show page rendered its
+// copy, which is exactly what made getByLabel(...).or(...) ambiguous
+// (2 elements, not 1) instead of just picking a stale duplicate. .last()
+// has to apply to the *combined* or() locator, not to each label
+// individually, to actually collapse that down to the single current-screen
+// element (the one appended most recently).
+function watchedToggle(page: Page) {
+  return page.getByLabel("Mark as watched").or(page.getByLabel("Mark as not watched")).last();
 }
 
 // A previous run of the "mark watched" test can leave E1 already marked
@@ -26,10 +49,19 @@ async function openFirstEpisode(page: Page) {
 // makes the suite reliable to re-run after a flake, instead of every test
 // after the first failure cascading.
 async function ensureUnwatched(page: Page) {
-  const markAsNotWatched = page.getByLabel("Mark as not watched").first();
-  if (await markAsNotWatched.isVisible().catch(() => false)) {
-    await markAsNotWatched.click();
-    await expect(page.getByLabel("Mark as watched").first()).toBeVisible({ timeout: 10_000 });
+  const toggle = watchedToggle(page);
+  // The real watched state loads asynchronously right after navigation
+  // (see openFirstEpisode) — waiting for it first avoids an immediate
+  // getAttribute() check below racing that load and wrongly concluding
+  // "not watched" while the real answer just hasn't arrived yet.
+  await expect(toggle).toBeVisible({ timeout: 10_000 });
+  if ((await toggle.getAttribute("aria-label")) === "Mark as not watched") {
+    await toggle.click();
+    // Already-watched -> tapping the toggle opens the rewatch/unwatch
+    // confirmation dialog (see components/WatchedCheck.tsx's
+    // askRewatch()) instead of toggling directly.
+    await page.getByText("I haven't watched it", { exact: true }).click();
+    await expect(watchedToggle(page)).toHaveAttribute("aria-label", "Mark as watched", { timeout: 10_000 });
   }
 }
 
@@ -53,12 +85,15 @@ test("can mark an episode watched, rate it, react, and comment", async ({ page }
   await openFirstEpisode(page);
   await ensureUnwatched(page);
 
-  // .first() — the desktop-width layout also renders an EpisodeSidebar
-  // listing every episode in the season, each with its own "Mark as
-  // watched" toggle; the main content's own toggle (for the episode
-  // actually open) is first in the DOM.
-  await page.getByLabel("Mark as watched").first().click();
+  await watchedToggle(page).click();
   await expect(page.getByText("Your rating", { exact: true })).toBeVisible({ timeout: 10_000 });
+
+  // Marking an episode watched for a show this account isn't tracking (see
+  // "Under the Dome" — SHOW_ID above) prompts to add it to the list (see
+  // context/AddToListPromptContext.tsx) — dismissed here rather than
+  // accepted so this dedicated test account's tracked-shows list stays
+  // empty across repeated runs, same as its shows/movies counts.
+  await page.getByText("Not now", { exact: true }).click();
 
   await page.getByLabel("Rate 4 stars").first().click();
 
@@ -81,7 +116,9 @@ test("can mark an episode watched, rate it, react, and comment", async ({ page }
   await commentRow.getByLabel("Delete comment").click();
   await expect(page.getByText(uniqueComment)).not.toBeVisible({ timeout: 10_000 });
 
-  await page.getByLabel("Mark as not watched").first().click();
+  await watchedToggle(page).click();
+  // Same confirmation dialog as ensureUnwatched above.
+  await page.getByText("I haven't watched it", { exact: true }).click();
   await expect(
     page.getByText("Mark this episode as watched to rate it, react, and see comments.")
   ).toBeVisible({ timeout: 10_000 });

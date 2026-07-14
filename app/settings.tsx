@@ -9,7 +9,7 @@ import { supabase } from "../lib/supabase";
 import { importTvTimeCsv, importTvTimeJson, ImportProgress } from "../lib/tvtimeImport";
 import { useColors, useThemeMode, radius, type, Colors, ThemeMode } from "../lib/theme";
 import { useLanguage, Translations } from "../lib/i18n";
-import { Language } from "../lib/userSettings";
+import { Language, StaleWatchlistMonths } from "../lib/userSettings";
 import { fetchMyProfile, Profile } from "../lib/profiles";
 import { changePassword, exportMyData, deleteAccount } from "../lib/account";
 import { fetchOpenReportCount } from "../lib/reports";
@@ -31,7 +31,8 @@ export default function SettingsScreen() {
   const goBack = useGoBack("/(tabs)/profile");
   const colors = useColors();
   const styles = createStyles(colors);
-  const { t, language, setLanguage, spoilerMode, setSpoilerMode } = useLanguage();
+  const { t, language, setLanguage, spoilerMode, setSpoilerMode, staleWatchlistMonths, setStaleWatchlistMonths } =
+    useLanguage();
   const { themeMode, setThemeMode } = useThemeMode();
 
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -208,6 +209,12 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.settingRow}>
+        <Ionicons name="alarm-outline" size={20} color={colors.text} />
+        <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.staleWatchlist}</Text>
+        <StaleWatchlistSwitch months={staleWatchlistMonths} setMonths={setStaleWatchlistMonths} t={t} styles={styles} />
+      </View>
+
+      <View style={styles.settingRow}>
         <Ionicons name="language-outline" size={20} color={colors.text} />
         <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.language}</Text>
         <LanguageSwitch language={language} setLanguage={setLanguage} styles={styles} />
@@ -335,6 +342,33 @@ function LanguageSwitch({
       {(["en", "fr"] as const).map((lang) => (
         <Pill key={lang} size="sm" tone={language === lang ? "solid" : "neutral"} onPress={() => setLanguage(lang)}>
           {lang.toUpperCase()}
+        </Pill>
+      ))}
+    </View>
+  );
+}
+
+function StaleWatchlistSwitch({
+  months,
+  setMonths,
+  t,
+  styles,
+}: {
+  months: StaleWatchlistMonths;
+  setMonths: (months: StaleWatchlistMonths) => void;
+  t: Translations;
+  styles: SettingsStyles;
+}) {
+  const options: { months: StaleWatchlistMonths; label: string }[] = [
+    { months: 0, label: t.profile.staleWatchlistOff },
+    { months: 6, label: t.profile.staleWatchlistSixMonths },
+    { months: 12, label: t.profile.staleWatchlistOneYear },
+  ];
+  return (
+    <View style={styles.languageSwitch}>
+      {options.map(({ months: m, label }) => (
+        <Pill key={m} size="sm" tone={months === m ? "solid" : "neutral"} onPress={() => setMonths(m)}>
+          {label}
         </Pill>
       ))}
     </View>

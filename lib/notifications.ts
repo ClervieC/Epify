@@ -6,6 +6,11 @@ export interface AppNotification {
   user_id: string;
   type: string;
   actor_id: string | null;
+  // Only set for type === "stale_watchlist" (see lib/staleWatchlist.ts) —
+  // null for every other (social) notification type.
+  tvmaze_show_id: number | null;
+  show_name: string | null;
+  show_image: string | null;
   read: boolean;
   created_at: string;
 }

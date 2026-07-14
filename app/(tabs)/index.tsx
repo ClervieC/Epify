@@ -1313,7 +1313,7 @@ export default function ShowsScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[`${colors.accent}1f`, "transparent"]} style={styles.headerGlow} />
+      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       {currentStreak > 0 && (
         <Pressable
           style={styles.streakPill}

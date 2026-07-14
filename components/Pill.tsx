@@ -1,5 +1,5 @@
 import { ReactNode, useMemo } from "react";
-import { Pressable, Text, View, StyleSheet } from "react-native";
+import { Pressable, Text, View, StyleSheet, StyleProp, ViewStyle } from "react-native";
 import { useColors, radius, type, Colors } from "../lib/theme";
 
 type PillSize = "sm" | "md";
@@ -16,19 +16,25 @@ interface PillProps {
   // than one of the three tones — shape/sizing still comes from the token.
   color?: string;
   textColor?: string;
+  // Layout escape hatch — the base shape defaults alignSelf to flex-start
+  // (right for most callers, which sit inside a row/left-aligned block), but
+  // that overrides a centered parent's alignItems (e.g. a profile header
+  // stacked around an avatar), so a caller in that situation needs a way to
+  // say "actually, center me."
+  style?: StyleProp<ViewStyle>;
 }
 
 // The one badge/chip/label shape in the app — section headers ("HISTORIQUE"),
 // episode badges (PREMIERE/NEW), language switch options, vote-count chips.
 // Two sizes, three tones; reach for this before hand-rolling another pill.
-export function Pill({ children, size = "sm", tone = "neutral", onPress, uppercase, color, textColor }: PillProps) {
+export function Pill({ children, size = "sm", tone = "neutral", onPress, uppercase, color, textColor, style }: PillProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const Wrapper = onPress ? Pressable : View;
 
   return (
     <Wrapper
-      style={[styles.base, styles[size], styles[tone], color ? { backgroundColor: color } : null]}
+      style={[styles.base, styles[size], styles[tone], color ? { backgroundColor: color } : null, style]}
       onPress={onPress}
     >
       <Text

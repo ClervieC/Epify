@@ -12,7 +12,9 @@ import {
   fetchUserSettings,
   setLanguage as persistLanguage,
   setSpoilerMode as persistSpoilerMode,
+  setStaleWatchlistMonths as persistStaleWatchlistMonths,
   Language,
+  StaleWatchlistMonths,
 } from "./userSettings";
 import { setSupabaseAlertLanguage } from "./supabase";
 
@@ -59,6 +61,11 @@ const en = {
     slide7Title: "Make it yours",
     slide7Body:
       "Build up streaks and badges, customize your profile, and track your stats over time.",
+    reminderTitle: "Forget you wanted to watch something?",
+    reminderBody:
+      "We'll send you a one-time nudge if a show sits in your to-watch list without being started. You can change this later in Settings.",
+    reminderSixMonths: "Remind me after 6 months",
+    reminderOneYear: "Remind me after 1 year",
   },
   login: {
     tagline: "Track your shows",
@@ -99,6 +106,14 @@ const en = {
     commentedOnShow: "commented on",
     commentedOnEpisode: "commented on an episode of",
     commentedOnMovie: "commented on",
+    tabActivity: "Activity",
+    tabSuggested: "Suggested",
+    suggestedSubtitle: "People with at least 10% of your shows or movies in common",
+    sharedShows: (count: number, percent: number) =>
+      `${count} show${count > 1 ? "s" : ""} in common · ${percent}% match`,
+    sharedMovies: (count: number, percent: number) =>
+      `${count} movie${count > 1 ? "s" : ""} in common · ${percent}% match`,
+    suggestedEmpty: "No matches yet — track a few more shows or movies and check back.",
   },
   showStats: {
     title: "Show stats",
@@ -161,10 +176,12 @@ const en = {
     watchCount: (n: number) =>
       n === 1 ? "Watched once" : `Watched ${n} times`,
     overview: "Overview",
-    tabList: "My list",
+    tabList: "Watched",
+    tabToWatch: "To Watch",
     tabUpcoming: "Upcoming",
     emptyUpcoming:
       "Your watchlist is empty — add movies from Explore or a movie's page.",
+    emptyUpcomingReleases: "No upcoming releases in your watchlist.",
     emptyWatchlist: "Add movies to your watchlist to see them here.",
     releasesOn: (date: string) => `Releases ${date}`,
     addToWatchlist: "Add to watchlist",
@@ -271,6 +288,10 @@ const en = {
     spoilerMode: "Spoiler mode",
     spoilerModeDesc:
       "See other people's comments even on episodes you haven't watched yet.",
+    staleWatchlist: "Forgotten shows reminder",
+    staleWatchlistSixMonths: "6 months",
+    staleWatchlistOneYear: "1 year",
+    staleWatchlistOff: "Off",
     language: "Language",
     theme: "Theme",
     themeLight: "Light",
@@ -424,6 +445,12 @@ const en = {
     onlyThis: "Just this episode",
     allPrevious: "Yes, mark them all watched",
   },
+  addToListPrompt: {
+    title: "Add this show to your list?",
+    subtitle: (name: string) => `${name} isn't in your list yet.`,
+    skip: "Not now",
+    add: "Add to my list",
+  },
   episodeRow: {
     premiere: "PREMIERE",
     new: "NEW",
@@ -455,6 +482,8 @@ const en = {
     notifications: "Notifications",
     noNotifications: "No notifications yet.",
     startedFollowingYou: "started following you",
+    staleWatchlistReminder: (name: string) =>
+      `You added ${name} to your to-watch list a while ago — still want to watch it?`,
   },
 };
 
@@ -499,6 +528,11 @@ const fr: typeof en = {
     slide7Title: "Rends-le tien",
     slide7Body:
       "Débloque des séries de jours et des badges, personnalise ton profil, et suis tes stats au fil du temps.",
+    reminderTitle: "Tu oublies parfois une série ?",
+    reminderBody:
+      "On peut te rappeler une seule fois si une série traîne dans ta liste \"à voir\" sans être commencée. Modifiable plus tard dans les réglages.",
+    reminderSixMonths: "Me rappeler après 6 mois",
+    reminderOneYear: "Me rappeler après 1 an",
   },
   login: {
     tagline: "Suis tes séries",
@@ -540,6 +574,14 @@ const fr: typeof en = {
     commentedOnShow: "a commenté",
     commentedOnEpisode: "a commenté un épisode de",
     commentedOnMovie: "a commenté",
+    tabActivity: "Activité",
+    tabSuggested: "Suggestions",
+    suggestedSubtitle: "Des gens avec au moins 10% de séries ou de films en commun avec toi",
+    sharedShows: (count: number, percent: number) =>
+      `${count} série${count > 1 ? "s" : ""} en commun · ${percent}% de match`,
+    sharedMovies: (count: number, percent: number) =>
+      `${count} film${count > 1 ? "s" : ""} en commun · ${percent}% de match`,
+    suggestedEmpty: "Pas encore de match — suis quelques séries ou films de plus et reviens voir.",
   },
   showStats: {
     title: "Statistiques séries",
@@ -602,10 +644,12 @@ const fr: typeof en = {
     watchedOn: (date: string) => `Vu le ${date}`,
     watchCount: (n: number) => (n === 1 ? "Vu une fois" : `Vu ${n} fois`),
     overview: "Synopsis",
-    tabList: "Ma liste",
+    tabList: "Vus",
+    tabToWatch: "À voir",
     tabUpcoming: "À venir",
     emptyUpcoming:
       "Ta liste est vide — ajoute des films depuis Explorer ou la page d'un film.",
+    emptyUpcomingReleases: "Aucune sortie à venir dans ta liste.",
     emptyWatchlist: "Ajoute des films à ta liste pour les voir ici.",
     releasesOn: (date: string) => `Sortie le ${date}`,
     addToWatchlist: "Ajouter à ma liste",
@@ -714,6 +758,10 @@ const fr: typeof en = {
     spoilerMode: "Mode spoilers",
     spoilerModeDesc:
       "Voir les commentaires des autres même sur les épisodes que tu n'as pas encore vus.",
+    staleWatchlist: "Rappel des séries oubliées",
+    staleWatchlistSixMonths: "6 mois",
+    staleWatchlistOneYear: "1 an",
+    staleWatchlistOff: "Désactivé",
     language: "Langue",
     theme: "Thème",
     themeLight: "Clair",
@@ -870,6 +918,12 @@ const fr: typeof en = {
     onlyThis: "Juste cet épisode",
     allPrevious: "Oui, tout marquer comme vu",
   },
+  addToListPrompt: {
+    title: "Ajouter cette série à ta liste ?",
+    subtitle: (name: string) => `${name} n'est pas encore dans ta liste.`,
+    skip: "Pas maintenant",
+    add: "Ajouter à ma liste",
+  },
   episodeRow: {
     premiere: "PREMIÈRE",
     new: "NOUVEAU",
@@ -901,6 +955,8 @@ const fr: typeof en = {
     notifications: "Notifications",
     noNotifications: "Aucune notification pour l'instant.",
     startedFollowingYou: "a commencé à te suivre",
+    staleWatchlistReminder: (name: string) =>
+      `Tu as ajouté ${name} à ta liste à voir il y a un moment — toujours envie de le regarder ?`,
   },
 };
 
@@ -913,6 +969,8 @@ interface SettingsContextValue {
   setLanguage: (lang: Language) => void;
   spoilerMode: boolean;
   setSpoilerMode: (enabled: boolean) => void;
+  staleWatchlistMonths: StaleWatchlistMonths;
+  setStaleWatchlistMonths: (months: StaleWatchlistMonths) => void;
   t: Translations;
 }
 
@@ -921,6 +979,8 @@ const SettingsContext = createContext<SettingsContextValue>({
   setLanguage: () => {},
   spoilerMode: false,
   setSpoilerMode: () => {},
+  staleWatchlistMonths: 6,
+  setStaleWatchlistMonths: () => {},
   t: en,
 });
 
@@ -928,17 +988,20 @@ export function LanguageProvider({ children }: PropsWithChildren) {
   const { session } = useAuth();
   const [language, setLanguageState] = useState<Language>("en");
   const [spoilerMode, setSpoilerModeState] = useState(false);
+  const [staleWatchlistMonths, setStaleWatchlistMonthsState] = useState<StaleWatchlistMonths>(6);
 
   useEffect(() => {
     if (!session) {
       setLanguageState("en");
       setSpoilerModeState(false);
+      setStaleWatchlistMonthsState(6);
       return;
     }
     fetchUserSettings()
       .then((settings) => {
         setLanguageState(settings.language);
         setSpoilerModeState(settings.spoiler_mode);
+        setStaleWatchlistMonthsState(settings.stale_watchlist_months);
       })
       .catch(() => {});
   }, [session]);
@@ -953,6 +1016,11 @@ export function LanguageProvider({ children }: PropsWithChildren) {
     persistSpoilerMode(enabled).catch(() => {});
   }, []);
 
+  const setStaleWatchlistMonths = useCallback((months: StaleWatchlistMonths) => {
+    setStaleWatchlistMonthsState(months);
+    persistStaleWatchlistMonths(months).catch(() => {});
+  }, []);
+
   useEffect(() => {
     setSupabaseAlertLanguage(language);
   }, [language]);
@@ -963,9 +1031,11 @@ export function LanguageProvider({ children }: PropsWithChildren) {
       setLanguage,
       spoilerMode,
       setSpoilerMode,
+      staleWatchlistMonths,
+      setStaleWatchlistMonths,
       t: dictionaries[language],
     }),
-    [language, setLanguage, spoilerMode, setSpoilerMode],
+    [language, setLanguage, spoilerMode, setSpoilerMode, staleWatchlistMonths, setStaleWatchlistMonths],
   );
 
   return (

@@ -772,3 +772,256 @@ create policy "Users insert their own badge unlocks"
   on public.badge_unlocks
   for insert
   with check (auth.uid() = user_id);
+
+-- ============================================================
+-- Stale "want to watch" reminders — a one-time in-app notification when a
+-- show has sat in want_to_watch longer than the user's chosen threshold
+-- (asked once during onboarding, editable later in Settings; 0 = off). No
+-- cron/edge function exists in this project — lib/staleWatchlist.ts runs the
+-- check client-side on app open (see context/NotificationsContext.tsx) and
+-- inserts straight into public.notifications. Purely additive — safe to run
+-- once.
+-- ============================================================
+alter table public.user_settings
+  add column if not exists stale_watchlist_months integer not null default 6
+  check (stale_watchlist_months in (0, 6, 12));
+
+alter table public.user_shows add column if not exists want_to_watch_since timestamptz;
+
+-- Backfill: for shows already sitting in want_to_watch, treat their
+-- existing created_at as the start of the wait — otherwise every row that
+-- predates this column would look brand new and never qualify for a
+-- reminder no matter how long it's actually been sitting there.
+update public.user_shows
+  set want_to_watch_since = created_at
+  where status = 'want_to_watch' and want_to_watch_since is null;
+
+alter table public.notifications add column if not exists tvmaze_show_id integer;
+alter table public.notifications add column if not exists show_name text;
+alter table public.notifications add column if not exists show_image text;
+
+-- Only 'follow' notifications existed before this column, and they always
+-- leave tvmaze_show_id null — Postgres treats every null as distinct from
+-- every other null, so this only dedupes repeat stale_watchlist rows for
+-- the same show, never across unrelated notification types.
+create unique index if not exists notifications_user_show_unique
+  on public.notifications (user_id, tvmaze_show_id);
+
+-- Mirrors "Users insert their own badge unlocks" above — the client can only
+-- ever insert a reminder about its own want_to_watch list, never spoof a
+-- follow notification or write into another user's feed.
+create policy "Users create their own watchlist reminders"
+  on public.notifications
+  for insert
+  with check (
+    auth.uid() = user_id
+    and type = 'stale_watchlist'
+    and actor_id is null
+    and tvmaze_show_id is not null
+  );
+
+-- ============================================================
+-- "People with similar taste" suggestions (Activity tab) — ranks other
+-- users by the overlap coefficient (shared shows / the SMALLER of the two
+-- lists, not just "% of my list") between their user_shows and the
+-- caller's, so someone with a small list that's almost entirely a subset of
+-- yours ranks as a strong match instead of getting buried by list-size
+-- skew the way shared/my_total alone would. Written as an RPC rather than
+-- a plain client-side select+group (mirrors movie_feeling_counts below) so
+-- the intersection/count happens in Postgres instead of pulling every
+-- candidate's user_shows rows to the client to aggregate in JS — no RLS
+-- change needed since user_shows is already readable cross-user (see
+-- "Shows are viewable by authenticated users" above), so this runs as the
+-- caller (no security definer). Purely additive — safe to run once.
+-- ============================================================
+create index if not exists user_shows_tvmaze_id_idx on public.user_shows (tvmaze_id);
+
+create or replace function public.suggested_show_buddies(p_limit integer default 20)
+returns table (
+  user_id uuid,
+  shared_count integer,
+  match_percent numeric
+)
+language sql
+stable
+as $$
+  with mine as (
+    select tvmaze_id from public.user_shows where user_shows.user_id = auth.uid()
+  ),
+  my_total as (
+    select count(*)::integer as n from mine
+  ),
+  shared as (
+    select us.user_id, count(*)::integer as shared_count
+    from public.user_shows us
+    join mine on mine.tvmaze_id = us.tvmaze_id
+    where us.user_id <> auth.uid()
+    group by us.user_id
+  ),
+  their_totals as (
+    select user_shows.user_id, count(*)::integer as n
+    from public.user_shows
+    where user_shows.user_id in (select shared.user_id from shared)
+    group by user_shows.user_id
+  )
+  select
+    shared.user_id,
+    shared.shared_count,
+    round(
+      shared.shared_count::numeric / greatest(least(my_total.n, their_totals.n), 1) * 100,
+      1
+    ) as match_percent
+  from shared
+  join their_totals on their_totals.user_id = shared.user_id
+  cross join my_total
+  where shared.shared_count::numeric / greatest(least(my_total.n, their_totals.n), 1) >= 0.10
+    and not exists (
+      select 1 from public.follows f
+      where f.follower_id = auth.uid() and f.followed_id = shared.user_id
+    )
+  order by match_percent desc, shared.shared_count desc
+  limit p_limit;
+$$;
+
+grant execute on function public.suggested_show_buddies(integer) to authenticated;
+
+-- ============================================================
+-- Public-profile movie list (app/users/[id].tsx) — user_movies has no
+-- "viewable by authenticated users" policy on purpose (see the drop-policy
+-- block above: a plain cross-user SELECT would expose rating/watched_at/
+-- times_watched/is_favorite, not just title/poster). This mirrors
+-- movie_feeling_counts's approach — a SECURITY DEFINER function that
+-- hand-picks only the non-sensitive columns needed to render posters on
+-- someone else's profile, rather than loosening the table's own RLS.
+-- Purely additive — safe to run once.
+-- ============================================================
+create or replace function public.public_watched_movies(p_user_id uuid)
+returns table (
+  tmdb_id integer,
+  title text,
+  year integer,
+  poster_path text
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select tmdb_id, title, year, poster_path
+  from public.user_movies
+  where user_id = p_user_id and status = 'watched' and tmdb_id is not null
+  order by watched_at desc nulls last
+  limit 50;
+$$;
+
+grant execute on function public.public_watched_movies(uuid) to authenticated;
+
+-- ============================================================
+-- Movie-taste counterpart to suggested_show_buddies above — same overlap
+-- coefficient, same exclusions (self, already-followed), same >=10%
+-- threshold, just over user_movies instead of user_shows. Unlike
+-- suggested_show_buddies, this one has to be SECURITY DEFINER: user_movies
+-- has no cross-user SELECT policy (see public_watched_movies' comment
+-- above), so a plain invoker-rights function would see only the caller's
+-- own rows on both sides of the join and never find a match. Still only
+-- ever returns a count + percentage, never the underlying rating/
+-- watched_at/feeling columns that policy was written to keep private.
+-- Purely additive — safe to run once.
+-- ============================================================
+create or replace function public.suggested_movie_buddies(p_limit integer default 20)
+returns table (
+  user_id uuid,
+  shared_count integer,
+  match_percent numeric
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  with mine as (
+    select tmdb_id from public.user_movies
+    where user_movies.user_id = auth.uid() and status = 'watched' and tmdb_id is not null
+  ),
+  my_total as (
+    select count(*)::integer as n from mine
+  ),
+  shared as (
+    select um.user_id, count(*)::integer as shared_count
+    from public.user_movies um
+    join mine on mine.tmdb_id = um.tmdb_id
+    where um.user_id <> auth.uid() and um.status = 'watched'
+    group by um.user_id
+  ),
+  their_totals as (
+    select user_movies.user_id, count(*)::integer as n
+    from public.user_movies
+    where user_movies.status = 'watched'
+      and user_movies.user_id in (select shared.user_id from shared)
+    group by user_movies.user_id
+  )
+  select
+    shared.user_id,
+    shared.shared_count,
+    round(
+      shared.shared_count::numeric / greatest(least(my_total.n, their_totals.n), 1) * 100,
+      1
+    ) as match_percent
+  from shared
+  join their_totals on their_totals.user_id = shared.user_id
+  cross join my_total
+  where shared.shared_count::numeric / greatest(least(my_total.n, their_totals.n), 1) >= 0.10
+    and not exists (
+      select 1 from public.follows f
+      where f.follower_id = auth.uid() and f.followed_id = shared.user_id
+    )
+  order by match_percent desc, shared.shared_count desc
+  limit p_limit;
+$$;
+
+grant execute on function public.suggested_movie_buddies(integer) to authenticated;
+
+-- ============================================================
+-- Rest of the public-profile movie surface (app/users/[id].tsx) — a watched
+-- count (parallel to fetchEpisodeCount for shows) and a favorites row
+-- (parallel to fetchFavorites for shows), both SECURITY DEFINER for the
+-- same reason as public_watched_movies above: user_movies has no cross-user
+-- SELECT policy on purpose, so a plain invoker-rights query would see
+-- nothing. The count function returns only a number; the favorites
+-- function hand-picks the same non-sensitive columns as
+-- public_watched_movies (no rating/watched_at/feeling). Purely additive —
+-- safe to run once.
+-- ============================================================
+create or replace function public.public_watched_movie_count(p_user_id uuid)
+returns integer
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select count(*)::integer
+  from public.user_movies
+  where user_id = p_user_id and status = 'watched';
+$$;
+
+grant execute on function public.public_watched_movie_count(uuid) to authenticated;
+
+create or replace function public.public_favorite_movies(p_user_id uuid)
+returns table (
+  tmdb_id integer,
+  title text,
+  year integer,
+  poster_path text
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select tmdb_id, title, year, poster_path
+  from public.user_movies
+  where user_id = p_user_id and is_favorite = true and tmdb_id is not null
+  order by updated_at desc
+  limit 50;
+$$;
+
+grant execute on function public.public_favorite_movies(uuid) to authenticated;

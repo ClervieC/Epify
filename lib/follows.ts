@@ -55,3 +55,32 @@ export async function fetchFollowingIds(userId: string): Promise<string[]> {
   if (error) throw error;
   return data.map((row) => row.followed_id);
 }
+
+export interface SuggestedBuddy {
+  user_id: string;
+  shared_count: number;
+  match_percent: number;
+}
+
+// Backed by the suggested_show_buddies() Postgres function (see
+// supabase/schema.sql) — it already excludes the caller and anyone they
+// follow, and only returns people at or above the 10% overlap threshold, so
+// there's nothing left to filter client-side.
+export async function fetchSuggestedBuddies(limit = 20): Promise<SuggestedBuddy[]> {
+  const { data, error } = await supabase.rpc("suggested_show_buddies", { p_limit: limit });
+  if (error) throw error;
+  return data as SuggestedBuddy[];
+}
+
+// Same shape and same rules as fetchSuggestedBuddies, over user_movies
+// instead of user_shows (see suggested_movie_buddies() in
+// supabase/schema.sql) — kept as a separate call/result set rather than
+// merged server-side so the two match percentages can be shown to the user
+// as two distinct numbers ("12 shows in common" / "5 movies in common")
+// instead of one blended score that would hide which kind of taste actually
+// overlaps.
+export async function fetchSuggestedMovieBuddies(limit = 20): Promise<SuggestedBuddy[]> {
+  const { data, error } = await supabase.rpc("suggested_movie_buddies", { p_limit: limit });
+  if (error) throw error;
+  return data as SuggestedBuddy[];
+}

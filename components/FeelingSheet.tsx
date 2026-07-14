@@ -68,7 +68,7 @@ function createStyles(colors: Colors) {
       letterSpacing: 0.5,
       marginBottom: 16,
     },
-    row: { flexDirection: "row", justifyContent: "space-between" },
+    row: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 4 },
     chip: { alignItems: "center", gap: 4, padding: 8 },
     emoji: { fontSize: 32 },
     label: { fontSize: type.micro, fontWeight: "700", color: colors.textMuted },

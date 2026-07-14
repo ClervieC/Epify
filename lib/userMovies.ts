@@ -58,6 +58,45 @@ export async function fetchUserMovies() {
   return data as UserMovie[];
 }
 
+export interface PublicMovie {
+  tmdb_id: number;
+  title: string;
+  year: number | null;
+  poster_path: string | null;
+}
+
+// For someone else's profile (app/users/[id].tsx) — goes through the
+// public_watched_movies() Postgres function rather than a plain select
+// against user_movies, since that table has no cross-user read policy on
+// purpose (see the comment on fetchUserMovieTmdbMap above). Only the
+// non-sensitive columns needed to render a poster row come back; rating,
+// watched_at, times_watched, and feeling all stay private.
+export async function fetchPublicWatchedMovies(userId: string): Promise<PublicMovie[]> {
+  const { data, error } = await supabase.rpc("public_watched_movies", { p_user_id: userId });
+  if (error) throw error;
+  return data as PublicMovie[];
+}
+
+// Parallel to fetchEpisodeCount (lib/userShows.ts) for the profile's stats
+// section — see public_watched_movie_count() in supabase/schema.sql for why
+// this can't just be `fetchPublicWatchedMovies(id).length` (that call is
+// capped at 50 rows to keep the poster row light, which would silently
+// undercount anyone with a bigger list).
+export async function fetchPublicWatchedMovieCount(userId: string): Promise<number> {
+  const { data, error } = await supabase.rpc("public_watched_movie_count", { p_user_id: userId });
+  if (error) throw error;
+  return data as number;
+}
+
+// Parallel to fetchFavorites (lib/userShows.ts) — same narrow non-sensitive
+// column set as fetchPublicWatchedMovies, just filtered to is_favorite
+// instead of status.
+export async function fetchPublicFavoriteMovies(userId: string): Promise<PublicMovie[]> {
+  const { data, error } = await supabase.rpc("public_favorite_movies", { p_user_id: userId });
+  if (error) throw error;
+  return data as PublicMovie[];
+}
+
 export async function fetchMovieWatchlist() {
   const userId = await getCurrentUserId();
   if (!userId) return [];

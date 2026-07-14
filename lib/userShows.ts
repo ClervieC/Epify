@@ -15,6 +15,12 @@ export interface UserShow {
   current_season: number | null;
   current_episode: number | null;
   notes: string | null;
+  // Set only when status transitions to "want_to_watch" (see upsertUserShow
+  // and setShowStatus below) — unlike updated_at, this doesn't reset on
+  // unrelated edits (rating, notes, favorite), so it's the one field that
+  // reliably answers "how long has this actually been sitting unwatched,"
+  // which lib/staleWatchlist.ts relies on.
+  want_to_watch_since: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -50,6 +56,7 @@ export async function upsertUserShow(params: {
         show_name: params.show_name,
         show_image: params.show_image,
         status: params.status,
+        want_to_watch_since: params.status === "want_to_watch" ? new Date().toISOString() : null,
       },
       { onConflict: "user_id,tvmaze_id" }
     )
@@ -67,7 +74,11 @@ export async function removeUserShow(tvmazeId: number) {
 export async function setShowStatus(tvmazeId: number, status: ShowStatus) {
   const { data, error } = await supabase
     .from("user_shows")
-    .update({ status })
+    // Only stamp want_to_watch_since on the transition into that status —
+    // leaving it untouched (rather than clearing it) when moving to any
+    // other status, so a show that's later set back to want_to_watch here
+    // gets a fresh timestamp instead of reusing a stale one from years ago.
+    .update(status === "want_to_watch" ? { status, want_to_watch_since: new Date().toISOString() } : { status })
     .eq("tvmaze_id", tvmazeId)
     .select()
     .single();

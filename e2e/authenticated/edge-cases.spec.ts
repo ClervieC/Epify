@@ -67,25 +67,30 @@ test("rapid repeated taps on a watched toggle don't break state", async ({ page 
     timeout: 15_000,
   });
 
-  // Whatever state it starts in, toggle it an odd number of times fast —
-  // the label itself is the assertion: it must always be exactly one of
-  // the two valid states, never both/neither (e.g. from a race between two
-  // in-flight toggle mutations).
-  const startedWatched = await page.getByLabel("Mark as not watched").isVisible().catch(() => false);
-  for (let i = 0; i < 5; i++) {
-    const toggle = page.getByLabel("Mark as watched").or(page.getByLabel("Mark as not watched"));
-    await toggle.click();
-    await page.waitForTimeout(300);
-  }
-  // 5 toggles (odd) from the starting state lands on the opposite state.
-  if (startedWatched) {
-    await expect(page.getByLabel("Mark as watched")).toBeVisible({ timeout: 10_000 });
-  } else {
-    await expect(page.getByLabel("Mark as not watched")).toBeVisible({ timeout: 10_000 });
-    // Cleanup — leave it unwatched for repeat runs.
+  // Force a known starting state (unwatched). Tapping the toggle while
+  // already watched opens a rewatch/unwatch confirmation dialog (see
+  // components/WatchedCheck.tsx's askRewatch()) rather than toggling
+  // directly, so raw repeated taps only exercise a single toggle-mutation
+  // race on the very first tap from unwatched — every tap after that would
+  // just be hammering a dialog button, not the thing this test is for.
+  if (await page.getByLabel("Mark as not watched").isVisible().catch(() => false)) {
     await page.getByLabel("Mark as not watched").click();
+    await page.getByText("I haven't watched it", { exact: true }).click();
     await expect(page.getByLabel("Mark as watched")).toBeVisible({ timeout: 10_000 });
   }
+
+  // Repeated watch -> confirm-unwatch cycles fired with minimal delay
+  // between them — the label itself is the assertion: after each full
+  // cycle it must land on exactly one of the two valid states, never
+  // both/neither (e.g. from a race between two in-flight toggle mutations).
+  for (let i = 0; i < 3; i++) {
+    await page.getByLabel("Mark as watched").click();
+    await expect(page.getByLabel("Mark as not watched")).toBeVisible({ timeout: 10_000 });
+    await page.getByLabel("Mark as not watched").click();
+    await page.getByText("I haven't watched it", { exact: true }).click();
+    await expect(page.getByLabel("Mark as watched")).toBeVisible({ timeout: 10_000 });
+  }
+  // Ends unwatched — leaves it clean for repeat runs.
 });
 
 test("submitting an empty or whitespace-only comment is a no-op", async ({ page }) => {
@@ -129,7 +134,21 @@ test("app stays usable when the network is offline", async ({ page, context }) =
   await page.goto("/");
   await expect(page.getByText("My list", { exact: true })).toBeVisible();
 
+  // context.setOffline() only blocks requests at the network layer — it
+  // doesn't flip navigator.onLine or fire the Network Information API's
+  // "change" event, which is what @react-native-community/netinfo's web
+  // implementation actually listens for (see
+  // node_modules/@react-native-community/netinfo/.../nativeModule.web.js).
+  // Without also simulating that signal directly, OfflineBanner never
+  // finds out and this test can't pass in any Chromium/Playwright setup,
+  // regardless of whether the app itself is working correctly.
   await context.setOffline(true);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    const connection = (navigator as any).connection;
+    if (connection) connection.dispatchEvent(new Event("change"));
+    else window.dispatchEvent(new Event("offline"));
+  });
   try {
     // The offline banner (see components/OfflineBanner.tsx, wired up to
     // @react-native-community/netinfo) is the actual feature being
@@ -141,6 +160,12 @@ test("app stays usable when the network is offline", async ({ page, context }) =
     await expect(page.getByText("Something went wrong")).not.toBeVisible();
   } finally {
     await context.setOffline(false);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+      const connection = (navigator as any).connection;
+      if (connection) connection.dispatchEvent(new Event("change"));
+      else window.dispatchEvent(new Event("online"));
+    });
   }
 });
 

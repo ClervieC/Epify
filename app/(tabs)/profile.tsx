@@ -225,7 +225,7 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView ref={scrollRef} style={styles.container} showsVerticalScrollIndicator={false}>
-      <LinearGradient colors={[`${colors.accent}1f`, "transparent"]} style={styles.headerGlow} />
+      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       <Animated.View style={[styles.header, { opacity: headerIn.opacity, transform: headerIn.transform }]}>
         <Pressable onPress={handleChangeAvatar} disabled={uploadingAvatar} accessibilityRole="button" accessibilityLabel={t.profile.changePhoto}>
           <Avatar name={displayName} imageUri={profile?.avatar_url} size="md" />

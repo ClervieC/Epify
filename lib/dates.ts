@@ -11,6 +11,16 @@ const TOMORROW_WORD: Record<Language, string> = { en: "TOMORROW", fr: "DEMAIN" }
 const LATER_WORD: Record<Language, string> = { en: "LATER", fr: "PLUS TARD" };
 const EARLIER_WORD: Record<Language, string> = { en: "EARLIER", fr: "AVANT" };
 
+// Locale-independent day/month/year ordering for a plain short date (e.g.
+// Activity's and Notifications' own timestamps) — `toLocaleDateString()`
+// with no locale argument follows the *device's* locale, which reads as
+// M/D/YYYY on a US-locale device regardless of which of the app's own
+// languages (en/fr) is active. "en-GB" is just a stand-in locale that
+// always orders day-month-year; it's not tied to actually being British.
+export function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB");
+}
+
 export function todayISODate() {
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, "0");

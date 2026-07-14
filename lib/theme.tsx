@@ -14,6 +14,13 @@ const lightColors = {
   accentDark: "#5b3ff0",
   accentSoft: "#ece7ff",
   onAccent: "#ffffff",
+  // The soft accent-tinted glow behind most tab headers (see headerGlow in
+  // app/(tabs)/*.tsx) — its own token rather than `${accent}1f` inlined at
+  // each call site, since the alpha that reads as a gentle glow against a
+  // light background is close to invisible against a dark one and needs a
+  // different value per theme, not just the same hex math with a swapped
+  // base color.
+  headerGlow: "#7c5cff1f",
   black: "#111111",
   green: "#05b920",
   greenLight: "#e9f8ea",
@@ -40,6 +47,12 @@ const darkColors: typeof lightColors = {
   accentDark: "#6b4bf5",
   accentSoft: "#241f3d",
   onAccent: "#ffffff",
+  // Noticeably higher alpha than light mode's headerGlow (1f ≈ 12% vs. this
+  // 40 ≈ 25%) — the same low alpha that reads as a visible tint against a
+  // light background blends into near-invisibility against this theme's
+  // much darker background, so it needs roughly double the opacity to
+  // actually read as a glow rather than disappearing.
+  headerGlow: "#8a72ff40",
   black: "#f4f5fb",
   green: "#05b920",
   greenLight: "#173a22",

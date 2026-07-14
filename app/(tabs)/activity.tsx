@@ -1,21 +1,32 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, View, Text, FlatList, Pressable, ActivityIndicator, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { fetchFollowingActivity, ActivityItem } from "../../lib/activity";
-import { fetchFollowingIds } from "../../lib/follows";
+import {
+  fetchFollowingIds,
+  fetchSuggestedBuddies,
+  fetchSuggestedMovieBuddies,
+  SuggestedBuddy,
+  followUser,
+  unfollowUser,
+} from "../../lib/follows";
+import { fetchProfiles, Profile } from "../../lib/profiles";
 import { getCurrentUserId } from "../../lib/supabase";
 import { posterUrl } from "../../lib/tmdb";
+import { shortDate } from "../../lib/dates";
 import { FEELING_EMOJIS } from "../../lib/feelings";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
 import { useActivityUnseen } from "../../context/ActivityContext";
-import { useMountIn } from "../../lib/animations";
+import { useMountIn, useGrowIn } from "../../lib/animations";
 import { Avatar } from "../../components/Avatar";
 import { EmptyState } from "../../components/EmptyState";
+import { UserRow } from "../../components/UserRow";
+import { FollowButton } from "../../components/FollowButton";
 
 function feelingEmoji(key: string | null): string | null {
   return FEELING_EMOJIS.find((f) => f.key === key)?.emoji ?? null;
@@ -33,13 +44,6 @@ function kindIcon(kind: ActivityItem["kind"]): IoniconName {
     default:
       return "chatbubble-ellipses";
   }
-}
-
-// Matches app/notifications.tsx's own plain-date formatting rather than
-// inventing a new relative-time i18n subsystem ("3h ago", "2d ago", ...)
-// just for this screen.
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString();
 }
 
 // One feed row for any ActivityItem kind — image/title/verb/meta vary by
@@ -120,15 +124,36 @@ function ActivityRow({
         style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
         onPress={onPress}
       >
-        <View style={styles.avatarWrap}>
+        {/* Its own Pressable + stopPropagation, same idea as the show
+            thumbnail in components/EpisodeRow.tsx — the row's own tap opens
+            the show/episode/movie, this one opens the person instead. */}
+        <Pressable
+          style={styles.avatarWrap}
+          onPress={(e) => {
+            e.stopPropagation();
+            if (item.user) router.push({ pathname: "/users/[id]", params: { id: item.user.user_id } });
+          }}
+        >
           <Avatar name={username} imageUri={item.user?.avatar_url} size="sm" />
           <View style={[styles.kindBadge, { backgroundColor: rating != null || feeling ? colors.accent : colors.blue }]}>
             <Ionicons name={kindIcon(item.kind)} size={11} color={colors.onAccent} />
           </View>
-        </View>
+        </Pressable>
         <View style={styles.rowContent}>
           <Text style={styles.rowText}>
-            <Text style={styles.username}>{username}</Text>
+            <Text
+              style={styles.username}
+              onPress={
+                item.user
+                  ? (e) => {
+                      e.stopPropagation();
+                      router.push({ pathname: "/users/[id]", params: { id: item.user!.user_id } });
+                    }
+                  : undefined
+              }
+            >
+              {username}
+            </Text>
             <Text style={styles.verb}> {verb} </Text>
             <Text style={styles.title}>{title}</Text>
           </Text>
@@ -148,7 +173,7 @@ function ActivityRow({
                 <Text style={styles.metaChipText}>{feelingEmoji(feeling)}</Text>
               </View>
             )}
-            <Text style={styles.metaTime}>{formatDate(item.createdAt)}</Text>
+            <Text style={styles.metaTime}>{shortDate(item.createdAt)}</Text>
           </View>
         </View>
         {image ? (
@@ -163,15 +188,35 @@ function ActivityRow({
   );
 }
 
+type ActivityTab = "activity" | "suggested";
+type SuggestedRow = {
+  user_id: string;
+  profile: Profile;
+  showMatch: SuggestedBuddy | null;
+  movieMatch: SuggestedBuddy | null;
+};
+
 export default function ActivityScreen() {
   const router = useRouter();
+  const [tab, setTab] = useState<ActivityTab>("activity");
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasFollows, setHasFollows] = useState(true);
+  // null (not []) while unloaded so the tab shows a spinner instead of a
+  // flash of "no matches" before the RPC round trip resolves.
+  const [suggested, setSuggested] = useState<SuggestedRow[] | null>(null);
+  // Every row starts as "not following" — suggested_show_buddies() already
+  // excludes people the caller follows (see supabase/schema.sql), so there's
+  // no existing-follow state to prefetch, same assumption app/users/search.tsx
+  // makes for its own results.
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
+  const underlineGrow = useGrowIn(tab);
   const listRef = useRef<FlatList<ActivityItem>>(null);
+  const suggestedListRef = useRef<FlatList<SuggestedRow>>(null);
   const { markSeen } = useActivityUnseen();
 
   const load = useCallback(async () => {
@@ -210,34 +255,147 @@ export default function ActivityScreen() {
     }, [load])
   );
 
-  useScrollToTopOnTabPress(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+  // Lazy-loads on first visit to the tab, same reasoning as Movies' To
+  // Watch/Upcoming tabs (see app/(tabs)/movies.tsx) — no reason to make
+  // every Activity focus pay for the RPC + profile lookups when the user
+  // might never open this tab at all.
+  useEffect(() => {
+    if (tab !== "suggested" || suggested !== null) return;
+    let active = true;
+    // Shows and movies are ranked independently (see fetchSuggestedBuddies/
+    // fetchSuggestedMovieBuddies) and merged here by user_id, rather than
+    // blended into one score server-side — someone can qualify on either
+    // axis alone, and the two percentages stay visible as two separate
+    // stats instead of hiding which kind of taste actually overlaps.
+    Promise.all([fetchSuggestedBuddies(), fetchSuggestedMovieBuddies()])
+      .then(async ([showBuddies, movieBuddies]) => {
+        const showById = new Map(showBuddies.map((b) => [b.user_id, b]));
+        const movieById = new Map(movieBuddies.map((b) => [b.user_id, b]));
+        const userIds = [...new Set([...showById.keys(), ...movieById.keys()])];
+        const profiles = await fetchProfiles(userIds);
+        const profileById = new Map(profiles.map((p) => [p.user_id, p]));
+        if (!active) return;
+        const rows = userIds.flatMap((id) => {
+          const profile = profileById.get(id);
+          if (!profile) return [];
+          return [{ user_id: id, profile, showMatch: showById.get(id) ?? null, movieMatch: movieById.get(id) ?? null }];
+        });
+        rows.sort(
+          (a, b) =>
+            Math.max(b.showMatch?.match_percent ?? 0, b.movieMatch?.match_percent ?? 0) -
+            Math.max(a.showMatch?.match_percent ?? 0, a.movieMatch?.match_percent ?? 0)
+        );
+        setSuggested(rows);
+      })
+      .catch(() => active && setSuggested([]));
+    return () => {
+      active = false;
+    };
+  }, [tab, suggested]);
+
+  useScrollToTopOnTabPress(() => {
+    const ref = tab === "activity" ? listRef : suggestedListRef;
+    ref.current?.scrollToOffset({ offset: 0, animated: true });
+  });
+
+  async function toggleFollow(userId: string) {
+    const isFollowing = followingIds.has(userId);
+    setBusyIds((prev) => new Set(prev).add(userId));
+    try {
+      if (isFollowing) {
+        await unfollowUser(userId);
+        setFollowingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(userId);
+          return next;
+        });
+      } else {
+        await followUser(userId);
+        setFollowingIds((prev) => new Set(prev).add(userId));
+      }
+    } finally {
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    }
+  }
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[`${colors.accent}1f`, "transparent"]} style={styles.headerGlow} />
+      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       <View style={styles.headerBlock}>
         <Text style={styles.header}>{t.activity.title}</Text>
-        {!loading && items.length > 0 && <Text style={styles.subtitle}>{t.activity.subtitle}</Text>}
+        {tab === "activity" && !loading && items.length > 0 && <Text style={styles.subtitle}>{t.activity.subtitle}</Text>}
+        {tab === "suggested" && <Text style={styles.subtitle}>{t.activity.suggestedSubtitle}</Text>}
       </View>
-      {loading ? (
+
+      <View style={styles.tabsRow}>
+        <Pressable style={styles.tabBtn} onPress={() => setTab("activity")}>
+          <Text style={[styles.tabText, tab === "activity" && styles.tabTextActive]}>{t.activity.tabActivity}</Text>
+          {tab === "activity" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
+        </Pressable>
+        <Pressable style={styles.tabBtn} onPress={() => setTab("suggested")}>
+          <Text style={[styles.tabText, tab === "suggested" && styles.tabTextActive]}>{t.activity.tabSuggested}</Text>
+          {tab === "suggested" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
+        </Pressable>
+      </View>
+
+      {tab === "activity" ? (
+        loading ? (
+          <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
+        ) : items.length === 0 ? (
+          <EmptyState
+            icon="pulse-outline"
+            title={hasFollows ? t.activity.empty : t.activity.emptyNoFollows}
+          />
+        ) : (
+          <FlatList
+            ref={listRef}
+            data={items}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item, index }) => <ActivityRow item={item} index={index} t={t} colors={colors} styles={styles} />}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            contentContainerStyle={styles.list}
+            showsVerticalScrollIndicator={false}
+          />
+        )
+      ) : suggested === null ? (
         <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
-      ) : items.length === 0 ? (
-        <EmptyState
-          icon="pulse-outline"
-          title={hasFollows ? t.activity.empty : t.activity.emptyNoFollows}
-        />
+      ) : suggested.length === 0 ? (
+        <EmptyState icon="people-outline" title={t.activity.suggestedEmpty} />
       ) : (
         <FlatList
-          ref={listRef}
-          data={items}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => <ActivityRow item={item} index={index} t={t} colors={colors} styles={styles} />}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-          contentContainerStyle={styles.list}
+          ref={suggestedListRef}
+          data={suggested}
+          keyExtractor={(item) => item.user_id}
+          renderItem={({ item }) => (
+            <UserRow
+              username={item.profile.username}
+              imageUri={item.profile.avatar_url}
+              subtitleLines={[
+                ...(item.showMatch ? [t.activity.sharedShows(item.showMatch.shared_count, item.showMatch.match_percent)] : []),
+                ...(item.movieMatch
+                  ? [t.activity.sharedMovies(item.movieMatch.shared_count, item.movieMatch.match_percent)]
+                  : []),
+              ]}
+              onPress={() => router.push({ pathname: "/users/[id]", params: { id: item.user_id } })}
+              trailing={
+                <FollowButton
+                  following={followingIds.has(item.user_id)}
+                  loading={busyIds.has(item.user_id)}
+                  onPress={() => toggleFollow(item.user_id)}
+                />
+              }
+            />
+          )}
+          contentContainerStyle={styles.suggestedList}
           showsVerticalScrollIndicator={false}
         />
       )}
-      {!hasFollows && !loading && (
+
+      {tab === "activity" && !hasFollows && !loading && (
         <Pressable style={styles.findPeopleBtn} onPress={() => router.push("/users/search")}>
           <Text style={styles.findPeopleBtnText}>{t.activity.findPeople}</Text>
         </Pressable>
@@ -255,7 +413,21 @@ function createStyles(colors: Colors) {
     headerBlock: { padding: 16, paddingBottom: 12 },
     header: { fontSize: type.title, fontWeight: "800", color: colors.text },
     subtitle: { fontSize: type.bodySm, color: colors.textMuted, marginTop: 2 },
+    tabsRow: {
+      flexDirection: "row",
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      marginTop: 4,
+    },
+    tabBtn: { flex: 1, alignItems: "center", paddingVertical: 12 },
+    tabText: { fontWeight: "800", fontSize: 13, color: colors.textFaint, letterSpacing: 0.4 },
+    tabTextActive: { color: colors.accent },
+    tabUnderline: { height: 2, backgroundColor: colors.accent, width: "60%", marginTop: 6 },
     list: { paddingHorizontal: 16, paddingBottom: 32 },
+    // No horizontal padding here — unlike ActivityRow, UserRow already pads
+    // itself horizontally (see components/UserRow.tsx), same as how
+    // app/users/search.tsx lists its own results.
+    suggestedList: { paddingBottom: 32 },
     separator: { height: 10 },
     row: {
       flexDirection: "row",

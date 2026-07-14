@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, PropsWithChildren } from "react";
 import { useAuth } from "./AuthContext";
 import { fetchUnreadNotificationCount, markAllNotificationsRead } from "../lib/notifications";
+import { checkStaleWatchlistReminders } from "../lib/staleWatchlist";
 
 interface NotificationsContextValue {
   unreadCount: number;
@@ -37,7 +38,13 @@ export function NotificationsProvider({ children }: PropsWithChildren) {
       setUnreadCount(0);
       return;
     }
-    refresh();
+    // Runs once per session (login/app cold start), not on every focus —
+    // plenty for a reminder that only ever fires once per show anyway (see
+    // checkStaleWatchlistReminders' dedup). Always refresh() after, whether
+    // or not it found anything new, so the badge reflects any inserted rows.
+    checkStaleWatchlistReminders()
+      .catch(() => {})
+      .finally(refresh);
   }, [session, refresh]);
 
   const markAllRead = useCallback(() => {

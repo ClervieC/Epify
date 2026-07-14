@@ -11,6 +11,7 @@ import { ActivityProvider } from "../context/ActivityContext";
 import { NetworkProvider } from "../context/NetworkContext";
 import { RewatchPromptProvider } from "../context/RewatchPromptContext";
 import { PreviousEpisodesPromptProvider } from "../context/PreviousEpisodesPromptContext";
+import { AddToListPromptProvider } from "../context/AddToListPromptContext";
 import { BadgeUnlockProvider } from "../context/BadgeUnlockContext";
 import { LanguageProvider } from "../lib/i18n";
 import { ThemeProvider, useThemeMode } from "../lib/theme";
@@ -143,9 +144,11 @@ export default function RootLayout() {
                       <View style={{ flex: 1 }}>
                         <RewatchPromptProvider>
                           <PreviousEpisodesPromptProvider>
-                            <BadgeUnlockProvider>
-                              <RootNavigation />
-                            </BadgeUnlockProvider>
+                            <AddToListPromptProvider>
+                              <BadgeUnlockProvider>
+                                <RootNavigation />
+                              </BadgeUnlockProvider>
+                            </AddToListPromptProvider>
                           </PreviousEpisodesPromptProvider>
                         </RewatchPromptProvider>
                       </View>

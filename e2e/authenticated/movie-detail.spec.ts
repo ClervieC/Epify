@@ -17,10 +17,22 @@ const MOVIE_TITLE = "Fight Club";
 // rather than assuming a pristine starting state is what makes the suite
 // reliable to re-run after a flake.
 async function ensureUnwatched(page: Page) {
+  const markAsWatched = page.getByLabel("Mark as watched");
   const markAsNotWatched = page.getByLabel("Mark as not watched");
+  // The real watched state loads asynchronously (a Supabase round trip
+  // racing several TMDB fetches — see the "Mark as watched only renders
+  // once..." comment below), so right after navigation the toggle can
+  // still be in its pre-load state. Waiting for either label first avoids
+  // an immediate isVisible() check below racing that load and wrongly
+  // concluding "not watched" while the real answer just hasn't arrived yet.
+  await expect(markAsWatched.or(markAsNotWatched)).toBeVisible({ timeout: 45_000 });
   if (await markAsNotWatched.isVisible().catch(() => false)) {
     await markAsNotWatched.click();
-    await expect(page.getByLabel("Mark as watched")).toBeVisible({ timeout: 10_000 });
+    // Already-watched -> tapping the toggle opens the rewatch/unwatch
+    // confirmation dialog (see components/WatchedCheck.tsx's
+    // askRewatch()) instead of toggling directly.
+    await page.getByText("I haven't watched it", { exact: true }).click();
+    await expect(markAsWatched).toBeVisible({ timeout: 10_000 });
   }
 }
 
@@ -69,5 +81,7 @@ test("can mark a movie watched, rate it, react, and comment", async ({ page }) =
   await expect(page.getByText(uniqueComment)).not.toBeVisible({ timeout: 10_000 });
 
   await page.getByLabel("Mark as not watched").click();
+  // Same confirmation dialog as ensureUnwatched above.
+  await page.getByText("I haven't watched it", { exact: true }).click();
   await expect(page.getByText("Your rating", { exact: true })).not.toBeVisible({ timeout: 10_000 });
 });

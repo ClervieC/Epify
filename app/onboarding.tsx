@@ -17,6 +17,7 @@ import { useRouter } from "expo-router";
 import { useColors, radius, type, dropShadow, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { markOnboardingComplete } from "../lib/onboarding";
+import { StaleWatchlistMonths } from "../lib/userSettings";
 import { useMountIn } from "../lib/animations";
 
 interface Slide {
@@ -35,10 +36,24 @@ interface Slide {
 export default function OnboardingScreen() {
   const router = useRouter();
   const colors = useColors();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  // Below this height the vertical stack (320px screenshot + title + body)
+  // no longer fits inside slidesList's flex:1 share of the screen — see the
+  // "overflow: hidden" note on the slidesList style below for what used to
+  // happen instead of just clipping (the footer, including Next/Get
+  // started, got pushed off-screen entirely). A side-by-side layout needs
+  // far less vertical room than a stacked one, so short/landscape-ish
+  // viewports (a short browser window, a phone rotated sideways) get that
+  // instead of a clipped stack.
+  const isShort = height < 700;
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t } = useLanguage();
+  const { t, setStaleWatchlistMonths } = useLanguage();
   const [index, setIndex] = useState(0);
+  // The threshold question is asked once, right before finishing — after the
+  // last slide's "Get started" or after "Skip" either way, since it's a
+  // single tap and not worth gating behind sitting through the full
+  // slideshow. See chooseReminder below for where the answer is persisted.
+  const [step, setStep] = useState<"slides" | "reminder">("slides");
   const listRef = useRef<FlatList<Slide>>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
 
@@ -81,14 +96,19 @@ export default function OnboardingScreen() {
   ];
   const isLast = index === slides.length - 1;
 
-  async function finish() {
+  function askReminder() {
+    setStep("reminder");
+  }
+
+  async function chooseReminder(months: StaleWatchlistMonths) {
+    setStaleWatchlistMonths(months);
     await markOnboardingComplete();
     router.replace("/(tabs)/explore");
   }
 
   function next() {
     if (isLast) {
-      finish();
+      askReminder();
       return;
     }
     listRef.current?.scrollToOffset({
@@ -99,6 +119,38 @@ export default function OnboardingScreen() {
 
   function onScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
     setIndex(Math.round(e.nativeEvent.contentOffset.x / width));
+  }
+
+  if (step === "reminder") {
+    return (
+      <View style={styles.container}>
+        <LinearGradient
+          colors={[`${colors.accent}26`, "transparent"]}
+          style={[styles.glow, { pointerEvents: "none" }]}
+        />
+        <View style={styles.reminderStep}>
+          <Ionicons name="alarm-outline" size={40} color={colors.accent} style={{ marginBottom: 20 }} />
+          <Text style={styles.title}>{t.onboarding.reminderTitle}</Text>
+          <Text style={styles.body}>{t.onboarding.reminderBody}</Text>
+          <View style={styles.reminderOptions}>
+            <Pressable
+              style={[styles.reminderOptionBtn, { backgroundColor: colors.accent }]}
+              onPress={() => chooseReminder(6)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.nextBtnText}>{t.onboarding.reminderSixMonths}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.reminderOptionBtn, { backgroundColor: colors.pillBg }]}
+              onPress={() => chooseReminder(12)}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.nextBtnText, { color: colors.text }]}>{t.onboarding.reminderOneYear}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -121,7 +173,7 @@ export default function OnboardingScreen() {
           ))}
         </View>
         {!isLast && (
-          <Pressable onPress={finish} accessibilityRole="button" hitSlop={10}>
+          <Pressable onPress={askReminder} accessibilityRole="button" hitSlop={10}>
             <Text style={styles.skipText}>{t.onboarding.skip}</Text>
           </Pressable>
         )}
@@ -135,9 +187,16 @@ export default function OnboardingScreen() {
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        windowSize={3}
+        // Only 7 lightweight slides total — rendering them all upfront
+        // (rather than a narrow virtualization window) avoids a page
+        // occasionally still being unmeasured/unmounted by the time
+        // scrollToOffset's *computed* target lands on it, which showed up
+        // as a slide rendering blank/misaligned until manually nudged.
+        // getItemLayout removes any remaining dependency on measurement —
+        // every page is exactly `width` wide, so its offset is knowable
+        // upfront instead of discovered after layout.
+        initialNumToRender={slides.length}
+        getItemLayout={(_data, i) => ({ length: width, offset: width * i, index: i })}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { x: scrollX } } }],
           {
@@ -150,6 +209,7 @@ export default function OnboardingScreen() {
           <OnboardingSlide
             slide={item}
             width={width}
+            isShort={isShort}
             colors={colors}
             styles={styles}
           />
@@ -179,41 +239,46 @@ export default function OnboardingScreen() {
 function OnboardingSlide({
   slide,
   width,
+  isShort,
   colors,
   styles,
 }: {
   slide: Slide;
   width: number;
+  isShort: boolean;
   colors: Colors;
   styles: OnboardingStyles;
 }) {
   const mountIn = useMountIn();
 
-  return (
-    <View style={[styles.slide, { width }]}>
-      <Animated.View
-        style={[
-          styles.screenshotWrap,
-          { opacity: mountIn.opacity, transform: mountIn.transform },
-        ]}
-      >
-        <Image
-          source={slide.image}
-          style={styles.screenshot}
-          contentFit="cover"
-          // Anchored top-left rather than centered — one of these
-          // screenshots (mylist.png) has extra blank canvas on its right
-          // edge, wider than the other three, so a centered crop clipped
-          // into the actual UI on one side while leaving blank space
-          // showing on the other. Anchoring top-left keeps the real
-          // content (which starts at 0,0 in every one of these) fully
-          // in frame regardless of that inconsistency.
-          contentPosition="top left"
-        />
-      </Animated.View>
+  const screenshot = (
+    <Animated.View
+      style={[
+        isShort ? styles.screenshotWrapShort : styles.screenshotWrap,
+        { opacity: mountIn.opacity, transform: mountIn.transform },
+      ]}
+    >
+      <Image
+        source={slide.image}
+        style={styles.screenshot}
+        contentFit="cover"
+        // Anchored top-left rather than centered — one of these
+        // screenshots (mylist.png) has extra blank canvas on its right
+        // edge, wider than the other three, so a centered crop clipped
+        // into the actual UI on one side while leaving blank space
+        // showing on the other. Anchoring top-left keeps the real
+        // content (which starts at 0,0 in every one of these) fully
+        // in frame regardless of that inconsistency.
+        contentPosition="top left"
+      />
+    </Animated.View>
+  );
+
+  const text = (
+    <>
       <Animated.Text
         style={[
-          styles.title,
+          isShort ? styles.titleShort : styles.title,
           { opacity: mountIn.opacity, transform: mountIn.transform },
         ]}
       >
@@ -221,12 +286,33 @@ function OnboardingSlide({
       </Animated.Text>
       <Animated.Text
         style={[
-          styles.body,
+          isShort ? styles.bodyShort : styles.body,
           { opacity: mountIn.opacity, transform: mountIn.transform },
         ]}
       >
         {slide.body}
       </Animated.Text>
+    </>
+  );
+
+  // Short/landscape-ish viewports (a short browser window, a phone turned
+  // sideways) don't have the vertical room for the screenshot stacked above
+  // the title/body — see the isShort computation in OnboardingScreen. Image
+  // on the left, text on the right, both vertically centered together,
+  // needs only the taller of the two instead of the sum of both.
+  if (isShort) {
+    return (
+      <View style={[styles.slideShort, { width }]}>
+        {screenshot}
+        <View style={styles.slideShortText}>{text}</View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.slide, { width }]}>
+      {screenshot}
+      {text}
     </View>
   );
 }
@@ -245,7 +331,15 @@ function createStyles(colors: Colors) {
       paddingTop: 40,
       paddingBottom: 15,
     },
-    slidesList: { flex: 1 },
+    // overflow: hidden matters more than it looks like it should: on web,
+    // flex:1 alone lets a child grow past its allotted share to fit its
+    // *content's* minimum size (CSS flexbox's default min-height:auto) —
+    // React Native's own layout engine (used natively) doesn't have that
+    // quirk, so this only ever showed up on web. Without this, a slide
+    // taller than the space left over from topBar+footer pushed the footer
+    // (and with it, the only way to advance past the last slide) below the
+    // viewport instead of just clipping the overflowing slide content.
+    slidesList: { flex: 1, overflow: "hidden" },
     progressTrack: { flex: 1, flexDirection: "row", gap: 6 },
     progressSegment: {
       flex: 1,
@@ -292,6 +386,38 @@ function createStyles(colors: Colors) {
       lineHeight: 22,
       maxWidth: 300,
     },
+    slideShort: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 24,
+      paddingHorizontal: 28,
+    },
+    slideShortText: { flex: 1, maxWidth: 340 },
+    screenshotWrapShort: {
+      width: 120,
+      height: 214,
+      borderRadius: radius.lg,
+      overflow: "hidden",
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      ...dropShadow({ opacity: 0.18, radius: 20, offsetY: 10, elevation: 8 }),
+    },
+    titleShort: {
+      fontSize: type.title,
+      fontWeight: "800",
+      color: colors.text,
+      textAlign: "left",
+      marginBottom: 8,
+    },
+    bodyShort: {
+      fontSize: type.bodySm,
+      color: colors.textMuted,
+      textAlign: "left",
+      lineHeight: 20,
+    },
     footer: { paddingHorizontal: 24, paddingBottom: 44, paddingTop: 8 },
     nextBtn: {
       flexDirection: "row",
@@ -306,6 +432,21 @@ function createStyles(colors: Colors) {
       color: colors.onAccent,
       fontWeight: "800",
       fontSize: type.body,
+    },
+    reminderStep: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 28,
+      paddingBottom: 44,
+    },
+    reminderOptions: { width: "100%", gap: 12, marginTop: 32 },
+    reminderOptionBtn: {
+      width: "100%",
+      borderRadius: radius.pill,
+      paddingVertical: 17,
+      alignItems: "center",
+      justifyContent: "center",
     },
   });
 }

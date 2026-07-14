@@ -32,15 +32,19 @@ import {
 } from "../../lib/showDataCache";
 import {
   fetchEpisodeFeelingCounts,
+  fetchUserShows,
   fetchWatchedEpisodes,
   incrementRewatch,
   rateEpisode,
   setEpisodeFavorite,
   setEpisodeWatched,
+  upsertUserShow,
+  UserShow,
   WatchedEpisode,
 } from "../../lib/userShows";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
+import { useAddToListPrompt } from "../../context/AddToListPromptContext";
 import {
   useScalePress,
   useMountIn,
@@ -98,9 +102,11 @@ export default function EpisodeDetailScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [reporting, setReporting] = useState(false);
+  const [userShow, setUserShow] = useState<UserShow | null>(null);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, spoilerMode } = useLanguage();
+  const askAddToList = useAddToListPrompt();
   // A horizontally-paged list with vertical scrolling content nested inside
   // each page is fragile with real touch input — getting a Pan-based swipe
   // gesture, a nested scroll view, and a native horizontal pager to all
@@ -156,6 +162,13 @@ export default function EpisodeDetailScreen() {
         getShowCast(showIdNum)
           .then((c) => active && setCast(c))
           .catch(() => {});
+        fetchUserShows()
+          .then(
+            (shows) =>
+              active &&
+              setUserShow(shows.find((s) => s.tvmaze_id === showIdNum) ?? null),
+          )
+          .catch(() => {});
       }
 
       return () => {
@@ -191,6 +204,23 @@ export default function EpisodeDetailScreen() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isDesktopWeb, currentIndex, episodes.length]);
 
+  // Same one-shot "you watched an episode of an untracked show" prompt as
+  // app/show/[id].tsx — this screen is reachable directly (e.g. from
+  // search/a recommendation) without ever visiting the show's own page
+  // first, so it needs its own copy of the check.
+  async function ensureInList() {
+    if (userShow || !show) return;
+    const choice = await askAddToList(show.name);
+    if (choice !== "add") return;
+    const result = await upsertUserShow({
+      tvmaze_id: show.id,
+      show_name: show.name,
+      show_image: show.image?.medium ?? null,
+      status: "watching",
+    });
+    setUserShow(result);
+  }
+
   async function toggleWatched(episode: TVMazeEpisode) {
     const isWatched = !!watchedMap[episode.id];
     const result = await setEpisodeWatched({
@@ -201,6 +231,7 @@ export default function EpisodeDetailScreen() {
       watched: !isWatched,
     });
     setWatchedMap((prev) => ({ ...prev, [episode.id]: result }));
+    if (!isWatched) await ensureInList();
   }
 
   async function rewatchEpisode(episode: TVMazeEpisode) {
@@ -879,13 +910,15 @@ function EpisodePage({
                 />
               </Pressable>
             )}
-            <WatchedCheck
-              watched={!!watched}
-              timesWatched={watched?.times_watched}
-              onToggle={onToggleWatched}
-              onRewatch={onRewatch}
-              size={40}
-            />
+            {(!!episode.airstamp && new Date(episode.airstamp).getTime() <= Date.now()) && (
+              <WatchedCheck
+                watched={!!watched}
+                timesWatched={watched?.times_watched}
+                onToggle={onToggleWatched}
+                onRewatch={onRewatch}
+                size={40}
+              />
+            )}
           </View>
         </View>
 

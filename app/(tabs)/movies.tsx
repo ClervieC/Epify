@@ -28,7 +28,7 @@ type Block =
   | { type: "header"; key: string; year: number }
   | { type: "row"; key: string; items: UserMovie[] };
 
-type MoviesTab = "list" | "upcoming";
+type MoviesTab = "list" | "toWatch" | "upcoming";
 type UpcomingEntry = { movie: UserMovie; tmdb: TMDBMovieDetails | null };
 
 // Mirrors app/(tabs)/profile.tsx's own reload throttle — this screen's
@@ -43,7 +43,11 @@ export default function MoviesScreen() {
   const [tab, setTab] = useState<MoviesTab>("list");
   const [movies, setMovies] = useState<UserMovie[]>([]);
   const [watchlist, setWatchlist] = useState<UserMovie[]>([]);
-  const [upcoming, setUpcoming] = useState<UpcomingEntry[] | null>(null);
+  // Holds every watchlist entry cross-referenced against TMDB, regardless of
+  // which of the two release-based tabs is active — split into toWatchList/
+  // upcomingList below rather than fetched separately per tab, since it's
+  // the same TMDB lookup pass either way.
+  const [resolvedWatchlist, setResolvedWatchlist] = useState<UpcomingEntry[] | null>(null);
   const [loaded, setLoaded] = useState(false);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -52,9 +56,10 @@ export default function MoviesScreen() {
   const columns = Math.max(3, Math.floor((width - SCREEN_PADDING * 2 + GAP) / (TARGET_COLUMN_WIDTH + GAP)));
   const underlineGrow = useGrowIn(tab);
   const listRef = useRef<FlatList<Block>>(null);
+  const toWatchListRef = useRef<FlatList<UpcomingEntry>>(null);
   const upcomingListRef = useRef<FlatList<UpcomingEntry>>(null);
   useScrollToTopOnTabPress(() => {
-    const ref = tab === "list" ? listRef : upcomingListRef;
+    const ref = tab === "list" ? listRef : tab === "toWatch" ? toWatchListRef : upcomingListRef;
     ref.current?.scrollToOffset({ offset: 0, animated: true });
   });
 
@@ -87,28 +92,24 @@ export default function MoviesScreen() {
     setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
   }, []);
 
-  // This tab is the personal "haven't watched yet" queue — everything added
-  // to the watchlist (from Explore or a movie's detail page), regardless of
-  // whether it's actually released yet. It used to only show movies with a
-  // future release date, which meant most additions (anything from
-  // Popular/Top Rated/In theaters — already-released movies) never showed
-  // up anywhere at all. Sorted purely by release date, oldest first — since
-  // not-yet-released movies have a release date in the future, this puts
-  // them at the bottom automatically (soonest-releasing first among those),
-  // with everything already out above them in chronological order. A
-  // missing release date (no TMDB match) sorts to the very top rather than
-  // being guessed at. Cross-references TMDB for release dates — resets to
-  // null (not []) on every watchlist change so the tab shows a spinner
-  // instead of a flash of "empty" while this resolves. Gated on the
-  // "upcoming" sub-tab being active: without this, every watchlist change
-  // (i.e. every reload() on focus) redid this TMDB lookup pass and flashed
-  // a spinner even while the user was sitting on "list" and never opened
-  // "upcoming" at all — this defers the work until the tab is actually
-  // opened, at which point it fetches with whatever watchlist is current.
+  // Everything added to the watchlist (from Explore or a movie's detail
+  // page) ends up on one of these two tabs, split by whether it's actually
+  // out yet: To Watch is the "haven't watched yet, but could tonight" queue
+  // (already released, or no TMDB match to check against), Upcoming is
+  // strictly future-release titles with a countdown instead of a watched
+  // checkmark (see UpcomingRow — there's nothing to mark watched yet).
+  // Cross-references TMDB for release dates — resets to null (not []) on
+  // every watchlist change so both tabs show a spinner instead of a flash of
+  // "empty" while this resolves. Gated on one of the two release-based tabs
+  // being active: without this, every watchlist change (i.e. every reload()
+  // on focus) redid this TMDB lookup pass and flashed a spinner even while
+  // the user was sitting on "list" and never opened either of the others —
+  // this defers the work until one of them is actually opened, at which
+  // point it fetches with whatever watchlist is current.
   useEffect(() => {
-    if (tab !== "upcoming") return;
+    if (tab !== "toWatch" && tab !== "upcoming") return;
     let active = true;
-    setUpcoming(null);
+    setResolvedWatchlist(null);
     mapWithConcurrency(watchlist, 4, (m) =>
       m.tmdb_id
         ? getMovieDetails(m.tmdb_id)
@@ -117,17 +118,41 @@ export default function MoviesScreen() {
         : Promise.resolve({ movie: m, tmdb: null })
     ).then((results) => {
       if (!active) return;
-      results.sort((a, b) => {
-        const aTime = a.tmdb?.release_date ? new Date(a.tmdb.release_date).getTime() : -Infinity;
-        const bTime = b.tmdb?.release_date ? new Date(b.tmdb.release_date).getTime() : -Infinity;
-        return aTime - bTime;
-      });
-      setUpcoming(results);
+      setResolvedWatchlist(results);
     });
     return () => {
       active = false;
     };
   }, [watchlist, tab]);
+
+  // A missing release date (no TMDB match) is treated as "already out" for
+  // To Watch — same reasoning as the block above, nothing to count down to.
+  function isFutureRelease(entry: UpcomingEntry) {
+    const releaseTime = entry.tmdb?.release_date ? new Date(entry.tmdb.release_date).getTime() : null;
+    return releaseTime !== null && releaseTime > Date.now();
+  }
+
+  const toWatchList = useMemo(() => {
+    if (!resolvedWatchlist) return null;
+    return resolvedWatchlist
+      .filter((e) => !isFutureRelease(e))
+      .sort((a, b) => {
+        const aTime = a.tmdb?.release_date ? new Date(a.tmdb.release_date).getTime() : -Infinity;
+        const bTime = b.tmdb?.release_date ? new Date(b.tmdb.release_date).getTime() : -Infinity;
+        return aTime - bTime;
+      });
+  }, [resolvedWatchlist]);
+
+  const upcomingList = useMemo(() => {
+    if (!resolvedWatchlist) return null;
+    return resolvedWatchlist
+      .filter(isFutureRelease)
+      .sort((a, b) => {
+        const aTime = new Date(a.tmdb!.release_date).getTime();
+        const bTime = new Date(b.tmdb!.release_date).getTime();
+        return aTime - bTime;
+      });
+  }, [resolvedWatchlist]);
 
   async function handleMarkWatched(movie: UserMovie) {
     await setMovieWatched(movie.title, movie.year, true, movie.tmdb_id ?? undefined);
@@ -171,7 +196,7 @@ export default function MoviesScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[`${colors.accent}1f`, "transparent"]} style={styles.headerGlow} />
+      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       <View style={styles.header}>
         <Text style={styles.title}>{t.movies.title}</Text>
         {/* accent tone rather than the default neutral pillBg — neutral was
@@ -184,6 +209,10 @@ export default function MoviesScreen() {
         <Pressable style={styles.tabBtn} onPress={() => setTab("list")}>
           <Text style={[styles.tabText, tab === "list" && styles.tabTextActive]}>{t.movies.tabList}</Text>
           {tab === "list" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
+        </Pressable>
+        <Pressable style={styles.tabBtn} onPress={() => setTab("toWatch")}>
+          <Text style={[styles.tabText, tab === "toWatch" && styles.tabTextActive]}>{t.movies.tabToWatch}</Text>
+          {tab === "toWatch" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
         </Pressable>
         <Pressable style={styles.tabBtn} onPress={() => setTab("upcoming")}>
           <Text style={[styles.tabText, tab === "upcoming" && styles.tabTextActive]}>{t.movies.tabUpcoming}</Text>
@@ -232,17 +261,42 @@ export default function MoviesScreen() {
             }
           />
         )
-      ) : upcoming === null ? (
+      ) : tab === "toWatch" ? (
+        toWatchList === null ? (
+          <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
+        ) : toWatchList.length === 0 ? (
+          <View style={styles.empty}>
+            <EmptyState icon="bookmark-outline" title={t.movies.tabToWatch} subtitle={t.movies.emptyUpcoming} />
+          </View>
+        ) : (
+          <FlatList
+            ref={toWatchListRef}
+            contentContainerStyle={styles.upcomingList}
+            data={toWatchList}
+            keyExtractor={(entry) => entry.movie.id}
+            renderItem={({ item }) => (
+              <UpcomingRow
+                entry={item}
+                onPress={() => item.movie.tmdb_id && router.push(`/movie/tmdb/${item.movie.tmdb_id}`)}
+                onMarkWatched={() => handleMarkWatched(item.movie)}
+                colors={colors}
+                styles={styles}
+                t={t}
+              />
+            )}
+          />
+        )
+      ) : upcomingList === null ? (
         <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
-      ) : upcoming.length === 0 ? (
+      ) : upcomingList.length === 0 ? (
         <View style={styles.empty}>
-          <EmptyState icon="calendar-outline" title={t.movies.tabUpcoming} subtitle={t.movies.emptyUpcoming} />
+          <EmptyState icon="calendar-outline" title={t.movies.tabUpcoming} subtitle={t.movies.emptyUpcomingReleases} />
         </View>
       ) : (
         <FlatList
           ref={upcomingListRef}
           contentContainerStyle={styles.upcomingList}
-          data={upcoming}
+          data={upcomingList}
           keyExtractor={(entry) => entry.movie.id}
           renderItem={({ item }) => (
             <UpcomingRow

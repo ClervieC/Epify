@@ -31,11 +31,22 @@ test("browsing from Explore into a show and back, then into a movie and back", a
   await expect(page.getByPlaceholder("Search for a show or movie")).toHaveValue("Under the Dome");
 
   await page.getByPlaceholder("Search for a show or movie").fill("Fight Club");
-  // The movie's overview text also happens to contain "Fight Club" (it's
-  // literally what the plot is about), but that's only on the detail page,
-  // not this search results grid — .first() (the card title) is safe here.
-  await expect(page.getByText("Fight Club").first()).toBeVisible({ timeout: 15_000 });
-  await page.getByText("Fight Club").first().click();
+  // The previous query's results aren't cleared until the new (debounced)
+  // ones land — see onChangeText in app/(tabs)/explore.tsx, which is what
+  // lets the "back preserves your search" behavior above work at all. That
+  // means the "Under the Dome" show card is still on screen right after
+  // this fill(), and clicking too early can land on it instead of "Fight
+  // Club" if the results swap mid-click. Waiting for it to be gone first
+  // makes the click below land on the settled Fight Club results.
+  await expect(showsSection).not.toBeVisible({ timeout: 15_000 });
+  // TVmaze also has an unrelated reality show called "Fight Club" (Exxen,
+  // a Turkish platform) that turns up in this same query's Shows section —
+  // scope to the Movies section specifically via "1999" (the film's release
+  // year, shown only on its own card) rather than relying on DOM order via
+  // .first(), same reasoning as showsSection above for "Under the Dome".
+  const movieCard = page.locator("div").filter({ hasText: "Fight Club" }).filter({ hasText: "1999" }).last();
+  await expect(movieCard).toBeVisible({ timeout: 15_000 });
+  await movieCard.getByText("Fight Club", { exact: false }).first().click();
   await expect(page).toHaveURL(/\/movie\/tmdb\//, { timeout: 10_000 });
   await expect(page.getByText("Cast", { exact: true })).toBeVisible({ timeout: 15_000 });
 

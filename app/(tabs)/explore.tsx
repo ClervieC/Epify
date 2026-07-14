@@ -214,14 +214,23 @@ export default function ExploreScreen() {
   // the *root* stack on top of the tabs (e.g. opening a search result's
   // detail page), which wiped the search out from under the user the
   // moment they tapped a result — pressing back then landed on an empty
-  // Explore instead of back on their results. Listening to the *tabs*
-  // navigator's own state instead only fires on an actual tab change,
-  // since a root-stack push never touches the tabs navigator's state.
+  // Explore instead of back on their results.
+  //
+  // Listens on `navigation` itself, NOT `navigation.getParent()`. This
+  // screen (app/(tabs)/explore.tsx) is already a leaf of the Tabs
+  // navigator, so `useNavigation()` above already returns that Tabs
+  // navigator — its own "state" only changes when the focused *tab*
+  // actually changes (index/movies/explore/activity/profile), never from a
+  // root-stack push/pop. `.getParent()` goes one level too far, to the
+  // *root* Stack that contains "(tabs)" as a single screen alongside
+  // show/[id], movie/[id], etc. (see app/_layout.tsx) — that root stack's
+  // focused route name is always "(tabs)", never "explore", so comparing
+  // against "explore" there was true on every single visit back from a
+  // pushed detail screen, not just on an actual tab switch. That's what was
+  // wiping the search on return instead of only on leaving for another tab.
   useEffect(() => {
-    const tabNavigation = navigation.getParent();
-    if (!tabNavigation) return;
-    const unsubscribe = tabNavigation.addListener("state", () => {
-      const state = tabNavigation.getState();
+    const unsubscribe = navigation.addListener("state", () => {
+      const state = navigation.getState();
       const focusedRouteName = state?.routes[state.index]?.name;
       if (focusedRouteName && focusedRouteName !== "explore") {
         setQuery("");
@@ -389,7 +398,7 @@ export default function ExploreScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[`${colors.accent}1f`, "transparent"]} style={styles.headerGlow} />
+      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       <Text style={styles.title}>{t.explore.title}</Text>
       <View style={styles.searchBar}>
         <Ionicons name="search" size={18} color={colors.textFaint} />

@@ -21,10 +21,29 @@ setup("authenticate", async ({ page }) => {
   await page.getByPlaceholder("Password").fill(password);
   await page.getByText("Sign in", { exact: true }).click();
 
-  // A successful login navigates off /login into the tabs — waiting for
-  // that (rather than a fixed delay) is what makes this robust regardless
-  // of how long the post-login data load (see app/(tabs)/index.tsx) takes.
+  // A successful login navigates off /login.
   await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 20_000 });
+
+  // shouldShowOnboarding() (lib/onboarding.ts) routes to /onboarding
+  // instead of the tabs whenever this account currently has zero tracked
+  // shows AND zero movies — which can genuinely happen between runs, since
+  // several specs deliberately unwatch/delete the one movie or episode they
+  // touched as their own cleanup step. Without handling it, every
+  // "authenticated" test would start mid-onboarding instead of logged into
+  // the app, since they all reuse this one saved session.
+  //
+  // Setting the "onboarding_completed_v1" flag directly (the same
+  // localStorage key/value lib/onboarding.ts's markOnboardingComplete()
+  // itself writes — see its LegacyAsyncStorageWebImpl, plain
+  // window.localStorage on web, no IndexedDB involved) rather than clicking
+  // through the onboarding UI: that UI path depends on app/_layout.tsx's
+  // own async redirect effect having settled on /onboarding by the time
+  // this script checks for it, which proved to be a real, not just
+  // theoretical, race — the flag write is unconditional and instant, no
+  // race to get right.
+  await page.evaluate(() => localStorage.setItem("onboarding_completed_v1", "true"));
+  await page.goto("/");
+  await page.getByText("My list", { exact: true }).waitFor({ timeout: 15_000 });
 
   // indexedDB capture is opt-in — without it, storageState() only saves
   // cookies/localStorage, and this app's Supabase session lives in
