@@ -18,7 +18,7 @@ const PAGE_SIZE = 1000;
 // precomputed copy across devices too.
 const localStore = createAsyncStorage("streaks_cache");
 const LOCAL_STORAGE_KEY = "streaks_v1";
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export type BadgeCategory = "episodes" | "movies" | "shows" | "streak" | "ratings" | "social" | "rewatch";
 
@@ -42,6 +42,12 @@ export interface StreakData {
   schemaVersion: number;
   currentStreak: number;
   longestStreak: number;
+  // True when currentStreak > 0 but nothing's been watched yet today (UTC
+  // calendar day, same boundary computeStreaks itself uses) — the streak is
+  // still technically alive (see computeStreaks' comment) but breaks at the
+  // next UTC midnight if it stays this way. Drives the "streak in danger"
+  // nudge (Shows tab pill, Profile banner, app/streaks.tsx).
+  streakAtRisk: boolean;
   totalEpisodesWatched: number;
   totalMoviesWatched: number;
   showsCompleted: number;
@@ -141,8 +147,8 @@ function toDateKey(d: Date): string {
 // current run — which stays "alive" through today even if today itself has
 // no activity yet (same forgiving semantics as Duolingo/GitHub streaks: the
 // streak only actually breaks once a full day passes with nothing watched).
-function computeStreaks(days: Set<string>): { current: number; longest: number } {
-  if (days.size === 0) return { current: 0, longest: 0 };
+function computeStreaks(days: Set<string>): { current: number; longest: number; atRisk: boolean } {
+  if (days.size === 0) return { current: 0, longest: 0, atRisk: false };
 
   let longest = 0;
   let run = 0;
@@ -162,8 +168,9 @@ function computeStreaks(days: Set<string>): { current: number; longest: number }
 
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
+  const todayCounted = days.has(toDateKey(today));
   const cursor = new Date(today);
-  if (!days.has(toDateKey(cursor))) {
+  if (!todayCounted) {
     cursor.setUTCDate(cursor.getUTCDate() - 1);
   }
   let current = 0;
@@ -172,7 +179,7 @@ function computeStreaks(days: Set<string>): { current: number; longest: number }
     cursor.setUTCDate(cursor.getUTCDate() - 1);
   }
 
-  return { current, longest };
+  return { current, longest, atRisk: current > 0 && !todayCounted };
 }
 
 function buildBadges(
@@ -291,7 +298,7 @@ export async function computeStreakData(onNewlyUnlocked?: (badges: Badge[]) => v
       userId ? countRows("user_movies", userId, (q) => q.eq("status", "watched").not("rating", "is", null)) : Promise.resolve(0),
       userId ? countRows("user_movies", userId, (q) => q.eq("status", "watched").gt("times_watched", 1)) : Promise.resolve(0),
     ]);
-  const { current, longest } = computeStreaks(days);
+  const { current, longest, atRisk } = computeStreaks(days);
 
   const showsCompleted = shows.filter((s) => s.status === "watched").length;
   const ratingsGiven = ratedEpisodes + ratedMovies;
@@ -307,6 +314,7 @@ export async function computeStreakData(onNewlyUnlocked?: (badges: Badge[]) => v
     schemaVersion: SCHEMA_VERSION,
     currentStreak: current,
     longestStreak: longest,
+    streakAtRisk: atRisk,
     totalEpisodesWatched,
     totalMoviesWatched,
     showsCompleted,

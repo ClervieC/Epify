@@ -304,19 +304,24 @@ export default function ProfileScreen() {
       )}
 
       {streakData && (
-        <Pressable style={styles.streakBanner} onPress={() => router.push("/streaks")}>
-          <View style={styles.streakBannerIcon}>
-            <Ionicons name="flame" size={20} color="#ff9f43" />
+        <Pressable
+          style={[styles.streakBanner, streakData.streakAtRisk && styles.streakBannerAtRisk]}
+          onPress={() => router.push("/streaks")}
+        >
+          <View style={[styles.streakBannerIcon, streakData.streakAtRisk && styles.streakBannerIconAtRisk]}>
+            <Ionicons name="flame" size={20} color={streakData.streakAtRisk ? colors.red : "#ff9f43"} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.streakBannerTitle}>{t.profile.streaksTitle}</Text>
-            <Text style={styles.streakBannerSubtitle}>
-              {streakData.currentStreak > 0
-                ? t.profile.streakBannerActive(streakData.currentStreak)
-                : t.profile.streakBannerInactive}
+            <Text style={[styles.streakBannerSubtitle, streakData.streakAtRisk && styles.streakBannerSubtitleAtRisk]}>
+              {streakData.streakAtRisk
+                ? t.profile.streakBannerAtRisk(streakData.currentStreak)
+                : streakData.currentStreak > 0
+                  ? t.profile.streakBannerActive(streakData.currentStreak)
+                  : t.profile.streakBannerInactive}
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+          <Ionicons name="chevron-forward" size={18} color={streakData.streakAtRisk ? colors.red : colors.textFaint} />
         </Pressable>
       )}
 
@@ -693,6 +698,9 @@ function createStyles(colors: Colors) {
   },
   streakBannerTitle: { color: colors.text, fontWeight: "800", fontSize: 14 },
   streakBannerSubtitle: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  streakBannerAtRisk: { borderColor: colors.red, backgroundColor: `${colors.red}11` },
+  streakBannerIconAtRisk: { backgroundColor: `${colors.red}22` },
+  streakBannerSubtitleAtRisk: { color: colors.red, fontWeight: "700" },
   statsRow: { paddingHorizontal: 16, gap: 10 },
   statCard: {
     width: 140,

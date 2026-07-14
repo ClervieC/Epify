@@ -66,7 +66,9 @@
       "Bash(curl -s -o /dev/null -w \"explore: %{http_code} time:%{time_total}s\\\\n\" http://localhost:8081/explore --max-time 10)",
       "Bash(top -l 1 -n 5 -o mem)",
       "Bash(echo \"EXIT_CODE=$?\")",
-      "Bash(rm -rf /Users/clervie/Desktop/Projects/Epify/test-results *)"
+      "Bash(rm -rf /Users/clervie/Desktop/Projects/Epify/test-results *)",
+      "Bash(NODE_PATH=/Users/clervie/Desktop/Projects/Epify/node_modules node /private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad/streak_check.js)",
+      "Bash(rm -f /private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad/streak_check.js /tmp/streak_*.png)"
     ],
     "additionalDirectories": [
       "/private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad",

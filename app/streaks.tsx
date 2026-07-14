@@ -68,14 +68,25 @@ export default function StreaksScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <LinearGradient
-            colors={data.currentStreak > 0 ? ["#ff9f4333", "#ff9f4300"] : [colors.pillBg, colors.pillBg]}
+            colors={
+              data.streakAtRisk
+                ? [`${colors.red}33`, `${colors.red}00`]
+                : data.currentStreak > 0
+                  ? ["#ff9f4333", "#ff9f4300"]
+                  : [colors.pillBg, colors.pillBg]
+            }
             style={styles.heroCard}
           >
             <View style={styles.heroFlameWrap}>
-              <Ionicons name="flame" size={40} color={data.currentStreak > 0 ? "#ff9f43" : colors.textFaint} />
+              <Ionicons
+                name="flame"
+                size={40}
+                color={data.streakAtRisk ? colors.red : data.currentStreak > 0 ? "#ff9f43" : colors.textFaint}
+              />
             </View>
             <Text style={styles.heroValue}>{data.currentStreak}</Text>
             <Text style={styles.heroLabel}>{t.profile.currentStreak}</Text>
+            {data.streakAtRisk && <Text style={styles.heroAtRiskText}>{t.profile.streakEndsToday}</Text>}
             <View style={styles.heroDivider} />
             <View style={styles.heroSubRow}>
               <Ionicons name="trophy-outline" size={16} color={colors.textMuted} />
@@ -280,6 +291,7 @@ function createStyles(colors: Colors) {
     },
     heroValue: { fontSize: 40, fontWeight: "800", color: colors.text },
     heroLabel: { fontSize: type.bodySm, color: colors.textMuted, fontWeight: "700", marginTop: 2 },
+    heroAtRiskText: { fontSize: type.caption, color: colors.red, fontWeight: "800", marginTop: 8, textAlign: "center" },
     heroDivider: { width: "60%", height: 1, backgroundColor: colors.border, marginVertical: 14 },
     heroSubRow: { flexDirection: "row", alignItems: "center", gap: 6 },
     heroSubText: { fontSize: type.caption, color: colors.textMuted, fontWeight: "700" },

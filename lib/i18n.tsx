@@ -168,6 +168,7 @@ const en = {
     emptyWatchList: "Add shows to follow to see them here.",
     tmdbOnlyTitle: "Waiting to be added",
     streakDays: (n: number) => `${n} day${n > 1 ? "s" : ""} streak`,
+    streakAtRisk: (n: number) => `${n}-day streak ends today!`,
   },
   movies: {
     title: "Movies",
@@ -220,6 +221,8 @@ const en = {
     changePhotoFailed: "Couldn't update your photo. Try again.",
     streaksTitle: "Streaks & badges",
     streakBannerActive: (n: number) => `${n}-day streak — keep it going`,
+    streakBannerAtRisk: (n: number) => `${n}-day streak ends today — watch something now!`,
+    streakEndsToday: "Ends today — watch something to keep it going!",
     streakBannerInactive: "Watch something today to start a streak",
     currentStreak: "Day streak",
     longestStreak: "Best streak",
@@ -637,6 +640,7 @@ const fr: typeof en = {
     emptyWatchList: "Ajoute des séries à suivre pour les voir ici.",
     tmdbOnlyTitle: "En attente d'ajout",
     streakDays: (n: number) => `${n} jour${n > 1 ? "s" : ""} de suite`,
+    streakAtRisk: (n: number) => `${n} jours de suite — finit aujourd'hui !`,
   },
   movies: {
     title: "Films",
@@ -688,6 +692,8 @@ const fr: typeof en = {
     changePhotoFailed: "Impossible de mettre à jour ta photo. Réessaie.",
     streaksTitle: "Séries de jours & badges",
     streakBannerActive: (n: number) => `${n} jours de suite — continue !`,
+    streakBannerAtRisk: (n: number) => `${n} jours de suite — finit aujourd'hui, regarde vite quelque chose !`,
+    streakEndsToday: "Finit aujourd'hui — regarde quelque chose pour continuer !",
     streakBannerInactive:
       "Regarde quelque chose aujourd'hui pour démarrer une série",
     currentStreak: "Jours de suite",

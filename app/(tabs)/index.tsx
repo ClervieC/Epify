@@ -394,6 +394,7 @@ export default function ShowsScreen() {
   );
   const [tmdbOnlyShows, setTmdbOnlyShows] = useState<TmdbOnlyShow[]>([]);
   const [currentStreak, setCurrentStreak] = useState(0);
+  const [streakAtRisk, setStreakAtRisk] = useState(false);
   const router = useRouter();
   const announceBadges = useBadgeUnlockToast();
 
@@ -406,10 +407,16 @@ export default function ShowsScreen() {
     // Local IndexedDB read first — instant, no network round trip (see
     // lib/streaks.ts) — then a fresh compute reconciles it in the background.
     loadLocalStreakData().then((local) => {
-      if (local) setCurrentStreak(local.currentStreak);
+      if (local) {
+        setCurrentStreak(local.currentStreak);
+        setStreakAtRisk(local.streakAtRisk);
+      }
     });
     computeStreakData(announceBadges)
-      .then((d) => setCurrentStreak(d.currentStreak))
+      .then((d) => {
+        setCurrentStreak(d.currentStreak);
+        setStreakAtRisk(d.streakAtRisk);
+      })
       .catch(() => {});
   }, [announceBadges]);
   // Set right after marking an episode watched (never on unwatch) — opens
@@ -1316,14 +1323,14 @@ export default function ShowsScreen() {
       <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       {currentStreak > 0 && (
         <Pressable
-          style={styles.streakPill}
+          style={[styles.streakPill, streakAtRisk && styles.streakPillAtRisk]}
           onPress={() => router.push("/streaks")}
         >
-          <Ionicons name="flame" size={14} color="#ff9f43" />
-          <Text style={styles.streakPillText}>
-            {t.shows.streakDays(currentStreak)}
+          <Ionicons name="flame" size={14} color={streakAtRisk ? colors.red : "#ff9f43"} />
+          <Text style={[styles.streakPillText, streakAtRisk && styles.streakPillTextAtRisk]}>
+            {streakAtRisk ? t.shows.streakAtRisk(currentStreak) : t.shows.streakDays(currentStreak)}
           </Text>
-          <Ionicons name="chevron-forward" size={12} color={colors.textFaint} />
+          <Ionicons name="chevron-forward" size={12} color={streakAtRisk ? colors.red : colors.textFaint} />
         </Pressable>
       )}
       <View style={styles.tabsRow}>
@@ -1496,6 +1503,8 @@ function createStyles(colors: Colors) {
       backgroundColor: colors.accentSoft,
     },
     streakPillText: { fontSize: 12, fontWeight: "800", color: colors.text },
+    streakPillAtRisk: { backgroundColor: `${colors.red}22` },
+    streakPillTextAtRisk: { color: colors.red },
     tabsRow: {
       flexDirection: "row",
       borderBottomWidth: 1,
