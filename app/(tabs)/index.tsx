@@ -85,6 +85,32 @@ type EnrichedShowResult =
   | { kind: "started"; item: EnrichedEpisode }
   | { kind: "notStarted"; item: EnrichedEpisode };
 
+// Detects "I'm rewatching this show" purely from watch counts, with no
+// explicit rewatch button anywhere: the signal is the pilot (S1E1) having
+// been watched again (times_watched >= 2) while some other aired episode is
+// still behind that count. Only reachable once every aired episode has been
+// watched at least once (see the `!nextEpisode` branch below) — rewatching
+// the pilot from the show detail page is still a manual first step, but
+// every episode after that surfaces back in Watch Next on its own, so the
+// user isn't stuck re-finding the show to advance a rewatch already in
+// progress.
+function computeRewatchNext(
+  aired: TVMazeEpisode[],
+  watchedList: WatchedEpisode[],
+): { episode: TVMazeEpisode; timesWatched: number } | null {
+  const pilot = aired.find((e) => e.season === 1 && e.number === 1);
+  if (!pilot) return null;
+  const timesById = new Map(watchedList.map((w) => [w.tvmaze_episode_id, w.times_watched]));
+  const pilotTimes = timesById.get(pilot.id) ?? 0;
+  if (pilotTimes < 2) return null;
+  const behind = [...aired]
+    .filter((e) => e.id !== pilot.id)
+    .sort((a, b) => a.season - b.season || a.number - b.number)
+    .find((e) => (timesById.get(e.id) ?? 0) < pilotTimes);
+  if (!behind) return null;
+  return { episode: behind, timesWatched: timesById.get(behind.id) ?? 0 };
+}
+
 // Pure function of one show's tracked data — factored out of the watchNext/
 // haventStarted useMemo so it can be called only for shows that actually
 // changed (see enrichedCacheRef), rather than for every tracked show on
@@ -98,7 +124,28 @@ function computeEnrichedForShow(
   const nextEpisode = [...aired]
     .sort((a, b) => a.season - b.season || a.number - b.number)
     .find((e) => !watchedIds.has(e.id));
-  if (!nextEpisode) return { kind: "none" };
+  if (!nextEpisode) {
+    const rewatchNext = computeRewatchNext(aired, watchedList);
+    if (!rewatchNext) return { kind: "none" };
+    return {
+      kind: "started",
+      item: {
+        show,
+        episode: rewatchNext.episode,
+        // Already watched once (that's the whole premise of a rewatch) —
+        // `watched: true` is what makes WatchedCheck offer the
+        // rewatch/unwatch prompt on tap instead of just marking it watched.
+        watched: true,
+        timesWatched: rewatchNext.timesWatched,
+        // Same recency signal a first-time watch uses to bump the show back
+        // toward the top of Watch Next (see the sort below) — without this
+        // it fell back to the sort's oldest-possible default and sat at the
+        // bottom right after being checked, instead of moving up the way a
+        // normal "just watched" episode does.
+        watchedAt: latestWatchedAt(watchedList),
+      },
+    };
+  }
 
   // Shows with zero watch history yet are "haven't started" — kept
   // separate from Watch Next so newly-added shows don't crowd it out.
@@ -136,10 +183,6 @@ function computeEnrichedForShow(
   const isLastEpisode = lastAired?.id === nextEpisode.id;
   const isNew = isLastEpisode && diffDaysFromToday(nextEpisode.airstamp) >= -6;
   const extraEpisodes = aired.filter((e) => !watchedIds.has(e.id)).length - 1;
-  const lastWatchedAt = watchedList.reduce<number>((max, w) => {
-    const time = new Date(w.watched_at).getTime();
-    return time > max ? time : max;
-  }, 0);
 
   return {
     kind: "started",
@@ -147,13 +190,23 @@ function computeEnrichedForShow(
       show,
       episode: nextEpisode,
       watched: false,
-      watchedAt: lastWatchedAt
-        ? new Date(lastWatchedAt).toISOString()
-        : undefined,
+      watchedAt: latestWatchedAt(watchedList),
       isNew,
       extraEpisodes: extraEpisodes > 0 ? extraEpisodes : undefined,
     },
   };
+}
+
+// Most recent watched_at across a show's watched episodes — used as the
+// "just watched" recency signal the watchNext sort bumps a show up on (see
+// the started.sort() call below), for both a normal next-episode row and the
+// rewatch-in-progress row above.
+function latestWatchedAt(watchedList: WatchedEpisode[]): string | undefined {
+  const max = watchedList.reduce<number>((max, w) => {
+    const time = new Date(w.watched_at).getTime();
+    return time > max ? time : max;
+  }, 0);
+  return max ? new Date(max).toISOString() : undefined;
 }
 
 // Field-by-field equality for the enrichedCacheRef reuse check below —
