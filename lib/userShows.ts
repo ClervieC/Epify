@@ -359,6 +359,32 @@ export async function bulkIncrementRewatch(
   invalidateWatchedEpisodes(showId);
 }
 
+// Mirrors bulkIncrementRewatch — "I didn't actually rewatch this whole
+// season again, I misclicked" at the season level. watched_at is left alone
+// per episode, same reasoning as decrementRewatch: there's no record of each
+// episode's *previous* watch to restore.
+export async function bulkDecrementRewatch(
+  showId: number,
+  episodes: { episodeId: number; timesWatched: number }[]
+) {
+  if (episodes.length === 0) return;
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const results = await Promise.all(
+    episodes.map((e) =>
+      supabase
+        .from("watched_episodes")
+        .update({ times_watched: Math.max(1, e.timesWatched - 1) })
+        .eq("user_id", userId)
+        .eq("tvmaze_episode_id", e.episodeId)
+    )
+  );
+  const failed = results.find((r) => r.error);
+  if (failed?.error) throw failed.error;
+  invalidateWatchedEpisodes(showId);
+}
+
 export async function bulkUpsertWatchedEpisodes(
   showId: number,
   records: { episodeId: number; season: number; number: number; watchedAt: string; timesWatched: number }[]
@@ -454,6 +480,23 @@ export async function incrementRewatch(tvmazeEpisodeId: number, currentTimesWatc
   const { data, error } = await supabase
     .from("watched_episodes")
     .update({ times_watched: currentTimesWatched + 1, watched_at: new Date().toISOString() })
+    .eq("tvmaze_episode_id", tvmazeEpisodeId)
+    .select()
+    .single();
+  if (error) throw error;
+  invalidateWatchedEpisodes(data.tvmaze_show_id);
+  return data as WatchedEpisode;
+}
+
+// For "I didn't actually watch it again, I misclicked" — removes just the
+// most recent rewatch instead of the full unwatch (which would erase every
+// watch, not only the extra one). watched_at is left as-is: there's no
+// record of the *previous* watch's timestamp to restore, and the row is
+// still genuinely watched around this time, just not twice.
+export async function decrementRewatch(tvmazeEpisodeId: number, currentTimesWatched: number) {
+  const { data, error } = await supabase
+    .from("watched_episodes")
+    .update({ times_watched: Math.max(1, currentTimesWatched - 1) })
     .eq("tvmaze_episode_id", tvmazeEpisodeId)
     .select()
     .single();

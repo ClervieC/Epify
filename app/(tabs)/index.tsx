@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { getShowEpisodes, TVMazeEpisode } from "../../lib/tvmaze";
 import {
+  decrementRewatch,
   fetchUserShows,
   fetchWatchedEpisodes,
   fetchWatchedEpisodesPage,
@@ -248,6 +249,7 @@ interface WatchListEpisodeRowProps {
   dimmed?: boolean;
   onToggleWatched: (item: EnrichedEpisode) => void;
   onRewatch?: (item: EnrichedEpisode) => void;
+  onUndoRewatch?: (item: EnrichedEpisode) => void;
   styles: ShowsStyles;
 }
 
@@ -261,6 +263,7 @@ const WatchListEpisodeRow = memo(function WatchListEpisodeRow({
   dimmed,
   onToggleWatched,
   onRewatch,
+  onUndoRewatch,
   styles,
 }: WatchListEpisodeRowProps) {
   return (
@@ -281,6 +284,7 @@ const WatchListEpisodeRow = memo(function WatchListEpisodeRow({
         dimmed={dimmed}
         onToggleWatched={() => onToggleWatched(item)}
         onRewatch={onRewatch ? () => onRewatch(item) : undefined}
+        onUndoRewatch={onUndoRewatch ? () => onUndoRewatch(item) : undefined}
       />
     </View>
   );
@@ -294,6 +298,7 @@ interface UpcomingEpisodeRowProps {
   groupKey?: string;
   onToggleWatched: (item: EnrichedEpisode) => void;
   onRewatch?: (item: EnrichedEpisode) => void;
+  onUndoRewatch?: (item: EnrichedEpisode) => void;
   onToggleGroup?: (key: string) => void;
   styles: ShowsStyles;
 }
@@ -311,6 +316,7 @@ const UpcomingEpisodeRow = memo(function UpcomingEpisodeRow({
   groupKey,
   onToggleWatched,
   onRewatch,
+  onUndoRewatch,
   onToggleGroup,
   styles,
 }: UpcomingEpisodeRowProps) {
@@ -362,6 +368,9 @@ const UpcomingEpisodeRow = memo(function UpcomingEpisodeRow({
         onToggleWatched={() => onToggleWatched(item)}
         onRewatch={
           variant !== "group" && onRewatch ? () => onRewatch(item) : undefined
+        }
+        onUndoRewatch={
+          variant !== "group" && onUndoRewatch ? () => onUndoRewatch(item) : undefined
         }
         onPress={
           variant === "group" && onToggleGroup && groupKey
@@ -1120,6 +1129,32 @@ export default function ShowsScreen() {
     );
   }, []);
 
+  // "I misclicked, I didn't actually watch it again" — mirrors rewatchEpisode
+  // exactly, just decrementing instead of incrementing.
+  const undoRewatchEpisode = useCallback(async (item: EnrichedEpisode) => {
+    if (item.timesWatched === undefined) return;
+    const result = await decrementRewatch(item.episode.id, item.timesWatched);
+    setTracked((prev) =>
+      prev.map((t) =>
+        t.show.tvmaze_id !== item.show.tvmaze_id
+          ? t
+          : {
+              ...t,
+              watchedList: t.watchedList.map((w) =>
+                w.tvmaze_episode_id === item.episode.id ? result : w,
+              ),
+            },
+      ),
+    );
+    setHistoryItems((prev) =>
+      prev.map((h) =>
+        h.episode.id === item.episode.id
+          ? { ...h, timesWatched: result.times_watched }
+          : h,
+      ),
+    );
+  }, []);
+
   const toggleGroup = useCallback((key: string) => {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
@@ -1192,6 +1227,7 @@ export default function ShowsScreen() {
               dimmed
               onToggleWatched={toggleWatched}
               onRewatch={rewatchEpisode}
+              onUndoRewatch={undoRewatchEpisode}
               styles={styles}
             />
           );
@@ -1214,6 +1250,7 @@ export default function ShowsScreen() {
               item={row.item}
               onToggleWatched={toggleWatched}
               onRewatch={rewatchEpisode}
+              onUndoRewatch={undoRewatchEpisode}
               styles={styles}
             />
           );
@@ -1233,7 +1270,7 @@ export default function ShowsScreen() {
           );
       }
     },
-    [styles, t, toggleWatched, rewatchEpisode],
+    [styles, t, toggleWatched, rewatchEpisode, undoRewatchEpisode],
   );
 
   // Keyed by the actual calendar date (or LATER/EARLIER) so dates that share
@@ -1386,6 +1423,7 @@ export default function ShowsScreen() {
             variant="groupChild"
             onToggleWatched={toggleWatched}
             onRewatch={rewatchEpisode}
+            onUndoRewatch={undoRewatchEpisode}
             styles={styles}
           />
         );
@@ -1396,6 +1434,7 @@ export default function ShowsScreen() {
           variant="episode"
           onToggleWatched={toggleWatched}
           onRewatch={rewatchEpisode}
+          onUndoRewatch={undoRewatchEpisode}
           styles={styles}
         />
       );
@@ -1405,6 +1444,7 @@ export default function ShowsScreen() {
       toggleWatched,
       toggleGroup,
       rewatchEpisode,
+      undoRewatchEpisode,
       styles,
       colors,
       t,

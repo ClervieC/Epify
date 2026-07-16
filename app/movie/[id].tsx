@@ -5,6 +5,7 @@ import {
   fetchUserMovie,
   setMovieWatched,
   incrementMovieRewatch,
+  decrementMovieRewatch,
   setMovieFavorite,
   rateMovie,
   fetchMovieFeelingCounts,
@@ -174,6 +175,10 @@ export default function MovieDetailScreen() {
     const updated = await incrementMovieRewatch(movie!.id, movie!.times_watched);
     setMovie(updated);
   }
+  async function handleUndoRewatch() {
+    const updated = await decrementMovieRewatch(movie!.id, movie!.times_watched);
+    setMovie(updated);
+  }
   async function handleToggleFavorite() {
     const updated = await setMovieFavorite(movie!.id, !movie!.is_favorite);
     setMovie(updated);
@@ -240,6 +245,7 @@ export default function MovieDetailScreen() {
               timesWatched={movie.times_watched}
               onToggle={handleToggleWatched}
               onRewatch={handleRewatch}
+              onUndoRewatch={handleUndoRewatch}
               disabled={notYetReleased && !isWatched}
               size={26}
             />

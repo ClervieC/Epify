@@ -2,20 +2,25 @@ import { createContext, useCallback, useContext, useRef, useState, PropsWithChil
 import { useLanguage } from "../lib/i18n";
 import { ChoiceDialog } from "../components/ChoiceDialog";
 
-type RewatchChoice = "unwatch" | "rewatch" | "cancel";
+type RewatchChoice = "unwatch" | "rewatch" | "undoRewatch" | "cancel";
 
 interface RewatchPromptContextValue {
-  askRewatch: () => Promise<RewatchChoice>;
+  // canUndoRewatch adds a third "remove last watch" option (decrement the
+  // count by one) alongside the usual unwatch/rewatch pair — only meaningful
+  // once something has been watched more than once, since going from 1 to 0
+  // is exactly what "unwatch" already does. Callers pass timesWatched > 1.
+  askRewatch: (canUndoRewatch?: boolean) => Promise<RewatchChoice>;
 }
 
 const RewatchPromptContext = createContext<RewatchPromptContextValue | null>(null);
 
 export function RewatchPromptProvider({ children }: PropsWithChildren) {
   const [visible, setVisible] = useState(false);
+  const [canUndoRewatch, setCanUndoRewatch] = useState(false);
   const resolver = useRef<((choice: RewatchChoice) => void) | null>(null);
   const { t } = useLanguage();
 
-  const askRewatch = useCallback(() => {
+  const askRewatch = useCallback((canUndo = false) => {
     return new Promise<RewatchChoice>((resolve) => {
       // Only one dialog can be on screen at a time. If a prior ask is still
       // pending (e.g. a fast double-tap across two episode rows before the
@@ -24,6 +29,7 @@ export function RewatchPromptProvider({ children }: PropsWithChildren) {
       // hang forever.
       resolver.current?.("cancel");
       resolver.current = resolve;
+      setCanUndoRewatch(canUndo);
       setVisible(true);
     });
   }, []);
@@ -43,6 +49,9 @@ export function RewatchPromptProvider({ children }: PropsWithChildren) {
         subtitle={t.rewatchPrompt.whatToDo}
         options={[
           { value: "unwatch", label: t.rewatchPrompt.unwatch },
+          ...(canUndoRewatch
+            ? [{ value: "undoRewatch" as const, label: t.rewatchPrompt.undoRewatch }]
+            : []),
           { value: "rewatch", label: t.rewatchPrompt.rewatch, primary: true },
         ]}
         onChoose={choose}

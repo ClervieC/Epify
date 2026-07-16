@@ -34,6 +34,7 @@ import {
   fetchEpisodeFeelingCounts,
   fetchUserShows,
   fetchWatchedEpisodes,
+  decrementRewatch,
   incrementRewatch,
   rateEpisode,
   setEpisodeFavorite,
@@ -241,6 +242,13 @@ export default function EpisodeDetailScreen() {
     setWatchedMap((prev) => ({ ...prev, [episode.id]: result }));
   }
 
+  async function undoRewatchEpisode(episode: TVMazeEpisode) {
+    const current = watchedMap[episode.id];
+    if (!current) return;
+    const result = await decrementRewatch(episode.id, current.times_watched);
+    setWatchedMap((prev) => ({ ...prev, [episode.id]: result }));
+  }
+
   async function setRating(episode: TVMazeEpisode, value: number) {
     const current = watchedMap[episode.id];
     if (!current) return;
@@ -390,6 +398,7 @@ export default function EpisodeDetailScreen() {
               sideInset={SIDE_NAV_INSET}
               onToggleWatched={() => toggleWatched(currentEpisode)}
               onRewatch={() => rewatchEpisode(currentEpisode)}
+              onUndoRewatch={() => undoRewatchEpisode(currentEpisode)}
               onRate={(n) => setRating(currentEpisode, n)}
               onFeeling={(key) => setFeeling(currentEpisode, key)}
               onToggleFavorite={() => toggleFavorite(currentEpisode)}
@@ -489,6 +498,7 @@ export default function EpisodeDetailScreen() {
         spoilerMode={spoilerMode}
         onToggleWatched={() => toggleWatched(currentEpisode)}
         onRewatch={() => rewatchEpisode(currentEpisode)}
+        onUndoRewatch={() => undoRewatchEpisode(currentEpisode)}
         onRate={(n) => setRating(currentEpisode, n)}
         onFeeling={(key) => setFeeling(currentEpisode, key)}
         onToggleFavorite={() => toggleFavorite(currentEpisode)}
@@ -636,6 +646,7 @@ function EpisodePage({
   sideInset,
   onToggleWatched,
   onRewatch,
+  onUndoRewatch,
   onRate,
   onFeeling,
   onToggleFavorite,
@@ -655,6 +666,7 @@ function EpisodePage({
   sideInset?: number;
   onToggleWatched: () => void;
   onRewatch: () => void;
+  onUndoRewatch: () => void;
   onRate: (value: number) => void;
   onFeeling: (key: string) => void;
   onToggleFavorite: () => void;
@@ -916,6 +928,7 @@ function EpisodePage({
                 timesWatched={watched?.times_watched}
                 onToggle={onToggleWatched}
                 onRewatch={onRewatch}
+                onUndoRewatch={onUndoRewatch}
                 size={40}
               />
             )}

@@ -20,6 +20,7 @@ import {
   removeUserMovie,
   setMovieWatched,
   incrementMovieRewatch,
+  decrementMovieRewatch,
   setMovieFavorite,
   rateMovie,
   fetchMovieFeelingCounts,
@@ -161,6 +162,11 @@ export default function TmdbMovieDetailScreen() {
     const updated = await incrementMovieRewatch(userRow.id, userRow.times_watched);
     setUserRow(updated);
   }
+  async function handleUndoRewatch() {
+    if (!userRow) return;
+    const updated = await decrementMovieRewatch(userRow.id, userRow.times_watched);
+    setUserRow(updated);
+  }
   async function handleToggleFavorite() {
     const row = userRow ?? (await addMovieToWatchlist(tmdbId, title, year, tmdb?.poster_path));
     const updated = await setMovieFavorite(row.id, !row.is_favorite);
@@ -234,6 +240,7 @@ export default function TmdbMovieDetailScreen() {
                 timesWatched={userRow?.times_watched ?? 0}
                 onToggle={handleToggleWatched}
                 onRewatch={handleRewatch}
+                onUndoRewatch={handleUndoRewatch}
                 disabled={notYetReleased && !isWatched}
                 size={26}
               />

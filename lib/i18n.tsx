@@ -402,6 +402,10 @@ const en = {
     newListPlaceholder: "New list",
     cast: "Cast",
     comments: "Comments",
+    seasonInProgressTitle: "This season isn't finished yet",
+    seasonInProgressSubtitle: "What do you want to do?",
+    seasonUnwatch: "Unwatch this season",
+    seasonFinish: "Mark the rest as watched",
   },
   episodeDetail: {
     notWatched: "Not watched yet",
@@ -441,6 +445,7 @@ const en = {
     whatToDo: "What do you want to do?",
     unwatch: "I haven't watched it",
     rewatch: "I watched it again",
+    undoRewatch: "I didn't watch it again — remove last watch",
   },
   previousEpisodesPrompt: {
     title: "You skipped some episodes",
@@ -877,6 +882,10 @@ const fr: typeof en = {
     newListPlaceholder: "Nouvelle liste",
     cast: "Acteurs",
     comments: "Commentaires",
+    seasonInProgressTitle: "Cette saison n'est pas terminée",
+    seasonInProgressSubtitle: "Qu'est-ce que tu veux faire ?",
+    seasonUnwatch: "Ne plus marquer cette saison comme vue",
+    seasonFinish: "Marquer le reste comme vu",
   },
   episodeDetail: {
     notWatched: "Pas encore vu",
@@ -917,6 +926,7 @@ const fr: typeof en = {
     whatToDo: "Qu'est-ce que tu veux faire ?",
     unwatch: "Je ne l'ai pas regardé",
     rewatch: "Je l'ai revu",
+    undoRewatch: "Je ne l'ai pas revu — enlever le dernier visionnage",
   },
   previousEpisodesPrompt: {
     title: "Tu as sauté des épisodes",

@@ -31,11 +31,13 @@ import { WatchInfo } from "../../components/WatchInfo";
 import { RecommendationsRow, RecommendationItem } from "../../components/RecommendationsRow";
 import {
   addShowToList,
+  bulkDecrementRewatch,
   bulkIncrementRewatch,
   createList,
   fetchLists,
   fetchUserShows,
   fetchWatchedEpisodes,
+  decrementRewatch,
   incrementRewatch,
   removeUserShow,
   setEpisodeWatched,
@@ -52,6 +54,7 @@ import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useGrowIn, useFadeIn, useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
+import { ChoiceDialog } from "../../components/ChoiceDialog";
 import { CommentsSection } from "../../components/CommentsSection";
 import { ReportModal } from "../../components/ReportModal";
 import { DetailErrorState } from "../../components/DetailErrorState";
@@ -87,6 +90,12 @@ export default function ShowDetailScreen() {
   const [userShow, setUserShow] = useState<UserShow | null>(null);
   const [watched, setWatched] = useState<WatchedEpisode[]>([]);
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
+  // A season that's only partway watched has no "already watched" state for
+  // the rewatch prompt to key off (see handleSeasonCheckPress) — this is its
+  // own lighter confirm instead, offering to unwatch what's there or finish
+  // marking the rest, rather than tapping the checkmark just silently
+  // completing it with no way to say "actually, undo what I've done so far."
+  const [seasonPartialConfirm, setSeasonPartialConfirm] = useState<TVMazeEpisode[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -437,6 +446,13 @@ export default function ShowDetailScreen() {
     setWatched((prev) => prev.map((w) => (w.tvmaze_episode_id === ep.id ? result : w)));
   }
 
+  async function undoRewatchEpisode(ep: TVMazeEpisode) {
+    const entry = watched.find((w) => w.tvmaze_episode_id === ep.id);
+    if (!entry) return;
+    const result = await decrementRewatch(ep.id, entry.times_watched);
+    setWatched((prev) => prev.map((w) => (w.tvmaze_episode_id === ep.id ? result : w)));
+  }
+
   async function markSeasonWatched(eps: TVMazeEpisode[]) {
     const unwatched = eps.filter((e) => !watchedIds.has(e.id) && new Date(e.airstamp).getTime() <= Date.now());
     if (unwatched.length === 0) return;
@@ -446,7 +462,14 @@ export default function ShowDetailScreen() {
     );
     setWatched((prev) => [
       ...prev,
-      ...unwatched.map((e) => ({ tvmaze_episode_id: e.id, season: e.season, number: e.number } as WatchedEpisode)),
+      // times_watched: 1 is load-bearing, not cosmetic — rewatchEpisode/
+      // undoRewatchEpisode do `currentTimesWatched +/- 1` on whatever's in
+      // this array, and without it here that was `undefined - 1` = NaN,
+      // which Supabase's PATCH serializes as JSON null and the DB's
+      // not-null constraint on times_watched then rejects outright.
+      ...unwatched.map(
+        (e) => ({ tvmaze_episode_id: e.id, season: e.season, number: e.number, times_watched: 1 } as WatchedEpisode),
+      ),
     ]);
     await ensureInList();
   }
@@ -476,17 +499,57 @@ export default function ShowDetailScreen() {
     );
   }
 
-  // The season checkmark already handles "mark this whole season watched" —
-  // tapping it again once complete offers the same unwatch/rewatch choice as
-  // a single episode's checkmark, just applied to every episode in the season.
-  async function handleSeasonCheckPress(eps: TVMazeEpisode[], complete: boolean) {
-    if (!complete) {
+  // "I didn't actually rewatch the whole season, I misclicked" — mirrors
+  // rewatchSeason exactly, decrementing instead of incrementing.
+  async function undoRewatchSeason(eps: TVMazeEpisode[]) {
+    const entries = eps
+      .map((e) => watched.find((w) => w.tvmaze_episode_id === e.id))
+      .filter((w): w is WatchedEpisode => !!w);
+    if (entries.length === 0) return;
+    await bulkDecrementRewatch(
+      showId,
+      entries.map((w) => ({ episodeId: w.tvmaze_episode_id, timesWatched: w.times_watched }))
+    );
+    setWatched((prev) =>
+      prev.map((w) =>
+        entries.some((e) => e.tvmaze_episode_id === w.tvmaze_episode_id)
+          ? { ...w, times_watched: Math.max(1, w.times_watched - 1) }
+          : w
+      )
+    );
+  }
+
+  // The season checkmark handles three states: nothing watched yet (one tap
+  // marks it all watched, no prompt needed), partway watched (see
+  // seasonPartialConfirm above — unwatch what's there, or finish the rest),
+  // and fully watched (same unwatch/rewatch choice as a single episode's
+  // checkmark, just applied to every episode in the season).
+  async function handleSeasonCheckPress(
+    eps: TVMazeEpisode[],
+    complete: boolean,
+    watchedCount: number,
+    seasonTimesWatched: number,
+  ) {
+    if (watchedCount === 0) {
       await markSeasonWatched(eps);
       return;
     }
-    const choice = await askRewatch();
+    if (!complete) {
+      setSeasonPartialConfirm(eps);
+      return;
+    }
+    const choice = await askRewatch(seasonTimesWatched > 1);
     if (choice === "rewatch") await rewatchSeason(eps);
+    else if (choice === "undoRewatch") await undoRewatchSeason(eps);
     else if (choice === "unwatch") await unmarkSeasonWatched(eps);
+  }
+
+  async function chooseSeasonPartial(choice: "unwatch" | "finish" | "cancel") {
+    const eps = seasonPartialConfirm;
+    setSeasonPartialConfirm(null);
+    if (!eps || choice === "cancel") return;
+    if (choice === "unwatch") await unmarkSeasonWatched(eps);
+    else await markSeasonWatched(eps);
   }
 
   if (loadError) {
@@ -678,6 +741,12 @@ export default function ShowDetailScreen() {
                 {seasons.map(([seasonNum, eps]) => {
                   const watchedCount = eps.filter((e) => watchedIds.has(e.id)).length;
                   const complete = watchedCount === eps.length;
+                  // Mirrors SeasonSection's own seasonTimesWatched — needed
+                  // here too so handleSeasonCheckPress knows whether to
+                  // offer "undo rewatch" alongside unwatch/rewatch.
+                  const seasonTimesWatched = Math.min(
+                    ...eps.map((e) => watched.find((w) => w.tvmaze_episode_id === e.id)?.times_watched ?? 1),
+                  );
                   const expanded = expandedSeason === seasonNum;
                   return (
                     <SeasonSection
@@ -690,8 +759,11 @@ export default function ShowDetailScreen() {
                       watchedIds={watchedIds}
                       watched={watched}
                       onToggleExpand={() => setExpandedSeason(expanded ? null : seasonNum)}
-                      onSeasonCheckPress={() => handleSeasonCheckPress(eps, complete)}
+                      onSeasonCheckPress={() =>
+                        handleSeasonCheckPress(eps, complete, watchedCount, seasonTimesWatched)
+                      }
                       onToggleEpisode={toggleEpisode}
+                      onUndoRewatchEpisode={undoRewatchEpisode}
                       onRewatchEpisode={rewatchEpisode}
                       onOpenEpisode={(ep) =>
                         router.push({ pathname: "/episode/[id]", params: { id: String(ep.id), showId: String(showId) } })
@@ -792,6 +864,18 @@ export default function ShowDetailScreen() {
         target={{ targetType: "show", targetTvmazeShowId: showId }}
       />
 
+      <ChoiceDialog
+        visible={!!seasonPartialConfirm}
+        title={t.showDetail.seasonInProgressTitle}
+        subtitle={t.showDetail.seasonInProgressSubtitle}
+        options={[
+          { value: "unwatch", label: t.showDetail.seasonUnwatch },
+          { value: "finish", label: t.showDetail.seasonFinish, primary: true },
+        ]}
+        onChoose={chooseSeasonPartial}
+        onDismiss={() => chooseSeasonPartial("cancel")}
+      />
+
       <Sheet visible={listPickerOpen} onClose={() => setListPickerOpen(false)}>
         <Text style={styles.menuSheetTitle}>{t.showDetail.addToAList}</Text>
         {lists.map((list) => (
@@ -864,6 +948,7 @@ function SeasonSection({
   onSeasonCheckPress,
   onToggleEpisode,
   onRewatchEpisode,
+  onUndoRewatchEpisode,
   onOpenEpisode,
   colors,
   styles,
@@ -880,6 +965,7 @@ function SeasonSection({
   onSeasonCheckPress: () => void;
   onToggleEpisode: (ep: TVMazeEpisode) => void;
   onRewatchEpisode: (ep: TVMazeEpisode) => void;
+  onUndoRewatchEpisode: (ep: TVMazeEpisode) => void;
   onOpenEpisode: (ep: TVMazeEpisode) => void;
   colors: Colors;
   styles: ShowStyles;
@@ -941,6 +1027,7 @@ function SeasonSection({
                   timesWatched={watched.find((w) => w.tvmaze_episode_id === ep.id)?.times_watched}
                   onToggle={() => onToggleEpisode(ep)}
                   onRewatch={() => onRewatchEpisode(ep)}
+                  onUndoRewatch={() => onUndoRewatchEpisode(ep)}
                   size={26}
                 />
               )}

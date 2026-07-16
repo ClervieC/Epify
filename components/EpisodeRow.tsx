@@ -34,6 +34,7 @@ interface EpisodeRowProps {
   expandIcon?: "up" | "down";
   onToggleWatched: () => void;
   onRewatch?: () => void;
+  onUndoRewatch?: () => void;
   onPress?: () => void;
 }
 
@@ -67,6 +68,7 @@ export const EpisodeRow = memo(function EpisodeRow({
   expandIcon,
   onToggleWatched,
   onRewatch,
+  onUndoRewatch,
   onPress,
 }: EpisodeRowProps) {
   const router = useRouter();
@@ -85,6 +87,11 @@ export const EpisodeRow = memo(function EpisodeRow({
   function handleRewatch() {
     flash();
     onRewatch?.();
+  }
+
+  function handleUndoRewatch() {
+    flash();
+    onUndoRewatch?.();
   }
 
   // Swiping to mark watched only makes sense where the checkmark column is
@@ -187,6 +194,7 @@ export const EpisodeRow = memo(function EpisodeRow({
             timesWatched={timesWatched}
             onToggle={handleToggleWatched}
             onRewatch={handleRewatch}
+            onUndoRewatch={handleUndoRewatch}
             light={dimmed}
           />
         </View>

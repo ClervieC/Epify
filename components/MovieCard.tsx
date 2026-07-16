@@ -6,7 +6,7 @@ import { useColors, radius, type, hueForTitle, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useScalePress, useMountIn } from "../lib/animations";
 import { searchMovie, posterUrl } from "../lib/tmdb";
-import { setMovieWatched, incrementMovieRewatch, UserMovie } from "../lib/userMovies";
+import { setMovieWatched, incrementMovieRewatch, decrementMovieRewatch, UserMovie } from "../lib/userMovies";
 import { WatchedCheck } from "./WatchedCheck";
 
 interface MovieCardProps {
@@ -83,6 +83,10 @@ export const MovieCard = memo(function MovieCard({
     const updated = await incrementMovieRewatch(id, timesWatched);
     onRewatched(updated);
   }
+  async function handleUndoRewatch() {
+    const updated = await decrementMovieRewatch(id, timesWatched);
+    onRewatched(updated);
+  }
 
   return (
     <Pressable
@@ -109,6 +113,7 @@ export const MovieCard = memo(function MovieCard({
               timesWatched={timesWatched}
               onToggle={handleUnwatch}
               onRewatch={handleRewatch}
+              onUndoRewatch={handleUndoRewatch}
               size={26}
             />
           </View>

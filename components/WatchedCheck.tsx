@@ -10,6 +10,10 @@ interface WatchedCheckProps {
   timesWatched?: number;
   onToggle: () => void;
   onRewatch?: () => void;
+  // "I didn't actually watch it again, I misclicked" — only offered (as a
+  // third dialog option alongside unwatch/rewatch) once timesWatched > 1,
+  // since undoing from 1 down to 0 is exactly what onToggle already does.
+  onUndoRewatch?: () => void;
   size?: number;
   light?: boolean;
   // For a not-yet-released movie: nothing to mark watched yet. Only meant to
@@ -24,6 +28,7 @@ export function WatchedCheck({
   timesWatched,
   onToggle,
   onRewatch,
+  onUndoRewatch,
   size = 30,
   light,
   disabled,
@@ -44,6 +49,8 @@ export function WatchedCheck({
     ]).start();
   }
 
+  const rewatched = watched && (timesWatched ?? 1) > 1;
+
   async function handlePress(e: GestureResponderEvent) {
     e.stopPropagation();
     if (disabled) return;
@@ -52,17 +59,17 @@ export function WatchedCheck({
       onToggle();
       return;
     }
-    const choice = await askRewatch();
+    const choice = await askRewatch(rewatched && !!onUndoRewatch);
     if (choice === "cancel") return;
     bounce();
     if (choice === "rewatch") {
       onRewatch?.();
+    } else if (choice === "undoRewatch") {
+      onUndoRewatch?.();
     } else {
       onToggle();
     }
   }
-
-  const rewatched = watched && (timesWatched ?? 1) > 1;
 
   return (
     <Pressable

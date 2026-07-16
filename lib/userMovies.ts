@@ -321,6 +321,20 @@ export async function incrementMovieRewatch(id: string, currentTimesWatched: num
   return data as UserMovie;
 }
 
+// Mirrors decrementRewatch in lib/userShows.ts — undoes just the most recent
+// rewatch tap instead of the full unwatch, for "I misclicked, I didn't
+// actually watch it again."
+export async function decrementMovieRewatch(id: string, currentTimesWatched: number): Promise<UserMovie> {
+  const { data, error } = await supabase
+    .from("user_movies")
+    .update({ times_watched: Math.max(1, currentTimesWatched - 1) })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as UserMovie;
+}
+
 export async function bulkUpsertUserMovies(
   movies: { title: string; year: number | null; watchedAt: string; timesWatched: number }[]
 ) {
