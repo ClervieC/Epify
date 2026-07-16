@@ -10,6 +10,7 @@ import { clearLocalShowStats } from "../lib/showStats";
 import { clearProfileSnapshot } from "../lib/profileSnapshot";
 import { clearLocalStreakData } from "../lib/streaks";
 import { alert } from "../lib/alert";
+import { shouldShowOnboarding } from "../lib/onboarding";
 
 // None of these caches' storage keys are scoped by user id (see each
 // module's own comment) — without clearing them here, signing into a
@@ -35,6 +36,12 @@ interface AuthContextValue {
   // splash again instead of reusing a stale "ready" flag.
   dataReady: boolean;
   setDataReady: (ready: boolean) => void;
+  // null = not checked yet (or signed out) — deliberately distinct from
+  // false, so app/_layout.tsx's redirect effect doesn't fire a false
+  // "onboarding already done" redirect in the brief window before the async
+  // check below resolves.
+  needsOnboarding: boolean | null;
+  setNeedsOnboarding: (needs: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -42,12 +49,15 @@ const AuthContext = createContext<AuthContextValue>({
   loading: true,
   dataReady: false,
   setDataReady: () => {},
+  needsOnboarding: null,
+  setNeedsOnboarding: () => {},
 });
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [dataReady, setDataReady] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -65,6 +75,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  // Lives here (rather than as local state in app/_layout.tsx) so that
+  // app/onboarding.tsx — a sibling route, not a descendant this state could
+  // otherwise be passed to as a prop — can flip it to `false` the instant
+  // onboarding finishes. Without that, the completion write only touched
+  // AsyncStorage (see markOnboardingComplete), so this stayed stuck at
+  // `true` and the redirect effect in _layout.tsx (which re-runs on every
+  // segment change) kept bouncing the user straight back to /onboarding on
+  // the very navigation away from it.
+  useEffect(() => {
+    if (!session) {
+      setNeedsOnboarding(null);
+      return;
+    }
+    shouldShowOnboarding().then(setNeedsOnboarding);
+  }, [session]);
 
   // Soft ban check — is_banned (see supabase/schema.sql) is enforced here
   // rather than at the auth layer, since there's no server-side session
@@ -110,7 +136,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [session]);
 
   return (
-    <AuthContext.Provider value={{ session, loading, dataReady, setDataReady }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider
+      value={{ session, loading, dataReady, setDataReady, needsOnboarding, setNeedsOnboarding }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
 }
 

@@ -282,8 +282,12 @@ const UpcomingEpisodeRow = memo(function UpcomingEpisodeRow({
         title={item.episode.name}
         watched={item.watched}
         isNew={variant === "episode" ? isFuture && !isFarFuture : undefined}
+        // Only shown pre-air — once it's aired, the "Aired" pill below
+        // already covers it, and stacking both wasted a lot of the row's
+        // width on a phone-sized screen for two badges saying almost the
+        // same thing.
         isPremiere={
-          variant !== "groupChild" ? item.episode.number === 1 : undefined
+          variant !== "groupChild" && isFuture ? item.episode.number === 1 : undefined
         }
         hasAired={!isFuture}
         extraEpisodes={variant === "group" ? extraCount : undefined}

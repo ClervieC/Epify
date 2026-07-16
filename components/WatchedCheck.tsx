@@ -12,9 +12,22 @@ interface WatchedCheckProps {
   onRewatch?: () => void;
   size?: number;
   light?: boolean;
+  // For a not-yet-released movie: nothing to mark watched yet. Only meant to
+  // block the unwatched->watched transition — always leave this false/unset
+  // once `watched` is true, so unwatching (or rewatching) stays possible
+  // regardless of release status.
+  disabled?: boolean;
 }
 
-export function WatchedCheck({ watched, timesWatched, onToggle, onRewatch, size = 30, light }: WatchedCheckProps) {
+export function WatchedCheck({
+  watched,
+  timesWatched,
+  onToggle,
+  onRewatch,
+  size = 30,
+  light,
+  disabled,
+}: WatchedCheckProps) {
   const scale = useRef(new Animated.Value(1)).current;
   const askRewatch = useRewatchPrompt();
   const colors = useColors();
@@ -33,6 +46,7 @@ export function WatchedCheck({ watched, timesWatched, onToggle, onRewatch, size 
 
   async function handlePress(e: GestureResponderEvent) {
     e.stopPropagation();
+    if (disabled) return;
     if (!watched) {
       bounce();
       onToggle();
@@ -53,15 +67,18 @@ export function WatchedCheck({ watched, timesWatched, onToggle, onRewatch, size 
   return (
     <Pressable
       onPress={handlePress}
+      disabled={disabled}
       hitSlop={10}
       accessibilityRole="button"
       accessibilityLabel={watched ? "Mark as not watched" : "Mark as watched"}
+      accessibilityState={{ disabled }}
     >
       <Animated.View
         style={[
           styles.check,
           { width: size, height: size, borderRadius: size / 2, transform: [{ scale }] },
           watched && (light ? styles.checkOnLight : styles.checkOn),
+          disabled && styles.checkDisabled,
         ]}
       >
         {rewatched ? (
@@ -84,6 +101,7 @@ function createStyles(colors: Colors) {
     },
     checkOn: { backgroundColor: colors.green },
     checkOnLight: { backgroundColor: colors.green },
+    checkDisabled: { opacity: 0.4 },
     timesText: { color: "#fff", fontWeight: "800" },
   });
 }

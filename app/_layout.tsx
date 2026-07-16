@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { View } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -19,7 +19,6 @@ import { ThemeProvider, useThemeMode } from "../lib/theme";
 import { AppSplash } from "../components/AppSplash";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OfflineBanner } from "../components/OfflineBanner";
-import { shouldShowOnboarding } from "../lib/onboarding";
 
 // Keeps the native splash screen (configured via the expo-splash-screen
 // config plugin in app.json) visible until the JS AppSplash overlay below
@@ -28,23 +27,10 @@ import { shouldShowOnboarding } from "../lib/onboarding";
 SplashScreen.preventAutoHideAsync();
 
 function RootNavigation() {
-  const { session, loading, dataReady, setDataReady } = useAuth();
+  const { session, loading, dataReady, setDataReady, needsOnboarding } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const nativeSplashHidden = useRef(false);
-  // null = not checked yet (or signed out) — deliberately distinct from
-  // false, so the redirect effect below doesn't fire a false "onboarding
-  // already done" redirect in the brief window before the async check below
-  // resolves.
-  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    if (!session) {
-      setNeedsOnboarding(null);
-      return;
-    }
-    shouldShowOnboarding().then(setNeedsOnboarding);
-  }, [session]);
 
   useEffect(() => {
     if (loading) return;

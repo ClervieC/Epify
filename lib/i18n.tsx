@@ -91,7 +91,7 @@ const en = {
     shows: "Shows",
     movies: "Movies",
     explore: "Explore",
-    activity: "Activity",
+    activity: "Social",
     profile: "Profile",
   },
   activity: {
@@ -562,7 +562,7 @@ const fr: typeof en = {
     shows: "Séries",
     movies: "Films",
     explore: "Découvrir",
-    activity: "Activité",
+    activity: "Social",
     profile: "Profil",
   },
   activity: {

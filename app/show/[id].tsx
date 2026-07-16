@@ -887,6 +887,18 @@ function SeasonSection({
 }) {
   const { scale, onPressIn, onPressOut } = useScalePress(0.98);
 
+  // The season checkmark's own rewatch multiplier — mirrors WatchedCheck's
+  // ×N badge, but at the season level: the weakest-link (min, not max/sum)
+  // times_watched across the season's episodes, so a season only reads as
+  // "rewatched ×N" once every one of its episodes has actually been seen N
+  // times, not just the one episode someone happened to replay on its own.
+  const watchedTimesById = useMemo(
+    () => new Map(watched.map((w) => [w.tvmaze_episode_id, w.times_watched])),
+    [watched],
+  );
+  const seasonTimesWatched = Math.min(...eps.map((e) => watchedTimesById.get(e.id) ?? 1));
+  const seasonRewatched = complete && seasonTimesWatched > 1;
+
   return (
     <View>
       <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={onToggleExpand}>
@@ -906,7 +918,11 @@ function SeasonSection({
             }}
             hitSlop={8}
           >
-            <Ionicons name={complete ? "checkmark" : "add"} size={16} color={complete ? "#fff" : colors.textFaint} />
+            {seasonRewatched ? (
+              <Text style={styles.seasonCheckTimesText}>×{seasonTimesWatched}</Text>
+            ) : (
+              <Ionicons name={complete ? "checkmark" : "add"} size={16} color={complete ? "#fff" : colors.textFaint} />
+            )}
           </Pressable>
         </Animated.View>
       </Pressable>
@@ -1022,6 +1038,7 @@ function createStyles(colors: Colors) {
     justifyContent: "center",
   },
   seasonCheckComplete: { backgroundColor: colors.green, borderColor: colors.green },
+  seasonCheckTimesText: { color: "#fff", fontWeight: "800", fontSize: 11 },
   seasonBar: { height: 2, backgroundColor: colors.accent, marginBottom: 4 },
   seasonBarComplete: { backgroundColor: colors.green },
   episodeLine: {

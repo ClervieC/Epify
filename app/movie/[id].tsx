@@ -17,6 +17,7 @@ import {
   getMovieTrailerUrl,
   getMovieWatchProviders,
   getMovieRecommendations,
+  isMovieReleased,
   posterUrl,
   TMDBMovieDetails,
   TMDBCastMember,
@@ -144,6 +145,7 @@ export default function MovieDetailScreen() {
   if (loading || !movie) return <MovieDetailLoading />;
 
   const isWatched = movie.status === "watched";
+  const notYetReleased = !!tmdb && !isMovieReleased(tmdb.release_date);
   const watchedDate = new Date(movie.watched_at ?? movie.created_at).toLocaleDateString(undefined, {
     month: "long",
     day: "numeric",
@@ -157,6 +159,7 @@ export default function MovieDetailScreen() {
       await setMovieWatched(movie!.title, movie!.year, false);
       goBack();
     } else {
+      if (notYetReleased) return;
       const updated = await setMovieWatched(
         movie!.title,
         movie!.year,
@@ -237,6 +240,7 @@ export default function MovieDetailScreen() {
               timesWatched={movie.times_watched}
               onToggle={handleToggleWatched}
               onRewatch={handleRewatch}
+              disabled={notYetReleased && !isWatched}
               size={26}
             />
           </View>

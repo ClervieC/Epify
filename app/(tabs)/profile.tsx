@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, View, Text, ScrollView, Pressable, StyleSheet, TextInput, ActivityIndicator } from "react-native";
+import {
+  Animated,
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  StyleSheet,
+  TextInput,
+  ActivityIndicator,
+  useWindowDimensions,
+} from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -75,7 +85,13 @@ export default function ProfileScreen() {
   const { unreadCount, refresh: refreshNotifications } = useNotifications();
   const announceBadges = useBadgeUnlockToast();
   const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  // Same "short screen" threshold onboarding.tsx uses — below it the header's
+  // full-size 64px avatar + padding ate a disproportionate share of the
+  // viewport on small phones, pushing the follow counts and everything below
+  // further down than the header's own actual content warranted.
+  const { height: windowHeight } = useWindowDimensions();
+  const isSmallScreen = windowHeight < 700;
+  const styles = useMemo(() => createStyles(colors, isSmallScreen), [colors, isSmallScreen]);
   const { t } = useLanguage();
 
   const lastLoadedAt = useRef(0);
@@ -228,12 +244,12 @@ export default function ProfileScreen() {
       <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       <Animated.View style={[styles.header, { opacity: headerIn.opacity, transform: headerIn.transform }]}>
         <Pressable onPress={handleChangeAvatar} disabled={uploadingAvatar} accessibilityRole="button" accessibilityLabel={t.profile.changePhoto}>
-          <Avatar name={displayName} imageUri={profile?.avatar_url} size="md" />
+          <Avatar name={displayName} imageUri={profile?.avatar_url} size={isSmallScreen ? "sm" : "md"} />
           <View style={styles.avatarEditBadge}>
             {uploadingAvatar ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
-              <Ionicons name="camera" size={13} color={colors.onAccent} />
+              <Ionicons name="camera" size={isSmallScreen ? 11 : 13} color={colors.onAccent} />
             )}
           </View>
         </Pressable>
@@ -251,7 +267,7 @@ export default function ProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel={t.social.notifications}
         >
-          <Ionicons name="notifications-outline" size={20} color={colors.text} />
+          <Ionicons name="notifications-outline" size={isSmallScreen ? 18 : 20} color={colors.text} />
           {unreadCount > 0 && <View style={styles.bellBadge} />}
         </Pressable>
         <Pressable
@@ -260,7 +276,7 @@ export default function ProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel={t.profile.settings}
         >
-          <Ionicons name="settings-outline" size={20} color={colors.text} />
+          <Ionicons name="settings-outline" size={isSmallScreen ? 18 : 20} color={colors.text} />
           {hasAdminAlerts && <View style={styles.bellBadge} />}
         </Pressable>
       </Animated.View>
@@ -572,24 +588,24 @@ function StatCard({
   );
 }
 
-function createStyles(colors: Colors) {
+function createStyles(colors: Colors, isSmallScreen: boolean) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   headerGlow: { position: "absolute", top: 0, left: 0, right: 0, height: 160, pointerEvents: "none" },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 14,
-    padding: 16,
-    paddingTop: 24,
+    gap: isSmallScreen ? 10 : 14,
+    padding: isSmallScreen ? 12 : 16,
+    paddingTop: isSmallScreen ? 16 : 24,
   },
   headerInfo: { flex: 1 },
   avatarEditBadge: {
     position: "absolute",
     bottom: -2,
     right: -2,
-    width: 22,
-    height: 22,
+    width: isSmallScreen ? 18 : 22,
+    height: isSmallScreen ? 18 : 22,
     borderRadius: radius.pill,
     backgroundColor: colors.accent,
     alignItems: "center",
@@ -597,9 +613,14 @@ function createStyles(colors: Colors) {
     borderWidth: 2,
     borderColor: colors.background,
   },
-  username: { fontSize: 20, fontWeight: "800", color: colors.text },
-  userEmail: { fontSize: 13, color: colors.textMuted, marginTop: 2 },
-  bellBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  username: { fontSize: isSmallScreen ? 17 : 20, fontWeight: "800", color: colors.text },
+  userEmail: { fontSize: isSmallScreen ? 12 : 13, color: colors.textMuted, marginTop: 2 },
+  bellBtn: {
+    width: isSmallScreen ? 32 : 36,
+    height: isSmallScreen ? 32 : 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   bellBadge: {
     position: "absolute",
     top: 8,

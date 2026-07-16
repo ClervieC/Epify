@@ -98,6 +98,16 @@ export function backdropUrl(path: string | null, size: "w780" | "w1280" = "w1280
   return path ? `${IMAGE_BASE_URL}/${size}${path}` : null;
 }
 
+// A missing/empty release_date (unconfirmed date, or no TMDB match at all)
+// is treated as "already out" rather than blocked — there's no legitimate
+// signal to count down to, and it's far more often an obscure/older title
+// TMDB just never dated than a genuinely unannounced future release. Mirrors
+// what app/(tabs)/movies.tsx's Upcoming/To Watch split already assumed.
+export function isMovieReleased(releaseDate: string | null | undefined): boolean {
+  if (!releaseDate) return true;
+  return new Date(releaseDate).getTime() <= Date.now();
+}
+
 // The app only ever has a title (+ optional year) for a watched movie — TV
 // Time's export has no TMDB id — so every lookup is a title search rather
 // than a direct id fetch. Cached per title+year since the same movie is

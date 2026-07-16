@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
 import { fetchUserMovies, fetchMovieWatchlist, setMovieWatched, UserMovie } from "../../lib/userMovies";
-import { getMovieDetails, posterUrl, TMDBMovieDetails } from "../../lib/tmdb";
+import { getMovieDetails, isMovieReleased, posterUrl, TMDBMovieDetails } from "../../lib/tmdb";
 import { mapWithConcurrency } from "../../lib/concurrency";
 import { diffDaysFromToday } from "../../lib/dates";
 import { MovieCard } from "../../components/MovieCard";
@@ -125,11 +125,8 @@ export default function MoviesScreen() {
     };
   }, [watchlist, tab]);
 
-  // A missing release date (no TMDB match) is treated as "already out" for
-  // To Watch — same reasoning as the block above, nothing to count down to.
   function isFutureRelease(entry: UpcomingEntry) {
-    const releaseTime = entry.tmdb?.release_date ? new Date(entry.tmdb.release_date).getTime() : null;
-    return releaseTime !== null && releaseTime > Date.now();
+    return !isMovieReleased(entry.tmdb?.release_date);
   }
 
   const toWatchList = useMemo(() => {
@@ -334,10 +331,9 @@ function UpcomingRow({
   const { scale, onPressIn, onPressOut } = useScalePress();
   const mountIn = useMountIn();
   const poster = entry.tmdb ? posterUrl(entry.tmdb.poster_path, "w200") : null;
-  const releaseTime = entry.tmdb?.release_date ? new Date(entry.tmdb.release_date).getTime() : null;
-  const isFuture = releaseTime !== null && releaseTime > Date.now();
-  const releaseDate = releaseTime
-    ? new Date(releaseTime).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
+  const isFuture = !isMovieReleased(entry.tmdb?.release_date);
+  const releaseDate = entry.tmdb?.release_date
+    ? new Date(entry.tmdb.release_date).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
     : null;
   // Mirrors EpisodeRow's daysAway treatment — a day-count badge takes the
   // checkmark's spot for not-yet-released movies, since there's nothing to

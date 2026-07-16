@@ -7,6 +7,7 @@ import {
   getMovieTrailerUrl,
   getMovieWatchProviders,
   getMovieRecommendations,
+  isMovieReleased,
   posterUrl,
   TMDBMovieDetails,
   TMDBCastMember,
@@ -134,6 +135,7 @@ export default function TmdbMovieDetailScreen() {
   const title = tmdb?.title ?? "";
   const year = tmdb?.release_date ? new Date(tmdb.release_date).getFullYear() : null;
   const isWatched = userRow?.status === "watched";
+  const notYetReleased = !!tmdb && !isMovieReleased(tmdb.release_date);
 
   async function handleAddToWatchlist() {
     const row = await addMovieToWatchlist(tmdbId, title, year, tmdb?.poster_path);
@@ -150,6 +152,7 @@ export default function TmdbMovieDetailScreen() {
       setUserRow(null);
       return;
     }
+    if (notYetReleased) return;
     const updated = await setMovieWatched(title, year, true, tmdbId, tmdb?.poster_path);
     setUserRow(updated);
   }
@@ -231,6 +234,7 @@ export default function TmdbMovieDetailScreen() {
                 timesWatched={userRow?.times_watched ?? 0}
                 onToggle={handleToggleWatched}
                 onRewatch={handleRewatch}
+                disabled={notYetReleased && !isWatched}
                 size={26}
               />
             </View>

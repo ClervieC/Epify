@@ -19,6 +19,7 @@ import { useLanguage } from "../lib/i18n";
 import { markOnboardingComplete } from "../lib/onboarding";
 import { StaleWatchlistMonths } from "../lib/userSettings";
 import { useMountIn } from "../lib/animations";
+import { useAuth } from "../context/AuthContext";
 
 interface Slide {
   image: number;
@@ -48,6 +49,7 @@ export default function OnboardingScreen() {
   const isShort = height < 700;
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, setStaleWatchlistMonths } = useLanguage();
+  const { setNeedsOnboarding } = useAuth();
   const [index, setIndex] = useState(0);
   // The threshold question is asked once, right before finishing — after the
   // last slide's "Get started" or after "Skip" either way, since it's a
@@ -103,6 +105,12 @@ export default function OnboardingScreen() {
   async function chooseReminder(months: StaleWatchlistMonths) {
     setStaleWatchlistMonths(months);
     await markOnboardingComplete();
+    // Tells app/_layout.tsx's redirect effect directly — markOnboardingComplete()
+    // only persists to AsyncStorage, which nothing re-reads on navigation, so
+    // without this the redirect effect (it re-runs on every segment change,
+    // including the router.replace below) kept seeing the stale `true` from
+    // sign-up and bouncing straight back to /onboarding in a loop.
+    setNeedsOnboarding(false);
     router.replace("/(tabs)/explore");
   }
 

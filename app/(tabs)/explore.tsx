@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Image,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -47,6 +48,109 @@ import { alert } from "../../lib/alert";
 
 type ExploreTab = "shows" | "movies";
 type Category<T> = { key: string; title: string; data: T[] };
+
+// Netflix-style hover arrows for a discover row — web/desktop only. Touch
+// devices already scroll these rows fine with a swipe (that's the FlatList's
+// own default behavior); the arrows exist purely for mouse users who have no
+// swipe gesture and would otherwise have to know the row extends offscreen.
+function CategoryRow<T>({
+  data,
+  keyExtractor,
+  renderItem,
+  styles,
+}: {
+  data: T[];
+  keyExtractor: (item: T) => string;
+  renderItem: (item: T) => ReactNode;
+  styles: ExploreStyles;
+}) {
+  const listRef = useRef<FlatList<T>>(null);
+  const [hovered, setHovered] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+  const scrollX = useRef(0);
+  const containerWidth = useRef(0);
+  const contentWidth = useRef(0);
+
+  function updateArrows() {
+    setCanScrollLeft(scrollX.current > 4);
+    setCanScrollRight(scrollX.current + containerWidth.current < contentWidth.current - 4);
+  }
+
+  function scrollBy(direction: 1 | -1) {
+    // ~85% of the visible row per click — enough to feel like real progress
+    // without jumping so far the user loses track of what they just saw
+    // (mirrors Netflix's own per-click scroll distance).
+    const amount = containerWidth.current * 0.85 || 400;
+    listRef.current?.scrollToOffset({
+      offset: Math.max(0, scrollX.current + direction * amount),
+      animated: true,
+    });
+  }
+
+  const list = (
+    <FlatList
+      ref={listRef}
+      data={data}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      keyExtractor={keyExtractor}
+      contentContainerStyle={styles.categoryRow}
+      renderItem={({ item }) => <View style={styles.categoryCard}>{renderItem(item)}</View>}
+      {...(Platform.OS === "web"
+        ? {
+            onScroll: (e: any) => {
+              scrollX.current = e.nativeEvent.contentOffset.x;
+              updateArrows();
+            },
+            onContentSizeChange: (w: number) => {
+              contentWidth.current = w;
+              updateArrows();
+            },
+            scrollEventThrottle: 16,
+          }
+        : {})}
+    />
+  );
+
+  if (Platform.OS !== "web") return list;
+
+  return (
+    <View
+      style={styles.categoryRowWrap}
+      onLayout={(e) => {
+        containerWidth.current = e.nativeEvent.layout.width;
+        updateArrows();
+      }}
+      // RN Web only — no touch/native equivalent for hover, and RN's own
+      // View props don't declare these (react-native-web still forwards
+      // them to the underlying DOM element at runtime).
+      {...({ onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) } as any)}
+    >
+      {list}
+      {hovered && canScrollLeft && (
+        <Pressable
+          style={[styles.carouselArrow, styles.carouselArrowLeft]}
+          onPress={() => scrollBy(-1)}
+          accessibilityRole="button"
+          accessibilityLabel="Scroll left"
+        >
+          <Ionicons name="chevron-back" size={22} color="#fff" />
+        </Pressable>
+      )}
+      {hovered && canScrollRight && (
+        <Pressable
+          style={[styles.carouselArrow, styles.carouselArrowRight]}
+          onPress={() => scrollBy(1)}
+          accessibilityRole="button"
+          accessibilityLabel="Scroll right"
+        >
+          <Ionicons name="chevron-forward" size={22} color="#fff" />
+        </Pressable>
+      )}
+    </View>
+  );
+}
 
 export default function ExploreScreen() {
   const router = useRouter();
@@ -502,27 +606,23 @@ export default function ExploreScreen() {
             showCategories.map((category) => (
               <View key={category.key} style={styles.categorySection}>
                 <Text style={styles.categoryTitle}>{category.title}</Text>
-                <FlatList
+                <CategoryRow
                   data={category.data}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
                   keyExtractor={(show) => String(show.id)}
-                  contentContainerStyle={styles.categoryRow}
-                  renderItem={({ item: show }) => {
+                  styles={styles}
+                  renderItem={(show) => {
                     const resolvedId = resolvedTvShows.get(show.id)?.id;
                     return (
-                      <View style={styles.categoryCard}>
-                        <ExploreTvCard
-                          show={show}
-                          isAdded={resolvedId !== undefined && addedIds.has(resolvedId)}
-                          isFavorite={resolvedId !== undefined && favoriteIds.has(resolvedId)}
-                          onPress={() => openTmdbShow(show)}
-                          onToggleFavorite={() => toggleFavoriteTmdbShow(show)}
-                          onQuickAdd={() => quickAddTmdbShow(show)}
-                          colors={colors}
-                          styles={styles}
-                        />
-                      </View>
+                      <ExploreTvCard
+                        show={show}
+                        isAdded={resolvedId !== undefined && addedIds.has(resolvedId)}
+                        isFavorite={resolvedId !== undefined && favoriteIds.has(resolvedId)}
+                        onPress={() => openTmdbShow(show)}
+                        onToggleFavorite={() => toggleFavoriteTmdbShow(show)}
+                        onQuickAdd={() => quickAddTmdbShow(show)}
+                        colors={colors}
+                        styles={styles}
+                      />
                     );
                   }}
                 />
@@ -542,25 +642,21 @@ export default function ExploreScreen() {
             movieCategories.map((category) => (
               <View key={category.key} style={styles.categorySection}>
                 <Text style={styles.categoryTitle}>{category.title}</Text>
-                <FlatList
+                <CategoryRow
                   data={category.data}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
                   keyExtractor={(movie) => String(movie.id)}
-                  contentContainerStyle={styles.categoryRow}
-                  renderItem={({ item: movie }) => (
-                    <View style={styles.categoryCard}>
-                      <ExploreMovieCard
-                        movie={movie}
-                        isAdded={movieTmdbMap.has(movie.id)}
-                        isFavorite={!!movieTmdbMap.get(movie.id)?.is_favorite}
-                        onPress={() => router.push(`/movie/tmdb/${movie.id}`)}
-                        onToggleFavorite={() => toggleFavoriteMovie(movie)}
-                        onQuickAdd={() => quickAddMovie(movie)}
-                        colors={colors}
-                        styles={styles}
-                      />
-                    </View>
+                  styles={styles}
+                  renderItem={(movie) => (
+                    <ExploreMovieCard
+                      movie={movie}
+                      isAdded={movieTmdbMap.has(movie.id)}
+                      isFavorite={!!movieTmdbMap.get(movie.id)?.is_favorite}
+                      onPress={() => router.push(`/movie/tmdb/${movie.id}`)}
+                      onToggleFavorite={() => toggleFavoriteMovie(movie)}
+                      onQuickAdd={() => quickAddMovie(movie)}
+                      colors={colors}
+                      styles={styles}
+                    />
                   )}
                 />
               </View>
@@ -870,6 +966,25 @@ function createStyles(colors: Colors) {
       marginBottom: 12,
     },
     categoryRow: { paddingHorizontal: 16, gap: 12 },
+    categoryRowWrap: { position: "relative", justifyContent: "center" },
+    carouselArrow: {
+      position: "absolute",
+      // Roughly centers on the poster image itself (not the title/meta text
+      // beneath it) — see cardImage's 2/3 aspect ratio at categoryCard's
+      // width, ~34 accounts for that text block's height.
+      top: 0,
+      bottom: 34,
+      justifyContent: "center",
+      alignItems: "center",
+      width: 36,
+      height: 36,
+      marginTop: "auto",
+      marginBottom: "auto",
+      borderRadius: 18,
+      backgroundColor: "rgba(0,0,0,0.55)",
+    },
+    carouselArrowLeft: { left: 8 },
+    carouselArrowRight: { right: 8 },
     categoryCard: { width: 130 },
     card: { flex: 1 },
     cardImageWrap: { position: "relative" },

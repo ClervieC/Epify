@@ -194,24 +194,24 @@ export default function UserProfileScreen() {
         <FollowButton following={isFollowing} loading={busy} onPress={toggleFollow} />
       </View>
 
-      <View style={styles.followRow}>
-        <Pressable
-          style={styles.followStat}
-          onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "followers" } })}
-        >
-          <Text style={styles.followNumber}>{counts.followers}</Text>
-          <Text style={styles.followLabel}>{t.profile.followers}</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.followStat, styles.followStatBorder]}
-          onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "following" } })}
-        >
-          <Text style={styles.followNumber}>{counts.following}</Text>
-          <Text style={styles.followLabel}>{t.profile.following}</Text>
-        </Pressable>
-      </View>
-
       <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={styles.followRow}>
+          <Pressable
+            style={styles.followStat}
+            onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "followers" } })}
+          >
+            <Text style={styles.followNumber}>{counts.followers}</Text>
+            <Text style={styles.followLabel}>{t.profile.followers}</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.followStat, styles.followStatBorder]}
+            onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "following" } })}
+          >
+            <Text style={styles.followNumber}>{counts.following}</Text>
+            <Text style={styles.followLabel}>{t.profile.following}</Text>
+          </Pressable>
+        </View>
+
         <SectionHeader title={t.profile.statistics} styles={styles} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsRow}>
           <StatCard
@@ -353,14 +353,25 @@ function createStyles(colors: Colors) {
       paddingHorizontal: 16,
       paddingTop: 16,
     },
-    profileHeader: { alignItems: "center", paddingVertical: 20, gap: 10 },
+    // The fixed part of the screen (this + the back/report row above it) —
+    // a bottom border here (not on followRow, which now scrolls with the
+    // rest of the content) is what stays visible as the actual boundary
+    // once the user scrolls the follow counts/stats/etc. up underneath it.
+    profileHeader: {
+      alignItems: "center",
+      paddingVertical: 20,
+      gap: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
     username: { fontSize: type.title, fontWeight: "800", color: colors.text },
     matchRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 8 },
     followRow: {
       flexDirection: "row",
       marginHorizontal: 16,
       paddingVertical: 16,
-      borderTopWidth: 1,
+      // No top border here anymore — it would sit right under profileHeader's
+      // new one and double up before any scrolling has even happened.
       borderBottomWidth: 1,
       borderColor: colors.border,
     },
