@@ -73,8 +73,15 @@ export function MovieDetailView({
   const [reporting, setReporting] = useState(false);
 
   const heroImage = tmdb && (backdropUrl(tmdb.backdrop_path) ?? posterUrl(tmdb.poster_path, "w500"));
+  // Full date, not just the year already in the title — same formatting
+  // movies.tsx's Upcoming tab uses for a release date, so this reads
+  // consistently wherever a movie's release date shows up in the app.
+  const releaseDate = tmdb?.release_date
+    ? new Date(tmdb.release_date).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
+    : null;
   const metaParts = tmdb
     ? [
+        releaseDate,
         tmdb.genres.map((g) => g.name).join(", "),
         tmdb.runtime ? `${tmdb.runtime} min` : null,
         tmdb.vote_average ? `⭐ ${tmdb.vote_average.toFixed(1)}` : null,

@@ -10,6 +10,7 @@ import {
 import { useAuth } from "../context/AuthContext";
 import {
   fetchUserSettings,
+  getDeviceLanguage,
   setLanguage as persistLanguage,
   setSpoilerMode as persistSpoilerMode,
   setStaleWatchlistMonths as persistStaleWatchlistMonths,
@@ -102,6 +103,7 @@ const en = {
     findPeople: "Find people",
     watchedEpisode: (season: number, number: number) =>
       `watched S${season}E${number} of`,
+    watchedEpisodes: (count: number) => `watched ${count} episode${count > 1 ? "s" : ""} of`,
     watchedMovie: "watched",
     commentedOnShow: "commented on",
     commentedOnEpisode: "commented on an episode of",
@@ -578,6 +580,7 @@ const fr: typeof en = {
     findPeople: "Trouver des amis",
     watchedEpisode: (season: number, number: number) =>
       `a regardé S${season}E${number} de`,
+    watchedEpisodes: (count: number) => `a regardé ${count} épisode${count > 1 ? "s" : ""} de`,
     watchedMovie: "a regardé",
     commentedOnShow: "a commenté",
     commentedOnEpisode: "a commenté un épisode de",
@@ -1002,13 +1005,19 @@ const SettingsContext = createContext<SettingsContextValue>({
 
 export function LanguageProvider({ children }: PropsWithChildren) {
   const { session } = useAuth();
-  const [language, setLanguageState] = useState<Language>("en");
+  // Matches the device's language for anyone who's never set an explicit
+  // preference (see getDeviceLanguage in lib/userSettings.ts) — both here,
+  // before a session/settings row is even known, and again below for the
+  // signed-out case, so login/signup/legal screens aren't stuck in English
+  // for a French device just because there's no account yet to store a
+  // preference on.
+  const [language, setLanguageState] = useState<Language>(getDeviceLanguage());
   const [spoilerMode, setSpoilerModeState] = useState(false);
   const [staleWatchlistMonths, setStaleWatchlistMonthsState] = useState<StaleWatchlistMonths>(6);
 
   useEffect(() => {
     if (!session) {
-      setLanguageState("en");
+      setLanguageState(getDeviceLanguage());
       setSpoilerModeState(false);
       setStaleWatchlistMonthsState(6);
       return;

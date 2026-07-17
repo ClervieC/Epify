@@ -53,8 +53,13 @@ export type ActivityItem =
       body: string;
     };
 
-const FEED_LIMIT = 40;
-const PER_TABLE_LIMIT = 40;
+// Fetched per table, not as a shared budget — the next PAGE_SIZE items
+// overall could plausibly all come from just one of the four tables (e.g.
+// someone binge-watching while nobody else comments), so each table needs
+// its own full page of candidates for the merge below to have enough to
+// work with. The four tables' combined pool (up to 4x this) is what gets
+// sorted and sliced down to one page.
+const PAGE_SIZE = 20;
 
 // One feed combining everyone you follow's watch activity (episodes,
 // movies — with whatever rating/feeling they left) and comments (show,
@@ -64,39 +69,55 @@ const PER_TABLE_LIMIT = 40;
 // body/timestamp worth surfacing on their own, and "reacted" in the
 // feature request most naturally maps to the feeling emoji left alongside
 // a rating, which watched items already carry.
-export async function fetchFollowingActivity(): Promise<ActivityItem[]> {
+//
+// `before` is a keyset cursor (an ActivityItem's own createdAt, from the
+// last page's oldest item) rather than an offset — an offset would shift
+// under a paginating user as new activity keeps arriving from everyone they
+// follow, silently skipping or repeating rows between pages.
+export async function fetchFollowingActivity(before?: string): Promise<{ items: ActivityItem[]; hasMore: boolean }> {
   const myId = await getCurrentUserId();
-  if (!myId) return [];
+  if (!myId) return { items: [], hasMore: false };
 
   const followingIds = await fetchFollowingIds(myId);
-  if (followingIds.length === 0) return [];
+  if (followingIds.length === 0) return { items: [], hasMore: false };
+
+  let watchedEpisodesQuery = supabase
+    .from("watched_episodes")
+    .select("*")
+    .in("user_id", followingIds)
+    .order("watched_at", { ascending: false })
+    .limit(PAGE_SIZE);
+  let watchedMoviesQuery = supabase
+    .from("user_movies")
+    .select("*")
+    .in("user_id", followingIds)
+    .eq("status", "watched")
+    .order("watched_at", { ascending: false })
+    .limit(PAGE_SIZE);
+  let showCommentsQuery = supabase
+    .from("comments")
+    .select("*")
+    .in("user_id", followingIds)
+    .order("created_at", { ascending: false })
+    .limit(PAGE_SIZE);
+  let movieCommentsQuery = supabase
+    .from("movie_comments")
+    .select("*")
+    .in("user_id", followingIds)
+    .order("created_at", { ascending: false })
+    .limit(PAGE_SIZE);
+  if (before) {
+    watchedEpisodesQuery = watchedEpisodesQuery.lt("watched_at", before);
+    watchedMoviesQuery = watchedMoviesQuery.lt("watched_at", before);
+    showCommentsQuery = showCommentsQuery.lt("created_at", before);
+    movieCommentsQuery = movieCommentsQuery.lt("created_at", before);
+  }
 
   const [watchedEpisodes, watchedMovies, showComments, movieComments] = await Promise.all([
-    supabase
-      .from("watched_episodes")
-      .select("*")
-      .in("user_id", followingIds)
-      .order("watched_at", { ascending: false })
-      .limit(PER_TABLE_LIMIT),
-    supabase
-      .from("user_movies")
-      .select("*")
-      .in("user_id", followingIds)
-      .eq("status", "watched")
-      .order("watched_at", { ascending: false })
-      .limit(PER_TABLE_LIMIT),
-    supabase
-      .from("comments")
-      .select("*")
-      .in("user_id", followingIds)
-      .order("created_at", { ascending: false })
-      .limit(PER_TABLE_LIMIT),
-    supabase
-      .from("movie_comments")
-      .select("*")
-      .in("user_id", followingIds)
-      .order("created_at", { ascending: false })
-      .limit(PER_TABLE_LIMIT),
+    watchedEpisodesQuery,
+    watchedMoviesQuery,
+    showCommentsQuery,
+    movieCommentsQuery,
   ]);
   if (watchedEpisodes.error) throw watchedEpisodes.error;
   if (watchedMovies.error) throw watchedMovies.error;
@@ -213,7 +234,17 @@ export async function fetchFollowingActivity(): Promise<ActivityItem[]> {
   }
 
   items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return items.slice(0, FEED_LIMIT);
+  // A table that came back with a full page of candidates might have more
+  // rows beyond it, even if none of them made this page's final cut (they
+  // could all be older than the other tables' PAGE_SIZE-th item) — checking
+  // the raw per-table results rather than just items.length > PAGE_SIZE
+  // catches that case too.
+  const hasMore =
+    watchedEpisodes.data.length === PAGE_SIZE ||
+    watchedMovies.data.length === PAGE_SIZE ||
+    showComments.data.length === PAGE_SIZE ||
+    movieComments.data.length === PAGE_SIZE;
+  return { items: items.slice(0, PAGE_SIZE), hasMore };
 }
 
 // Cheap "is there anything new" check for the tab bar's red dot (see
