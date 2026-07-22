@@ -70,11 +70,19 @@
       "Bash(NODE_PATH=/Users/clervie/Desktop/Projects/Epify/node_modules node /private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad/streak_check.js)",
       "Bash(rm -f /private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad/streak_check.js /tmp/streak_*.png)",
       "Bash(grep -n \"const \\\\[items\\\\|listRef\\\\|FlatList\\\\s*$\\\\|data={items}\\\\|renderItem={\\({ item, index }\\)\" \"app/\\(tabs\\)/activity.tsx\")",
-      "Bash(grep -n \"const { t, language }\\\\|useLanguage\\(\\)\" \"app/movie/tmdb/[id].tsx\")"
+      "Bash(grep -n \"const { t, language }\\\\|useLanguage\\(\\)\" \"app/movie/tmdb/[id].tsx\")",
+      "Bash(sed -n '240,280p' /Users/clervie/Desktop/Projects/Epify/app/show/[id].tsx)",
+      "Bash(sed -n '765,780p' /Users/clervie/Desktop/Projects/Epify/app/episode/[id].tsx)",
+      "Bash(sed -n '195,210p' /Users/clervie/Desktop/Projects/Epify/app/movie/[id].tsx)",
+      "Bash(sed -n '188,198p' /Users/clervie/Desktop/Projects/Epify/app/movie/tmdb/[id].tsx)"
     ],
     "additionalDirectories": [
       "/private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad",
-      "/tmp"
+      "/tmp",
+      "/Users/clervie/Desktop/Projects/Epify/app/show",
+      "/Users/clervie/Desktop/Projects/Epify/app/episode",
+      "/Users/clervie/Desktop/Projects/Epify/app/movie",
+      "/Users/clervie/Desktop/Projects/Epify/app/movie/tmdb"
     ]
   },
   "enabledPlugins": {

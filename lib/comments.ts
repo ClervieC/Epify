@@ -11,6 +11,10 @@ export interface Comment {
   tvmaze_episode_id: number | null;
   body: string;
   created_at: string;
+  // Null for a top-level comment. One level deep only — a reply's own id
+  // is never itself referenced as a parent_comment_id by anything else (see
+  // components/CommentsSection.tsx, which has no "reply to a reply" UI).
+  parent_comment_id: string | null;
 }
 
 export interface EnrichedComment extends Comment {
@@ -69,7 +73,7 @@ export async function fetchEpisodeComments(episodeId: number): Promise<EnrichedC
   return enrichComments(data as Comment[]);
 }
 
-export async function postShowComment(showId: number, body: string): Promise<void> {
+export async function postShowComment(showId: number, body: string, parentCommentId?: string): Promise<void> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
 
@@ -78,11 +82,17 @@ export async function postShowComment(showId: number, body: string): Promise<voi
     target_type: "show",
     tvmaze_show_id: showId,
     body: body.trim(),
+    parent_comment_id: parentCommentId ?? null,
   });
   if (error) throw error;
 }
 
-export async function postEpisodeComment(showId: number, episodeId: number, body: string): Promise<void> {
+export async function postEpisodeComment(
+  showId: number,
+  episodeId: number,
+  body: string,
+  parentCommentId?: string,
+): Promise<void> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
 
@@ -92,6 +102,7 @@ export async function postEpisodeComment(showId: number, episodeId: number, body
     tvmaze_show_id: showId,
     tvmaze_episode_id: episodeId,
     body: body.trim(),
+    parent_comment_id: parentCommentId ?? null,
   });
   if (error) throw error;
 }

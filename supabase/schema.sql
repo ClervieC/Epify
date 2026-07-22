@@ -1036,3 +1036,24 @@ grant execute on function public.public_favorite_movies(uuid) to authenticated;
 -- ============================================================
 alter table public.user_settings
   add column if not exists show_feeling_prompt boolean not null default true;
+
+-- ============================================================
+-- One-level-deep replies on comments (show/episode comments and movie
+-- comments) — a reply is just a regular row with parent_comment_id set,
+-- not a separate table. Nulls (the common case, a top-level comment) mean
+-- the existing per-target indexes above already cover the "give me every
+-- comment for this show/episode/movie" query; this index instead serves
+-- "give me every reply to comment X" (see fetchEpisodeComments etc. building
+-- the reply tree client-side).
+-- ============================================================
+alter table public.comments
+  add column if not exists parent_comment_id uuid references public.comments (id) on delete cascade;
+create index if not exists comments_parent_idx
+  on public.comments (parent_comment_id)
+  where parent_comment_id is not null;
+
+alter table public.movie_comments
+  add column if not exists parent_comment_id uuid references public.movie_comments (id) on delete cascade;
+create index if not exists movie_comments_parent_idx
+  on public.movie_comments (parent_comment_id)
+  where parent_comment_id is not null;

@@ -253,8 +253,8 @@ export default function ShowDetailScreen() {
     };
   }, [tab, showId]);
 
-  async function handlePostShowComment(body: string) {
-    await postShowComment(showId, body);
+  async function handlePostShowComment(body: string, parentId?: string) {
+    await postShowComment(showId, body, parentId);
     setShowComments(await fetchShowComments(showId));
   }
 

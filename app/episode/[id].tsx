@@ -766,8 +766,8 @@ function EpisodePage({
     });
   }, [watched?.feeling]);
 
-  async function handlePostComment(body: string) {
-    await postEpisodeComment(showId, episode.id, body);
+  async function handlePostComment(body: string, parentId?: string) {
+    await postEpisodeComment(showId, episode.id, body, parentId);
     setComments(await fetchEpisodeComments(episode.id));
   }
 

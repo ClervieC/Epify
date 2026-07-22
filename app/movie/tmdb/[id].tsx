@@ -188,8 +188,8 @@ export default function TmdbMovieDetailScreen() {
     const updated = await rateMovie(userRow.id, userRow.rating, next);
     setUserRow(updated);
   }
-  async function handlePostComment(body: string) {
-    await postMovieComment(tmdbId, body);
+  async function handlePostComment(body: string, parentId?: string) {
+    await postMovieComment(tmdbId, body, parentId);
     setComments(await fetchMovieComments(tmdbId));
   }
   function refreshComments() {

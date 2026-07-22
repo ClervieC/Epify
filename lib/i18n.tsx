@@ -431,6 +431,9 @@ const en = {
     empty: "No comments yet. Be the first!",
     unknownUser: "Someone",
     postError: "Couldn't post your comment. Try again.",
+    reply: "Reply",
+    replyPlaceholder: "Add a reply...",
+    replyingTo: (author: string) => `Replying to ${author}`,
   },
   characterVote: {
     title: "Favorite character",
@@ -916,6 +919,9 @@ const fr: typeof en = {
     empty: "Aucun commentaire pour l'instant. Sois le premier !",
     unknownUser: "Quelqu'un",
     postError: "Impossible d'envoyer ton commentaire. Réessaie.",
+    reply: "Répondre",
+    replyPlaceholder: "Ajouter une réponse...",
+    replyingTo: (author: string) => `Réponse à ${author}`,
   },
   characterVote: {
     title: "Personnage préféré",

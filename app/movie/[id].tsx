@@ -197,9 +197,9 @@ export default function MovieDetailScreen() {
     const updated = await rateMovie(movie!.id, movie!.rating, next);
     setMovie(updated);
   }
-  async function handlePostComment(body: string) {
+  async function handlePostComment(body: string, parentId?: string) {
     if (!commentTmdbId) return;
-    await postMovieComment(commentTmdbId, body);
+    await postMovieComment(commentTmdbId, body, parentId);
     setComments(await fetchMovieComments(commentTmdbId));
   }
   function refreshComments() {

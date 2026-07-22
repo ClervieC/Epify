@@ -10,6 +10,9 @@ export interface MovieComment {
   tmdb_id: number;
   body: string;
   created_at: string;
+  // Null for a top-level comment — see the same field on lib/comments.ts's
+  // Comment.
+  parent_comment_id: string | null;
 }
 
 export interface EnrichedMovieComment extends MovieComment {
@@ -56,7 +59,7 @@ export async function fetchMovieComments(tmdbId: number): Promise<EnrichedMovieC
   return enrichMovieComments(data as MovieComment[]);
 }
 
-export async function postMovieComment(tmdbId: number, body: string): Promise<void> {
+export async function postMovieComment(tmdbId: number, body: string, parentCommentId?: string): Promise<void> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
 
@@ -64,6 +67,7 @@ export async function postMovieComment(tmdbId: number, body: string): Promise<vo
     user_id: userId,
     tmdb_id: tmdbId,
     body: body.trim(),
+    parent_comment_id: parentCommentId ?? null,
   });
   if (error) throw error;
 }

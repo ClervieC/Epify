@@ -22,7 +22,7 @@ interface MovieRatingSectionProps {
   comments: CommentLike[];
   commentsLoading: boolean;
   myUserId: string | null;
-  onSubmitComment: (body: string) => Promise<void>;
+  onSubmitComment: (body: string, parentId?: string) => Promise<void>;
   onDeleteComment: (id: string) => void;
   onToggleReaction: (id: string, currentlyReacted: boolean) => void;
 }
