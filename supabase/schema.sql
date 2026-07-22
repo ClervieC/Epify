@@ -1025,3 +1025,14 @@ as $$
 $$;
 
 grant execute on function public.public_favorite_movies(uuid) to authenticated;
+
+-- ============================================================
+-- Per-user opt-out of the quick "how did that make you feel" reaction sheet
+-- that pops up right after marking an episode watched from the Watch Next
+-- list (see app/(tabs)/index.tsx's feelingPromptItem) — a couple of users
+-- find it intrusive on every single check, so it's a personal Settings
+-- toggle rather than a change to the feature itself. Defaults to true (the
+-- existing behavior) so this is purely additive/opt-in to turn off.
+-- ============================================================
+alter table public.user_settings
+  add column if not exists show_feeling_prompt boolean not null default true;

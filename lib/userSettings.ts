@@ -19,6 +19,7 @@ export interface UserSettings {
   spoiler_mode: boolean;
   language: Language;
   stale_watchlist_months: StaleWatchlistMonths;
+  show_feeling_prompt: boolean;
 }
 
 export async function fetchUserSettings(): Promise<UserSettings> {
@@ -30,7 +31,15 @@ export async function fetchUserSettings(): Promise<UserSettings> {
   // No row yet means no explicit preference has ever been saved — default to
   // the device's own language rather than always assuming English, same
   // reasoning LanguageProvider applies for signed-out screens (see lib/i18n.tsx).
-  return data ?? { user_id: userId, spoiler_mode: false, language: getDeviceLanguage(), stale_watchlist_months: 6 };
+  return (
+    data ?? {
+      user_id: userId,
+      spoiler_mode: false,
+      language: getDeviceLanguage(),
+      stale_watchlist_months: 6,
+      show_feeling_prompt: true,
+    }
+  );
 }
 
 export async function setSpoilerMode(enabled: boolean) {
@@ -60,5 +69,15 @@ export async function setStaleWatchlistMonths(months: StaleWatchlistMonths) {
   const { error } = await supabase
     .from("user_settings")
     .upsert({ user_id: userId, stale_watchlist_months: months }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
+export async function setShowFeelingPrompt(enabled: boolean) {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("user_settings")
+    .upsert({ user_id: userId, show_feeling_prompt: enabled }, { onConflict: "user_id" });
   if (error) throw error;
 }

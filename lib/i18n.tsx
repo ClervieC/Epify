@@ -14,6 +14,7 @@ import {
   setLanguage as persistLanguage,
   setSpoilerMode as persistSpoilerMode,
   setStaleWatchlistMonths as persistStaleWatchlistMonths,
+  setShowFeelingPrompt as persistShowFeelingPrompt,
   Language,
   StaleWatchlistMonths,
 } from "./userSettings";
@@ -293,6 +294,8 @@ const en = {
     spoilerMode: "Spoiler mode",
     spoilerModeDesc:
       "See other people's comments even on episodes you haven't watched yet.",
+    feelingPrompt: "Reaction prompt",
+    feelingPromptDesc: "Ask how an episode made you feel right after marking it watched.",
     staleWatchlist: "Forgotten shows reminder",
     staleWatchlistSixMonths: "6 months",
     staleWatchlistOneYear: "1 year",
@@ -772,6 +775,8 @@ const fr: typeof en = {
     spoilerMode: "Mode spoilers",
     spoilerModeDesc:
       "Voir les commentaires des autres même sur les épisodes que tu n'as pas encore vus.",
+    feelingPrompt: "Popup de ressenti",
+    feelingPromptDesc: "Demander ce que tu as pensé d'un épisode juste après l'avoir marqué comme vu.",
     staleWatchlist: "Rappel des séries oubliées",
     staleWatchlistSixMonths: "6 mois",
     staleWatchlistOneYear: "1 an",
@@ -990,6 +995,8 @@ interface SettingsContextValue {
   setSpoilerMode: (enabled: boolean) => void;
   staleWatchlistMonths: StaleWatchlistMonths;
   setStaleWatchlistMonths: (months: StaleWatchlistMonths) => void;
+  showFeelingPrompt: boolean;
+  setShowFeelingPrompt: (enabled: boolean) => void;
   t: Translations;
 }
 
@@ -1000,6 +1007,8 @@ const SettingsContext = createContext<SettingsContextValue>({
   setSpoilerMode: () => {},
   staleWatchlistMonths: 6,
   setStaleWatchlistMonths: () => {},
+  showFeelingPrompt: true,
+  setShowFeelingPrompt: () => {},
   t: en,
 });
 
@@ -1014,12 +1023,14 @@ export function LanguageProvider({ children }: PropsWithChildren) {
   const [language, setLanguageState] = useState<Language>(getDeviceLanguage());
   const [spoilerMode, setSpoilerModeState] = useState(false);
   const [staleWatchlistMonths, setStaleWatchlistMonthsState] = useState<StaleWatchlistMonths>(6);
+  const [showFeelingPrompt, setShowFeelingPromptState] = useState(true);
 
   useEffect(() => {
     if (!session) {
       setLanguageState(getDeviceLanguage());
       setSpoilerModeState(false);
       setStaleWatchlistMonthsState(6);
+      setShowFeelingPromptState(true);
       return;
     }
     fetchUserSettings()
@@ -1027,6 +1038,7 @@ export function LanguageProvider({ children }: PropsWithChildren) {
         setLanguageState(settings.language);
         setSpoilerModeState(settings.spoiler_mode);
         setStaleWatchlistMonthsState(settings.stale_watchlist_months);
+        setShowFeelingPromptState(settings.show_feeling_prompt);
       })
       .catch(() => {});
   }, [session]);
@@ -1046,6 +1058,11 @@ export function LanguageProvider({ children }: PropsWithChildren) {
     persistStaleWatchlistMonths(months).catch(() => {});
   }, []);
 
+  const setShowFeelingPrompt = useCallback((enabled: boolean) => {
+    setShowFeelingPromptState(enabled);
+    persistShowFeelingPrompt(enabled).catch(() => {});
+  }, []);
+
   useEffect(() => {
     setSupabaseAlertLanguage(language);
   }, [language]);
@@ -1058,9 +1075,20 @@ export function LanguageProvider({ children }: PropsWithChildren) {
       setSpoilerMode,
       staleWatchlistMonths,
       setStaleWatchlistMonths,
+      showFeelingPrompt,
+      setShowFeelingPrompt,
       t: dictionaries[language],
     }),
-    [language, setLanguage, spoilerMode, setSpoilerMode, staleWatchlistMonths, setStaleWatchlistMonths],
+    [
+      language,
+      setLanguage,
+      spoilerMode,
+      setSpoilerMode,
+      staleWatchlistMonths,
+      setStaleWatchlistMonths,
+      showFeelingPrompt,
+      setShowFeelingPrompt,
+    ],
   );
 
   return (

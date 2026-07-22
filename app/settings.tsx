@@ -31,8 +31,17 @@ export default function SettingsScreen() {
   const goBack = useGoBack("/(tabs)/profile");
   const colors = useColors();
   const styles = createStyles(colors);
-  const { t, language, setLanguage, spoilerMode, setSpoilerMode, staleWatchlistMonths, setStaleWatchlistMonths } =
-    useLanguage();
+  const {
+    t,
+    language,
+    setLanguage,
+    spoilerMode,
+    setSpoilerMode,
+    staleWatchlistMonths,
+    setStaleWatchlistMonths,
+    showFeelingPrompt,
+    setShowFeelingPrompt,
+  } = useLanguage();
   const { themeMode, setThemeMode } = useThemeMode();
 
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -203,6 +212,20 @@ export default function SettingsScreen() {
         <Switch
           value={spoilerMode}
           onValueChange={setSpoilerMode}
+          trackColor={{ true: colors.accent, false: colors.pillBg }}
+          thumbColor={colors.surface}
+        />
+      </View>
+
+      <View style={styles.settingRow}>
+        <Ionicons name="happy-outline" size={20} color={colors.text} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.importRowTitle}>{t.profile.feelingPrompt}</Text>
+          <Text style={styles.importRowSubtitle}>{t.profile.feelingPromptDesc}</Text>
+        </View>
+        <Switch
+          value={showFeelingPrompt}
+          onValueChange={setShowFeelingPrompt}
           trackColor={{ true: colors.accent, false: colors.pillBg }}
           thumbColor={colors.surface}
         />

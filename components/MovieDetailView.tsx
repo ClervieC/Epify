@@ -5,7 +5,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import Reanimated from "react-native-reanimated";
 import { GestureDetector } from "react-native-gesture-handler";
-import { backdropUrl, posterUrl, profileUrl, TMDBMovieDetails, TMDBCastMember, WatchProviders } from "../lib/tmdb";
+import {
+  backdropUrl,
+  posterUrl,
+  profileUrl,
+  TMDBMovieDetails,
+  TMDBCastMember,
+  WatchProviders,
+} from "../lib/tmdb";
 import { useColors, radius, type, hueForTitle, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useSwipeDownToDismiss } from "../lib/animations";

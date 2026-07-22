@@ -550,7 +550,15 @@ export default function ShowsScreen() {
   const upcomingCacheRef = useRef(new Map<number, EnrichedEpisode>());
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t, language } = useLanguage();
+  const { t, language, showFeelingPrompt } = useLanguage();
+  // toggleWatched below is a stable (empty-deps) useCallback other code
+  // relies on for referential stability (see WatchListEpisodeRow's own
+  // comment) — a ref lets it read the current setting without becoming
+  // unstable every time the user flips it in Settings.
+  const showFeelingPromptRef = useRef(showFeelingPrompt);
+  useEffect(() => {
+    showFeelingPromptRef.current = showFeelingPrompt;
+  }, [showFeelingPrompt]);
   const { setDataReady } = useAuth();
   const underlineGrow = useGrowIn(tab);
   const contentFade = useFadeIn(!loading);
@@ -1077,8 +1085,9 @@ export default function ShowsScreen() {
     );
 
     // Only on the unwatched -> watched transition, never on unwatch or on a
-    // rewatch (which goes through the WatchedCheck rewatch prompt instead).
-    if (!currentlyWatched) setFeelingPromptItem(item);
+    // rewatch (which goes through the WatchedCheck rewatch prompt instead) —
+    // and only if the user hasn't turned this off in Settings.
+    if (!currentlyWatched && showFeelingPromptRef.current) setFeelingPromptItem(item);
   }, []);
 
   const handleQuickFeeling = useCallback(
