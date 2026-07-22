@@ -8,6 +8,12 @@ import { FEELING_EMOJIS } from "../lib/feelings";
 import { CommentsSection, CommentLike } from "./CommentsSection";
 
 interface MovieRatingSectionProps {
+  // Whether the current user has actually watched this movie — rating/
+  // reacting stays locked either way (spoiler mode only unlocks *other*
+  // people's reactions/comments, not your own on something you haven't
+  // seen), but comments/others'-feelings unlock early when spoilerMode is
+  // on, same as episode detail (see the `unlocked` computed below).
+  watched: boolean;
   rating: number | null;
   feeling: string | null;
   onRate: (value: number) => void;
@@ -21,11 +27,12 @@ interface MovieRatingSectionProps {
   onToggleReaction: (id: string, currentlyReacted: boolean) => void;
 }
 
-// Rating stars + feeling picker + others' feelings tally + comments, shown
-// once a movie is marked watched — mirrors the same section on episode
-// detail (app/episode/[id].tsx), reused as-is by both app/movie/[id].tsx and
-// app/movie/tmdb/[id].tsx.
+// Rating stars + feeling picker + others' feelings tally + comments —
+// mirrors the same section on episode detail (app/episode/[id].tsx),
+// including its spoiler-mode gating, reused as-is by both app/movie/[id].tsx
+// and app/movie/tmdb/[id].tsx.
 export function MovieRatingSection({
+  watched,
   rating,
   feeling,
   onRate,
@@ -40,66 +47,85 @@ export function MovieRatingSection({
 }: MovieRatingSectionProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t } = useLanguage();
+  const { t, spoilerMode } = useLanguage();
+  const unlocked = watched || spoilerMode;
 
   return (
     <View>
-      <View style={styles.divider} />
-      <Text style={styles.sectionLabel}>{t.episodeDetail.yourRating}</Text>
-      <View style={styles.starsRow}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <RatingStar
-            key={n}
-            index={n}
-            filled={!!(rating && rating >= n)}
-            onPress={() => onRate(n)}
-            colors={colors}
-            styles={styles}
-          />
-        ))}
-      </View>
-
-      <Text style={styles.sectionLabel}>{t.episodeDetail.howDidYouFeel}</Text>
-      <View style={styles.feelingsRow}>
-        {FEELING_EMOJIS.map((f) => (
-          <FeelingChip
-            key={f.key}
-            emoji={f.emoji}
-            label={t.feelings[f.key]}
-            active={feeling === f.key}
-            onPress={() => onFeeling(f.key)}
-            colors={colors}
-            styles={styles}
-          />
-        ))}
-      </View>
-
-      {Object.keys(feelingCounts).length > 0 && (
+      {!watched && (
         <>
           <View style={styles.divider} />
-          <Text style={styles.sectionLabel}>{t.episodeDetail.othersFelt}</Text>
+          <View style={styles.unwatchedPrompt}>
+            <Ionicons name="lock-closed-outline" size={20} color={colors.textFaint} />
+            <Text style={styles.unwatchedPromptText}>{t.movies.unwatchedPrompt}</Text>
+          </View>
+        </>
+      )}
+
+      {watched && (
+        <>
+          <View style={styles.divider} />
+          <Text style={styles.sectionLabel}>{t.episodeDetail.yourRating}</Text>
+          <View style={styles.starsRow}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <RatingStar
+                key={n}
+                index={n}
+                filled={!!(rating && rating >= n)}
+                onPress={() => onRate(n)}
+                colors={colors}
+                styles={styles}
+              />
+            ))}
+          </View>
+
+          <Text style={styles.sectionLabel}>{t.episodeDetail.howDidYouFeel}</Text>
           <View style={styles.feelingsRow}>
-            {FEELING_EMOJIS.filter((f) => feelingCounts[f.key] > 0).map((f) => (
-              <View key={f.key} style={styles.feelingTally}>
-                <Text style={styles.feelingEmoji}>{f.emoji}</Text>
-                <Text style={styles.feelingTallyCount}>{feelingCounts[f.key]}</Text>
-              </View>
+            {FEELING_EMOJIS.map((f) => (
+              <FeelingChip
+                key={f.key}
+                emoji={f.emoji}
+                label={t.feelings[f.key]}
+                active={feeling === f.key}
+                onPress={() => onFeeling(f.key)}
+                colors={colors}
+                styles={styles}
+              />
             ))}
           </View>
         </>
       )}
 
-      <View style={styles.divider} />
-      <Text style={styles.sectionLabel}>{t.episodeDetail.comments}</Text>
-      <CommentsSection
-        comments={comments}
-        loading={commentsLoading}
-        myUserId={myUserId}
-        onSubmit={onSubmitComment}
-        onDelete={onDeleteComment}
-        onToggleReaction={onToggleReaction}
-        reportTargetType="movie_comment"
-      />
+      {unlocked && (
+        <>
+          {Object.keys(feelingCounts).length > 0 && (
+            <>
+              <View style={styles.divider} />
+              <Text style={styles.sectionLabel}>{t.episodeDetail.othersFelt}</Text>
+              <View style={styles.feelingsRow}>
+                {FEELING_EMOJIS.filter((f) => feelingCounts[f.key] > 0).map((f) => (
+                  <View key={f.key} style={styles.feelingTally}>
+                    <Text style={styles.feelingEmoji}>{f.emoji}</Text>
+                    <Text style={styles.feelingTallyCount}>{feelingCounts[f.key]}</Text>
+                  </View>
+                ))}
+              </View>
+            </>
+          )}
+
+          <View style={styles.divider} />
+          <Text style={styles.sectionLabel}>{t.episodeDetail.comments}</Text>
+          <CommentsSection
+            comments={comments}
+            loading={commentsLoading}
+            myUserId={myUserId}
+            onSubmit={onSubmitComment}
+            onDelete={onDeleteComment}
+            onToggleReaction={onToggleReaction}
+            reportTargetType="movie_comment"
+          />
+        </>
+      )}
     </View>
   );
 }
@@ -167,6 +193,20 @@ function FeelingChip({
 function createStyles(colors: Colors) {
   return StyleSheet.create({
     divider: { height: 1, backgroundColor: colors.border, marginVertical: 20 },
+    unwatchedPrompt: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      backgroundColor: colors.backgroundAlt,
+      borderRadius: radius.md,
+      padding: 16,
+    },
+    unwatchedPromptText: {
+      flex: 1,
+      color: colors.textFaint,
+      fontSize: 13,
+      lineHeight: 18,
+    },
     sectionLabel: {
       textAlign: "center",
       fontWeight: "800",

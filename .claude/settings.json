@@ -69,7 +69,8 @@
       "Bash(rm -rf /Users/clervie/Desktop/Projects/Epify/test-results *)",
       "Bash(NODE_PATH=/Users/clervie/Desktop/Projects/Epify/node_modules node /private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad/streak_check.js)",
       "Bash(rm -f /private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad/streak_check.js /tmp/streak_*.png)",
-      "Bash(grep -n \"const \\\\[items\\\\|listRef\\\\|FlatList\\\\s*$\\\\|data={items}\\\\|renderItem={\\({ item, index }\\)\" \"app/\\(tabs\\)/activity.tsx\")"
+      "Bash(grep -n \"const \\\\[items\\\\|listRef\\\\|FlatList\\\\s*$\\\\|data={items}\\\\|renderItem={\\({ item, index }\\)\" \"app/\\(tabs\\)/activity.tsx\")",
+      "Bash(grep -n \"const { t, language }\\\\|useLanguage\\(\\)\" \"app/movie/tmdb/[id].tsx\")"
     ],
     "additionalDirectories": [
       "/private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad",

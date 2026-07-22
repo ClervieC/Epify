@@ -192,6 +192,7 @@ const en = {
     inWatchlist: "In watchlist",
     markWatched: "Mark as watched",
     removeFromList: "Remove from list",
+    unwatchedPrompt: "Mark this movie as watched to rate it, react, and see comments.",
   },
   explore: {
     title: "Discover",
@@ -671,6 +672,7 @@ const fr: typeof en = {
     inWatchlist: "Dans ma liste",
     markWatched: "Marquer comme vu",
     removeFromList: "Retirer de la liste",
+    unwatchedPrompt: "Marque ce film comme vu pour le noter, réagir et voir les commentaires.",
   },
   explore: {
     title: "Découvrir",

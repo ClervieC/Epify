@@ -53,7 +53,7 @@ export default function MovieDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const goBack = useGoBack("/(tabs)/movies");
-  const { t, language } = useLanguage();
+  const { t, language, spoilerMode } = useLanguage();
 
   const [movie, setMovie] = useState<UserMovie | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,8 +128,12 @@ export default function MovieDetailScreen() {
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [feelingCounts, setFeelingCounts] = useState<Record<string, number>>({});
 
+  // Spoiler-sensitive, same as episode detail — comments/feelings-tally load
+  // early if spoiler mode is on, not just once the movie is actually watched.
+  const unlocked = movie?.status === "watched" || spoilerMode;
+
   useEffect(() => {
-    if (movie?.status !== "watched" || !commentTmdbId) return;
+    if (!unlocked || !commentTmdbId) return;
     let active = true;
     getCurrentUserId().then((uid) => active && setMyUserId(uid ?? null));
     setCommentsLoading(true);
@@ -140,7 +144,7 @@ export default function MovieDetailScreen() {
     return () => {
       active = false;
     };
-  }, [movie?.status, commentTmdbId]);
+  }, [unlocked, commentTmdbId]);
 
   if (loadError) return <DetailErrorState onBack={goBack} />;
   if (loading || !movie) return <MovieDetailLoading />;
@@ -261,21 +265,20 @@ export default function MovieDetailScreen() {
         </>
       }
       extraContent={
-        isWatched ? (
-          <MovieRatingSection
-            rating={movie.rating}
-            feeling={movie.feeling}
-            onRate={handleRate}
-            onFeeling={handleFeeling}
-            feelingCounts={feelingCounts}
-            comments={comments}
-            commentsLoading={commentsLoading}
-            myUserId={myUserId}
-            onSubmitComment={handlePostComment}
-            onDeleteComment={handleDeleteComment}
-            onToggleReaction={handleToggleReaction}
-          />
-        ) : undefined
+        <MovieRatingSection
+          watched={isWatched}
+          rating={movie.rating}
+          feeling={movie.feeling}
+          onRate={handleRate}
+          onFeeling={handleFeeling}
+          feelingCounts={feelingCounts}
+          comments={comments}
+          commentsLoading={commentsLoading}
+          myUserId={myUserId}
+          onSubmitComment={handlePostComment}
+          onDeleteComment={handleDeleteComment}
+          onToggleReaction={handleToggleReaction}
+        />
       }
     />
   );
