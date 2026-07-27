@@ -9,6 +9,7 @@ import { resetPrefetchState } from "../lib/backgroundPrefetch";
 import { clearLocalShowStats } from "../lib/showStats";
 import { clearProfileSnapshot } from "../lib/profileSnapshot";
 import { clearLocalStreakData } from "../lib/streaks";
+import { clearUserShowsCache } from "../lib/userShows";
 import { alert } from "../lib/alert";
 import { shouldShowOnboarding } from "../lib/onboarding";
 
@@ -24,6 +25,7 @@ function clearUserScopedCaches() {
   clearLocalShowStats();
   clearProfileSnapshot();
   clearLocalStreakData();
+  clearUserShowsCache();
 }
 
 interface AuthContextValue {

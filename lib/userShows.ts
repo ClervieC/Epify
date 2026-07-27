@@ -1,5 +1,16 @@
+import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
 import { invalidateWatchedEpisodes } from "./showDataCache";
+
+// Persisted fallback for fetchUserShows() below — every show/episode detail
+// screen calls it (alongside the TVmaze data, which is already cached and
+// offline-resilient — see lib/tvmaze.ts/showDataCache.ts) just to know
+// whether *this* show is tracked and to show watch progress. Without a
+// cache of its own, that one live Supabase call failing offline used to
+// take the whole screen down (a Promise.all with the cached calls) even
+// though everything else needed to render was already on disk.
+const userShowsCache = createAsyncStorage("user_shows_cache");
+const USER_SHOWS_CACHE_KEY = "user_shows_v1";
 
 export type ShowStatus = "watching" | "want_to_watch" | "watched" | "dropped" | "paused";
 
@@ -49,17 +60,41 @@ export interface UserShow {
   updated_at: string;
 }
 
+// Called on sign-out (see context/AuthContext.tsx) — this key has no user id
+// in it, so without clearing it, signing into a different account on the
+// same device would briefly show the previous account's tracked shows.
+export async function clearUserShowsCache(): Promise<void> {
+  try {
+    await userShowsCache.removeItem(USER_SHOWS_CACHE_KEY);
+  } catch {
+    // Best-effort.
+  }
+}
+
 export async function fetchUserShows(userId?: string) {
   const targetUserId = userId ?? (await getCurrentUserId());
   if (!targetUserId) return [];
+  // Only cache/fall back for "my own shows" (the common, unparameterized
+  // call) — an explicit userId means viewing someone else's list, which
+  // isn't what offline browsing of *your* watchlist needs to cover.
+  const isOwnShows = !userId;
 
-  const { data, error } = await supabase
-    .from("user_shows")
-    .select("*")
-    .eq("user_id", targetUserId)
-    .order("updated_at", { ascending: false });
-  if (error) throw error;
-  return data as UserShow[];
+  try {
+    const { data, error } = await supabase
+      .from("user_shows")
+      .select("*")
+      .eq("user_id", targetUserId)
+      .order("updated_at", { ascending: false });
+    if (error) throw error;
+    if (isOwnShows) userShowsCache.setItem(USER_SHOWS_CACHE_KEY, JSON.stringify(data)).catch(() => {});
+    return data as UserShow[];
+  } catch (err) {
+    if (isOwnShows) {
+      const cached = await userShowsCache.getItem(USER_SHOWS_CACHE_KEY).catch(() => null);
+      if (cached) return JSON.parse(cached) as UserShow[];
+    }
+    throw err;
+  }
 }
 
 export async function upsertUserShow(params: {
