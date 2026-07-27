@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, View, Text, FlatList, Pressable, ActivityIndicator, StyleSheet } from "react-native";
+import { Animated, View, Text, TextInput, FlatList, Pressable, ActivityIndicator, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -13,7 +13,7 @@ import {
   followUser,
   unfollowUser,
 } from "../../lib/follows";
-import { fetchProfiles, Profile } from "../../lib/profiles";
+import { fetchProfiles, searchProfiles, Profile } from "../../lib/profiles";
 import { getCurrentUserId } from "../../lib/supabase";
 import { posterUrl } from "../../lib/tmdb";
 import { shortDate, localDateKey } from "../../lib/dates";
@@ -389,6 +389,10 @@ export default function ActivityScreen() {
   // null (not []) while unloaded so the tab shows a spinner instead of a
   // flash of "no matches" before the RPC round trip resolves.
   const [suggested, setSuggested] = useState<SuggestedRow[] | null>(null);
+  const [userQuery, setUserQuery] = useState("");
+  const [userSearchResults, setUserSearchResults] = useState<Profile[]>([]);
+  const [userSearching, setUserSearching] = useState(false);
+  const userSearchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Every row starts as "not following" — suggested_show_buddies() already
   // excludes people the caller follows (see supabase/schema.sql), so there's
   // no existing-follow state to prefetch, same assumption app/users/search.tsx
@@ -457,7 +461,10 @@ export default function ActivityScreen() {
       getCurrentUserId().then(async (myId) => {
         if (!active || !myId) return;
         const following = await fetchFollowingIds(myId);
-        if (active) setHasFollows(following.length > 0);
+        if (active) {
+          setHasFollows(following.length > 0);
+          setFollowingIds(new Set(following));
+        }
       });
       return () => {
         active = false;
@@ -507,6 +514,22 @@ export default function ActivityScreen() {
     const ref = tab === "activity" ? listRef : suggestedListRef;
     ref.current?.scrollToOffset({ offset: 0, animated: true });
   });
+
+  function onChangeUserQuery(text: string) {
+    setUserQuery(text);
+    clearTimeout(userSearchTimer.current);
+    if (!text.trim()) {
+      setUserSearching(false);
+      setUserSearchResults([]);
+      return;
+    }
+    setUserSearching(true);
+    userSearchTimer.current = setTimeout(async () => {
+      const data = await searchProfiles(text.trim());
+      setUserSearchResults(data);
+      setUserSearching(false);
+    }, 300);
+  }
 
   async function toggleFollow(userId: string) {
     const isFollowing = followingIds.has(userId);
@@ -582,38 +605,92 @@ export default function ActivityScreen() {
             }
           />
         )
-      ) : suggested === null ? (
-        <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
-      ) : suggested.length === 0 ? (
-        <EmptyState icon="people-outline" title={t.activity.suggestedEmpty} />
       ) : (
-        <FlatList
-          ref={suggestedListRef}
-          data={suggested}
-          keyExtractor={(item) => item.user_id}
-          renderItem={({ item }) => (
-            <UserRow
-              username={item.profile.username}
-              imageUri={item.profile.avatar_url}
-              subtitleLines={[
-                ...(item.showMatch ? [t.activity.sharedShows(item.showMatch.shared_count, item.showMatch.match_percent)] : []),
-                ...(item.movieMatch
-                  ? [t.activity.sharedMovies(item.movieMatch.shared_count, item.movieMatch.match_percent)]
-                  : []),
-              ]}
-              onPress={() => router.push({ pathname: "/users/[id]", params: { id: item.user_id } })}
-              trailing={
-                <FollowButton
-                  following={followingIds.has(item.user_id)}
-                  loading={busyIds.has(item.user_id)}
-                  onPress={() => toggleFollow(item.user_id)}
+        <>
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={18} color={colors.textFaint} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder={t.social.searchPlaceholder}
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="none"
+              value={userQuery}
+              onChangeText={onChangeUserQuery}
+            />
+            {!!userQuery.trim() && (
+              <Pressable
+                onPress={() => onChangeUserQuery("")}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+              >
+                <Ionicons name="close-circle" size={18} color={colors.textFaint} />
+              </Pressable>
+            )}
+          </View>
+
+          {userQuery.trim() ? (
+            userSearching && userSearchResults.length === 0 ? (
+              <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
+            ) : (
+              <FlatList
+                data={userSearchResults}
+                keyExtractor={(item) => item.user_id}
+                renderItem={({ item }) => (
+                  <UserRow
+                    username={item.username}
+                    imageUri={item.avatar_url}
+                    onPress={() => router.push({ pathname: "/users/[id]", params: { id: item.user_id } })}
+                    trailing={
+                      <FollowButton
+                        following={followingIds.has(item.user_id)}
+                        loading={busyIds.has(item.user_id)}
+                        onPress={() => toggleFollow(item.user_id)}
+                      />
+                    }
+                  />
+                )}
+                ListEmptyComponent={
+                  <EmptyState icon="people-outline" title={t.social.noUsersFound(userQuery.trim())} />
+                }
+                contentContainerStyle={styles.suggestedList}
+                showsVerticalScrollIndicator={false}
+              />
+            )
+          ) : suggested === null ? (
+            <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
+          ) : suggested.length === 0 ? (
+            <EmptyState icon="people-outline" title={t.activity.suggestedEmpty} />
+          ) : (
+            <FlatList
+              ref={suggestedListRef}
+              data={suggested}
+              keyExtractor={(item) => item.user_id}
+              renderItem={({ item }) => (
+                <UserRow
+                  username={item.profile.username}
+                  imageUri={item.profile.avatar_url}
+                  subtitleLines={[
+                    ...(item.showMatch ? [t.activity.sharedShows(item.showMatch.shared_count, item.showMatch.match_percent)] : []),
+                    ...(item.movieMatch
+                      ? [t.activity.sharedMovies(item.movieMatch.shared_count, item.movieMatch.match_percent)]
+                      : []),
+                  ]}
+                  onPress={() => router.push({ pathname: "/users/[id]", params: { id: item.user_id } })}
+                  trailing={
+                    <FollowButton
+                      following={followingIds.has(item.user_id)}
+                      loading={busyIds.has(item.user_id)}
+                      onPress={() => toggleFollow(item.user_id)}
+                    />
+                  }
                 />
-              }
+              )}
+              contentContainerStyle={styles.suggestedList}
+              showsVerticalScrollIndicator={false}
             />
           )}
-          contentContainerStyle={styles.suggestedList}
-          showsVerticalScrollIndicator={false}
-        />
+        </>
       )}
 
       {tab === "activity" && !hasFollows && !loading && (
@@ -644,6 +721,21 @@ function createStyles(colors: Colors) {
     tabText: { fontWeight: "800", fontSize: 13, color: colors.textFaint, letterSpacing: 0.4 },
     tabTextActive: { color: colors.accent },
     tabUnderline: { height: 2, backgroundColor: colors.accent, width: "60%", marginTop: 6 },
+    searchBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginHorizontal: 16,
+      marginTop: 12,
+      marginBottom: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+    },
+    searchInput: { flex: 1, fontSize: type.input, color: colors.text },
     list: { paddingHorizontal: 16, paddingBottom: 32 },
     // No horizontal padding here — unlike ActivityRow, UserRow already pads
     // itself horizontally (see components/UserRow.tsx), same as how

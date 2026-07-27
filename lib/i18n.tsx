@@ -214,6 +214,7 @@ const en = {
     categoryUpcomingMovies: "Coming soon",
     resultsShows: "Shows",
     resultsMovies: "Movies",
+    resultsUsers: "Users",
     noMatchTitle: "Show not found",
     noMatchDesc:
       "This show isn't available on TVmaze, which the app uses to track episodes.",
@@ -276,6 +277,7 @@ const en = {
     noPaused: "No paused shows.",
     seriesCount: (n: number) => `${n} show${n > 1 ? "s" : ""}`,
     createList: "Create a list",
+    noLists: "Group shows into your own lists — like a watch order, or a genre.",
     newListPlaceholder: "List name",
     importTitle: "Import from TV Time",
     importSubtitle:
@@ -425,6 +427,9 @@ const en = {
       "Mark this episode as watched to rate it, react, and see comments.",
     addFavorite: "Add to favorite episodes",
     removeFavorite: "Remove from favorite episodes",
+    seriesFinale: "Series finale",
+    finaleToastTitle: "That's a wrap!",
+    finaleToastBody: (showName: string) => `You just watched the series finale of ${showName}.`,
   },
   comments: {
     placeholder: "Add a comment...",
@@ -448,6 +453,8 @@ const en = {
     touched: "Touched",
     thrilled: "Thrilled",
     confused: "Confused",
+    pleased: "Pleased",
+    butterflies: "Butterflies",
   },
   rewatchPrompt: {
     alreadyWatched: "You've already marked this as watched",
@@ -472,6 +479,7 @@ const en = {
     premiere: "PREMIERE",
     new: "NEW",
     aired: "AIRED",
+    last: "LAST",
     days: "DAYS",
     markWatched: "Mark watched",
     remaining: (n: number) => `${n} left`,
@@ -480,6 +488,17 @@ const en = {
   listDetail: {
     title: "List",
     empty: "No shows in this list.",
+    deleteList: "Delete list",
+    removeShow: "Remove from this list",
+    deleteEmptyTitle: (name: string) => `Delete "${name}"?`,
+    deleteEmptyBody: "This list is empty. This can't be undone.",
+    deleteNonEmptyTitle: (name: string, count: number) =>
+      `"${name}" has ${count} show${count > 1 ? "s" : ""}`,
+    deleteNonEmptyBody: "Move them to another list before deleting, or delete the list and remove them from it (the shows themselves stay in your tracked shows).",
+    moveTo: "Move to...",
+    deleteAnyway: "Delete without moving",
+    cancel: "Cancel",
+    noOtherLists: "You don't have another list yet — create one first, or delete without moving.",
   },
   social: {
     save: "Save",
@@ -697,6 +716,7 @@ const fr: typeof en = {
     categoryUpcomingMovies: "Bientôt disponibles",
     resultsShows: "Séries",
     resultsMovies: "Films",
+    resultsUsers: "Utilisateurs",
     noMatchTitle: "Série introuvable",
     noMatchDesc:
       "Cette série n'est pas disponible sur TVmaze, que l'app utilise pour suivre les épisodes.",
@@ -761,6 +781,7 @@ const fr: typeof en = {
     noPaused: "Aucune série en pause.",
     seriesCount: (n: number) => `${n} série${n > 1 ? "s" : ""}`,
     createList: "Créer une liste",
+    noLists: "Regroupe tes séries dans tes propres listes — un ordre de visionnage, un genre...",
     newListPlaceholder: "Nom de la liste",
     importTitle: "Importer depuis TV Time",
     importSubtitle:
@@ -913,6 +934,9 @@ const fr: typeof en = {
       "Marque l'épisode comme vu pour le noter, réagir et voir les commentaires.",
     addFavorite: "Ajouter aux épisodes favoris",
     removeFavorite: "Retirer des épisodes favoris",
+    seriesFinale: "Finale de la série",
+    finaleToastTitle: "C'est fini !",
+    finaleToastBody: (showName: string) => `Tu viens de regarder le dernier épisode de ${showName}.`,
   },
   comments: {
     placeholder: "Ajouter un commentaire...",
@@ -936,6 +960,8 @@ const fr: typeof en = {
     touched: "Ému",
     thrilled: "Exalté",
     confused: "Perdu",
+    pleased: "Content",
+    butterflies: "Papillons",
   },
   rewatchPrompt: {
     alreadyWatched: "Tu as déjà marqué ça comme vu",
@@ -960,6 +986,7 @@ const fr: typeof en = {
     premiere: "PREMIÈRE",
     new: "NOUVEAU",
     aired: "DIFFUSÉ",
+    last: "DERNIER",
     days: "JOURS",
     markWatched: "Marquer comme vu",
     remaining: (n: number) => `${n} restant${n > 1 ? "s" : ""}`,
@@ -968,6 +995,17 @@ const fr: typeof en = {
   listDetail: {
     title: "Liste",
     empty: "Aucune série dans cette liste.",
+    deleteList: "Supprimer la liste",
+    removeShow: "Retirer de cette liste",
+    deleteEmptyTitle: (name: string) => `Supprimer « ${name} » ?`,
+    deleteEmptyBody: "Cette liste est vide. Cette action est irréversible.",
+    deleteNonEmptyTitle: (name: string, count: number) =>
+      `« ${name} » contient ${count} série${count > 1 ? "s" : ""}`,
+    deleteNonEmptyBody: "Déplace-les vers une autre liste avant de supprimer, ou supprime la liste et retire-les (les séries restent dans tes séries suivies).",
+    moveTo: "Déplacer vers...",
+    deleteAnyway: "Supprimer sans déplacer",
+    cancel: "Annuler",
+    noOtherLists: "Tu n'as pas encore d'autre liste — crées-en une d'abord, ou supprime sans déplacer.",
   },
   social: {
     save: "Enregistrer",

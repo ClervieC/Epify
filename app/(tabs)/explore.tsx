@@ -3,14 +3,12 @@ import {
   View,
   Text,
   TextInput,
-  FlatList,
   ScrollView,
   Pressable,
   Animated,
   StyleSheet,
   ActivityIndicator,
   Image,
-  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -39,20 +37,27 @@ import {
 } from "../../lib/tmdb";
 import { fetchUserMovieTmdbMap, addMovieToWatchlist, removeUserMovie, setMovieFavorite, UserMovie } from "../../lib/userMovies";
 import { fetchForYou } from "../../lib/forYou";
+import { searchProfiles, Profile } from "../../lib/profiles";
+import { followUser, unfollowUser, fetchFollowingIds } from "../../lib/follows";
+import { getCurrentUserId } from "../../lib/supabase";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useScalePress, useMountIn, useGrowIn } from "../../lib/animations";
 import { mapWithConcurrency } from "../../lib/concurrency";
 import { EmptyState } from "../../components/EmptyState";
+import { UserRow } from "../../components/UserRow";
+import { FollowButton } from "../../components/FollowButton";
+import { HorizontalScrollRow } from "../../components/HorizontalScrollRow";
 import { alert } from "../../lib/alert";
 
 type ExploreTab = "shows" | "movies";
 type Category<T> = { key: string; title: string; data: T[] };
 
-// Netflix-style hover arrows for a discover row — web/desktop only. Touch
-// devices already scroll these rows fine with a swipe (that's the FlatList's
-// own default behavior); the arrows exist purely for mouse users who have no
-// swipe gesture and would otherwise have to know the row extends offscreen.
+// Thin wrapper over the shared HorizontalScrollRow (see
+// components/HorizontalScrollRow.tsx — also used by Profile's own
+// Favorites/Shows/Movies/etc. rows) — keeps this file's data/keyExtractor/
+// renderItem call shape for its two call sites below instead of touching
+// them, while sharing the actual hover-arrow implementation.
 function CategoryRow<T>({
   data,
   keyExtractor,
@@ -64,91 +69,14 @@ function CategoryRow<T>({
   renderItem: (item: T) => ReactNode;
   styles: ExploreStyles;
 }) {
-  const listRef = useRef<FlatList<T>>(null);
-  const [hovered, setHovered] = useState(false);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(true);
-  const scrollX = useRef(0);
-  const containerWidth = useRef(0);
-  const contentWidth = useRef(0);
-
-  function updateArrows() {
-    setCanScrollLeft(scrollX.current > 4);
-    setCanScrollRight(scrollX.current + containerWidth.current < contentWidth.current - 4);
-  }
-
-  function scrollBy(direction: 1 | -1) {
-    // ~85% of the visible row per click — enough to feel like real progress
-    // without jumping so far the user loses track of what they just saw
-    // (mirrors Netflix's own per-click scroll distance).
-    const amount = containerWidth.current * 0.85 || 400;
-    listRef.current?.scrollToOffset({
-      offset: Math.max(0, scrollX.current + direction * amount),
-      animated: true,
-    });
-  }
-
-  const list = (
-    <FlatList
-      ref={listRef}
-      data={data}
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      keyExtractor={keyExtractor}
-      contentContainerStyle={styles.categoryRow}
-      renderItem={({ item }) => <View style={styles.categoryCard}>{renderItem(item)}</View>}
-      {...(Platform.OS === "web"
-        ? {
-            onScroll: (e: any) => {
-              scrollX.current = e.nativeEvent.contentOffset.x;
-              updateArrows();
-            },
-            onContentSizeChange: (w: number) => {
-              contentWidth.current = w;
-              updateArrows();
-            },
-            scrollEventThrottle: 16,
-          }
-        : {})}
-    />
-  );
-
-  if (Platform.OS !== "web") return list;
-
   return (
-    <View
-      style={styles.categoryRowWrap}
-      onLayout={(e) => {
-        containerWidth.current = e.nativeEvent.layout.width;
-        updateArrows();
-      }}
-      // RN Web only — no touch/native equivalent for hover, and RN's own
-      // View props don't declare these (react-native-web still forwards
-      // them to the underlying DOM element at runtime).
-      {...({ onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) } as any)}
-    >
-      {list}
-      {hovered && canScrollLeft && (
-        <Pressable
-          style={[styles.carouselArrow, styles.carouselArrowLeft]}
-          onPress={() => scrollBy(-1)}
-          accessibilityRole="button"
-          accessibilityLabel="Scroll left"
-        >
-          <Ionicons name="chevron-back" size={22} color="#fff" />
-        </Pressable>
-      )}
-      {hovered && canScrollRight && (
-        <Pressable
-          style={[styles.carouselArrow, styles.carouselArrowRight]}
-          onPress={() => scrollBy(1)}
-          accessibilityRole="button"
-          accessibilityLabel="Scroll right"
-        >
-          <Ionicons name="chevron-forward" size={22} color="#fff" />
-        </Pressable>
-      )}
-    </View>
+    <HorizontalScrollRow contentContainerStyle={styles.categoryRow}>
+      {data.map((item) => (
+        <View key={keyExtractor(item)} style={styles.categoryCard}>
+          {renderItem(item)}
+        </View>
+      ))}
+    </HorizontalScrollRow>
   );
 }
 
@@ -159,6 +87,9 @@ export default function ExploreScreen() {
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<TVMazeShow[]>([]);
   const [movieSearchResults, setMovieSearchResults] = useState<TMDBSearchResult[]>([]);
+  const [userSearchResults, setUserSearchResults] = useState<Profile[]>([]);
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [followBusyIds, setFollowBusyIds] = useState<Set<string>>(new Set());
   // True while a debounced search is in flight — without this, the results
   // grid briefly showed "No results for X" (searchResults/movieSearchResults
   // still empty from the previous query, or from the initial empty state)
@@ -282,6 +213,11 @@ export default function ExploreScreen() {
     useCallback(() => {
       let active = true;
       fetchUserMovieTmdbMap().then((map) => active && setMovieTmdbMap(map));
+      getCurrentUserId().then(async (myId) => {
+        if (!active || !myId) return;
+        const following = await fetchFollowingIds(myId);
+        if (active) setFollowingIds(new Set(following));
+      });
       fetchUserShows().then((userShows) => {
         if (!active) return;
         setAddedIds(new Set(userShows.map((s) => s.tvmaze_id)));
@@ -304,6 +240,7 @@ export default function ExploreScreen() {
       setQuery("");
       setSearchResults([]);
       setMovieSearchResults([]);
+      setUserSearchResults([]);
       // Whichever of the three ScrollViews below is actually mounted right
       // now (search results / shows discover / movies discover — only one
       // ever is) gets this same ref.
@@ -340,6 +277,7 @@ export default function ExploreScreen() {
         setQuery("");
         setSearchResults([]);
         setMovieSearchResults([]);
+        setUserSearchResults([]);
       }
     });
     return unsubscribe;
@@ -353,23 +291,50 @@ export default function ExploreScreen() {
       setSearching(false);
       setSearchResults([]);
       setMovieSearchResults([]);
+      setUserSearchResults([]);
       return;
     }
     const generation = ++searchGeneration.current;
     setSearching(true);
     timer.current = setTimeout(async () => {
-      // Neither source failing should block the other's results.
-      const [shows, movies] = await Promise.all([
+      // Neither source failing should block the others' results.
+      const [shows, movies, users] = await Promise.all([
         searchShows(text).catch(() => []),
         searchMovies(text).catch(() => []),
+        searchProfiles(text.trim()).catch(() => []),
       ]);
       // A newer keystroke already superseded this request — its own
       // (presumably faster, cached-by-then) results win instead.
       if (generation !== searchGeneration.current) return;
       setSearchResults(shows.map((d) => d.show));
       setMovieSearchResults(movies);
+      setUserSearchResults(users);
       setSearching(false);
     }, 300);
+  }
+
+  async function toggleFollowUser(profile: Profile) {
+    const isFollowing = followingIds.has(profile.user_id);
+    setFollowBusyIds((prev) => new Set(prev).add(profile.user_id));
+    try {
+      if (isFollowing) {
+        await unfollowUser(profile.user_id);
+        setFollowingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(profile.user_id);
+          return next;
+        });
+      } else {
+        await followUser(profile.user_id);
+        setFollowingIds((prev) => new Set(prev).add(profile.user_id));
+      }
+    } finally {
+      setFollowBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(profile.user_id);
+        return next;
+      });
+    }
   }
 
   async function quickAdd(show: TVMazeShow) {
@@ -540,7 +505,7 @@ export default function ExploreScreen() {
 
       {isSearching ? (
         <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false} contentContainerStyle={styles.searchScroll}>
-          {searchResults.length === 0 && movieSearchResults.length === 0 ? (
+          {searchResults.length === 0 && movieSearchResults.length === 0 && userSearchResults.length === 0 ? (
             searching ? (
               <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
             ) : (
@@ -548,6 +513,26 @@ export default function ExploreScreen() {
             )
           ) : (
             <>
+              {userSearchResults.length > 0 && (
+                <View style={styles.categorySection}>
+                  <Text style={styles.categoryTitle}>{t.explore.resultsUsers}</Text>
+                  {userSearchResults.map((profile) => (
+                    <UserRow
+                      key={profile.user_id}
+                      username={profile.username}
+                      imageUri={profile.avatar_url}
+                      onPress={() => router.push({ pathname: "/users/[id]", params: { id: profile.user_id } })}
+                      trailing={
+                        <FollowButton
+                          following={followingIds.has(profile.user_id)}
+                          loading={followBusyIds.has(profile.user_id)}
+                          onPress={() => toggleFollowUser(profile)}
+                        />
+                      }
+                    />
+                  ))}
+                </View>
+              )}
               {searchResults.length > 0 && (
                 <View style={styles.categorySection}>
                   <Text style={styles.categoryTitle}>{t.explore.resultsShows}</Text>
@@ -966,25 +951,6 @@ function createStyles(colors: Colors) {
       marginBottom: 12,
     },
     categoryRow: { paddingHorizontal: 16, gap: 12 },
-    categoryRowWrap: { position: "relative", justifyContent: "center" },
-    carouselArrow: {
-      position: "absolute",
-      // Roughly centers on the poster image itself (not the title/meta text
-      // beneath it) — see cardImage's 2/3 aspect ratio at categoryCard's
-      // width, ~34 accounts for that text block's height.
-      top: 0,
-      bottom: 34,
-      justifyContent: "center",
-      alignItems: "center",
-      width: 36,
-      height: 36,
-      marginTop: "auto",
-      marginBottom: "auto",
-      borderRadius: 18,
-      backgroundColor: "rgba(0,0,0,0.55)",
-    },
-    carouselArrowLeft: { left: 8 },
-    carouselArrowRight: { right: 8 },
     categoryCard: { width: 130 },
     card: { flex: 1 },
     cardImageWrap: { position: "relative" },

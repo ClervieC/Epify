@@ -114,7 +114,7 @@ export default function TabsLayout() {
   }, []);
 
   // (tabs) is one Stack.Screen among several siblings (episode/[id], show/[id],
-  // list/[id], users/*, connections/[id], notifications — see app/_layout.tsx),
+  // users/*, connections/[id], notifications — see app/_layout.tsx),
   // so this refires on return from ANY of those, not just notifications, and
   // NOT on switching between this group's own tabs (index/movies/explore/profile
   // — that's a child-navigator change, not a focus change on this screen).

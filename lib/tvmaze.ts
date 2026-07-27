@@ -240,16 +240,22 @@ export function searchShows(query: string) {
   );
 }
 
-export function getShow(id: number) {
-  return withCache(`show:${id}`, ONE_DAY, () => get<TVMazeShow>(`/shows/${id}`));
+// Defaults to "low" for the many bulk/background callers (Watch List
+// prefetch, showStats, recap, tvtimeImport) — but a real cache miss on an
+// interactive open (a tap on a show or episode) needs to jump the queue the
+// same way searchShows/lookupShowByTvdbId already do, or it sits behind
+// whatever background batch happened to be mid-flight (see
+// app/show/[id].tsx and app/episode/[id].tsx, which pass "high").
+export function getShow(id: number, priority: Priority = "low") {
+  return withCache(`show:${id}`, ONE_DAY, () => get<TVMazeShow>(`/shows/${id}`, priority));
 }
 
-export function getShowEpisodes(id: number) {
-  return withCache(`episodes:${id}`, SIX_HOURS, () => get<TVMazeEpisode[]>(`/shows/${id}/episodes`));
+export function getShowEpisodes(id: number, priority: Priority = "low") {
+  return withCache(`episodes:${id}`, SIX_HOURS, () => get<TVMazeEpisode[]>(`/shows/${id}/episodes`, priority));
 }
 
-export function getShowCast(id: number) {
-  return withCache(`cast:${id}`, ONE_DAY, () => get<CastMember[]>(`/shows/${id}/cast`));
+export function getShowCast(id: number, priority: Priority = "low") {
+  return withCache(`cast:${id}`, ONE_DAY, () => get<CastMember[]>(`/shows/${id}/cast`, priority));
 }
 
 export function getTodaySchedule(countryCode = "US", date?: string) {

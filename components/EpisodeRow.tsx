@@ -25,6 +25,10 @@ interface EpisodeRowProps {
   isPremiere?: boolean;
   isNew?: boolean;
   hasAired?: boolean;
+  // Set when this is the final episode of an Ended show — see
+  // app/(tabs)/index.tsx and app/episode/[id].tsx for how it's derived
+  // (last item of the full episode list once the show itself has ended).
+  isSeriesFinale?: boolean;
   watched: boolean;
   timesWatched?: number;
   time?: string;
@@ -59,6 +63,7 @@ export const EpisodeRow = memo(function EpisodeRow({
   isPremiere,
   isNew,
   hasAired,
+  isSeriesFinale,
   watched,
   timesWatched,
   time,
@@ -166,6 +171,11 @@ export const EpisodeRow = memo(function EpisodeRow({
           {!dimmed && hasAired && (
             <Pill size="sm" uppercase color={colors.badgeAired} textColor="#fff">
               {t.episodeRow.aired}
+            </Pill>
+          )}
+          {!dimmed && isSeriesFinale && (
+            <Pill size="sm" uppercase color={colors.badgeLast} textColor="#fff">
+              {t.episodeRow.last}
             </Pill>
           )}
         </View>

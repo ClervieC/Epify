@@ -134,9 +134,13 @@ export default function ShowDetailScreen() {
   const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(goBack);
 
   const load = useCallback(async () => {
+    // "high" priority — this is a direct interactive tap, so a cache miss
+    // here should jump ahead of whatever background low-priority batch (Watch
+    // List prefetch, Explore's discover resolution) is already queued rather
+    // than wait behind it. Cache hits skip the queue entirely either way.
     const [showData, episodeData, userShows, watchedData] = await Promise.all([
-      getCachedShow(showId, () => getShow(showId)),
-      getCachedEpisodes(showId, () => getShowEpisodes(showId)),
+      getCachedShow(showId, () => getShow(showId, "high")),
+      getCachedEpisodes(showId, () => getShowEpisodes(showId, "high")),
       fetchUserShows(),
       getCachedWatchedEpisodes(showId, () => fetchWatchedEpisodes(showId)),
     ]);
@@ -174,7 +178,7 @@ export default function ShowDetailScreen() {
     // Cast only ever shows on the Info tab (default tab is Episodes), and is
     // never prefetched elsewhere — no reason to make the default view wait
     // on it too.
-    getShowCast(showId)
+    getShowCast(showId, "high")
       .then(setCast)
       .catch(() => {});
 
@@ -356,6 +360,14 @@ export default function ShowDetailScreen() {
     setListPickerOpen(true);
   }
 
+  // Adding to a list resumes a paused/dropped show back to "watching"
+  // server-side (see resumeIfPausedOrDropped in lib/userShows.ts) — mirrored
+  // here so the status pill/menu update immediately instead of only after
+  // the next full reload.
+  function resumeUserShowIfNeeded() {
+    setUserShow((prev) => (prev && (prev.status === "paused" || prev.status === "dropped") ? { ...prev, status: "watching" } : prev));
+  }
+
   async function handleAddToList(listId: string) {
     if (!show) return;
     await addShowToList(listId, {
@@ -363,6 +375,7 @@ export default function ShowDetailScreen() {
       show_name: show.name,
       show_image: show.image?.medium ?? null,
     });
+    resumeUserShowIfNeeded();
     setListPickerOpen(false);
   }
 
@@ -374,6 +387,7 @@ export default function ShowDetailScreen() {
       show_name: show.name,
       show_image: show.image?.medium ?? null,
     });
+    resumeUserShowIfNeeded();
     setNewListName("");
     setListPickerOpen(false);
   }
@@ -419,6 +433,7 @@ export default function ShowDetailScreen() {
             ...toMark.map((e) => ({ tvmaze_episode_id: e.id, season: e.season, number: e.number, times_watched: 1 } as WatchedEpisode)),
           ]);
           await ensureInList();
+          resumeUserShowIfNeeded();
           return;
         }
       }
@@ -436,7 +451,10 @@ export default function ShowDetailScreen() {
         ? prev.filter((w) => w.tvmaze_episode_id !== ep.id)
         : [...prev, { tvmaze_episode_id: ep.id, season: ep.season, number: ep.number, times_watched: 1 } as WatchedEpisode]
     );
-    if (!isWatched) await ensureInList();
+    if (!isWatched) {
+      await ensureInList();
+      resumeUserShowIfNeeded();
+    }
   }
 
   async function rewatchEpisode(ep: TVMazeEpisode) {
@@ -472,6 +490,7 @@ export default function ShowDetailScreen() {
       ),
     ]);
     await ensureInList();
+    resumeUserShowIfNeeded();
   }
 
   async function unmarkSeasonWatched(eps: TVMazeEpisode[]) {

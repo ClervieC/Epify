@@ -407,6 +407,15 @@ type WatchListRow =
 // from.
 const TRACKED_SHOW_FETCH_CONCURRENCY = 10;
 
+// Mirrors app/(tabs)/profile.tsx's own MIN_RELOAD_INTERVAL_MS — the streak
+// recompute below (a paginated full watched_episodes/user_movies scan plus
+// ~6 count queries plus a badge_unlocks sync) used to run unthrottled on
+// every focus of this tab, which meant rapidly flipping between Shows and
+// any other tab fired the whole thing again each time. The cheap local
+// IndexedDB read stays unthrottled below (no network call, instant paint);
+// only the actual Supabase recompute is gated by this.
+const MIN_STREAK_RELOAD_INTERVAL_MS = 15_000;
+
 const HISTORY_PAGE_SIZE = 20;
 // Scrolling within this many pixels of the top triggers loading the next
 // (older) page of history — the natural "pull up for more" gesture instead
@@ -476,28 +485,48 @@ export default function ShowsScreen() {
   const [streakAtRisk, setStreakAtRisk] = useState(false);
   const router = useRouter();
   const announceBadges = useBadgeUnlockToast();
+  const lastStreakComputedAt = useRef(0);
 
   // Lightweight — only reads watched dates, no per-show TVmaze calls (unlike
   // lib/showStats.ts) — fine to compute once per mount rather than folding
   // into loadData() below. Surfaces the streak here (see the pill above the
   // tabs row) so it reads as a small game rather than something buried in
   // Profile, with a tap through to the full streaks/badges page.
-  useEffect(() => {
-    // Local IndexedDB read first — instant, no network round trip (see
-    // lib/streaks.ts) — then a fresh compute reconciles it in the background.
-    loadLocalStreakData().then((local) => {
-      if (local) {
-        setCurrentStreak(local.currentStreak);
-        setStreakAtRisk(local.streakAtRisk);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      // Local IndexedDB read first — instant, no network round trip (see
+      // lib/streaks.ts) — then a fresh compute reconciles it in the background.
+      // Runs on every focus (not just mount) so marking something watched on
+      // another screen — an episode's detail page, a movie — and coming back
+      // here updates the pill immediately instead of only after a full app
+      // restart, since this tab stays mounted across navigation.
+      loadLocalStreakData().then((local) => {
+        if (active && local) {
+          setCurrentStreak(local.currentStreak);
+          setStreakAtRisk(local.streakAtRisk);
+        }
+      });
+      // The actual Supabase recompute is throttled (see
+      // MIN_STREAK_RELOAD_INTERVAL_MS) — without this, rapidly switching back
+      // to this tab re-ran the full watched-episodes scan + count queries +
+      // badge sync every single time.
+      if (Date.now() - lastStreakComputedAt.current >= MIN_STREAK_RELOAD_INTERVAL_MS) {
+        lastStreakComputedAt.current = Date.now();
+        computeStreakData(announceBadges)
+          .then((d) => {
+            if (active) {
+              setCurrentStreak(d.currentStreak);
+              setStreakAtRisk(d.streakAtRisk);
+            }
+          })
+          .catch(() => {});
       }
-    });
-    computeStreakData(announceBadges)
-      .then((d) => {
-        setCurrentStreak(d.currentStreak);
-        setStreakAtRisk(d.streakAtRisk);
-      })
-      .catch(() => {});
-  }, [announceBadges]);
+      return () => {
+        active = false;
+      };
+    }, [announceBadges])
+  );
   // Set right after marking an episode watched (never on unwatch) — opens
   // the quick feeling picker for that specific episode. Tapping outside
   // (Sheet's backdrop) or picking nothing just closes it without saving.

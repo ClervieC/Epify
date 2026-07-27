@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text, TextInput, FlatList, Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { searchProfiles, Profile } from "../../lib/profiles";
-import { followUser, unfollowUser } from "../../lib/follows";
+import { followUser, unfollowUser, fetchFollowingIds } from "../../lib/follows";
+import { getCurrentUserId } from "../../lib/supabase";
 import { UserRow } from "../../components/UserRow";
 import { FollowButton } from "../../components/FollowButton";
 import { EmptyState } from "../../components/EmptyState";
@@ -22,6 +23,18 @@ export default function UserSearchScreen() {
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   let timer: ReturnType<typeof setTimeout>;
+
+  useEffect(() => {
+    let active = true;
+    getCurrentUserId().then(async (myId) => {
+      if (!myId) return;
+      const following = await fetchFollowingIds(myId);
+      if (active) setFollowingIds(new Set(following));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function onChangeText(text: string) {
     setQuery(text);

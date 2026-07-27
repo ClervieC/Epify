@@ -9,4 +9,6 @@ export const FEELING_EMOJIS = [
   { key: "touched", emoji: "🥹" },
   { key: "thrilled", emoji: "🤩" },
   { key: "confused", emoji: "😕" },
+  { key: "pleased", emoji: "😊" },
+  { key: "butterflies", emoji: "🦋" },
 ] as const;

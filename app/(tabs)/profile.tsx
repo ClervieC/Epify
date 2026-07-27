@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Animated,
   View,
@@ -16,10 +23,29 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useMountIn } from "../../lib/animations";
 import * as DocumentPicker from "expo-document-picker";
 import { useAuth } from "../../context/AuthContext";
-import { createList, fetchAllListItems, fetchEpisodeCount, fetchFavoriteEpisodes, fetchFavorites, fetchLists, fetchUserShows, ListItem, ShowList, UserShow, WatchedEpisode } from "../../lib/userShows";
+import {
+  createList,
+  deleteList,
+  fetchAllListItems,
+  fetchEpisodeCount,
+  fetchFavoriteEpisodes,
+  fetchFavorites,
+  fetchLists,
+  fetchUserShows,
+  moveListItemsAndDeleteList,
+  removeShowFromList,
+  ListItem,
+  ShowList,
+  UserShow,
+  WatchedEpisode,
+} from "../../lib/userShows";
 import { getCachedShow } from "../../lib/showDataCache";
 import { getShow } from "../../lib/tvmaze";
-import { fetchUserMovies, fetchFavoriteMovies, UserMovie } from "../../lib/userMovies";
+import {
+  fetchUserMovies,
+  fetchFavoriteMovies,
+  UserMovie,
+} from "../../lib/userMovies";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { fetchMyProfile, uploadAvatar, Profile } from "../../lib/profiles";
@@ -27,13 +53,23 @@ import { fetchFollowCounts } from "../../lib/follows";
 import { fetchOpenReportCount } from "../../lib/reports";
 import { fetchOpenSupportMessageCount } from "../../lib/support";
 import { isRecapAvailable } from "../../lib/recap";
-import { computeStreakData, loadLocalStreakData, StreakData } from "../../lib/streaks";
+import {
+  computeStreakData,
+  loadLocalStreakData,
+  StreakData,
+} from "../../lib/streaks";
 import { useBadgeUnlockToast } from "../../context/BadgeUnlockContext";
-import { loadProfileSnapshot, saveProfileSnapshot } from "../../lib/profileSnapshot";
+import {
+  loadProfileSnapshot,
+  saveProfileSnapshot,
+} from "../../lib/profileSnapshot";
 import { alert } from "../../lib/alert";
 import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
 import { useNotifications } from "../../context/NotificationsContext";
+import { Sheet } from "../../components/Sheet";
+import { loadCollapsedProfileState, saveCollapsedProfileState } from "../../lib/profileSections";
 import { ShowCard } from "../../components/ShowCard";
+import { HorizontalScrollRow } from "../../components/HorizontalScrollRow";
 import { MovieCard } from "../../components/MovieCard";
 import { Avatar } from "../../components/Avatar";
 import { EmptyState } from "../../components/EmptyState";
@@ -74,8 +110,29 @@ export default function ProfileScreen() {
   const [episodeCount, setEpisodeCount] = useState(0);
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState("");
+  // The list currently targeted by the "..." menu (rename/delete) — see
+  // openListMenu/the lists section below, which now renders each custom
+  // list inline (a SectionHeader + horizontal ShowCard row) the same way
+  // Paused/Dropped already do, instead of a single row linking out to
+  // app/list/[id].tsx.
+  const [listMenuTarget, setListMenuTarget] = useState<ShowList | null>(null);
+  // Which custom lists are collapsed (see the lists card below) — a list
+  // starts expanded the first time it's seen; toggling just flips membership
+  // in this set rather than tracking every list's state individually.
+  const [collapsedListIds, setCollapsedListIds] = useState<Set<string>>(
+    new Set(),
+  );
+  // Same idea as collapsedListIds but for the fixed sections (Favorites,
+  // Shows, Movies, Paused, Dropped, ...) — keyed by a static string id per
+  // section rather than a list's own id.
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    new Set(),
+  );
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [followCounts, setFollowCounts] = useState({ followers: 0, following: 0 });
+  const [followCounts, setFollowCounts] = useState({
+    followers: 0,
+    following: 0,
+  });
   const [favoriteEpisodes, setFavoriteEpisodes] = useState<
     (WatchedEpisode & { showName: string; showImage: string | null })[]
   >([]);
@@ -91,12 +148,17 @@ export default function ProfileScreen() {
   // further down than the header's own actual content warranted.
   const { height: windowHeight } = useWindowDimensions();
   const isSmallScreen = windowHeight < 700;
-  const styles = useMemo(() => createStyles(colors, isSmallScreen), [colors, isSmallScreen]);
+  const styles = useMemo(
+    () => createStyles(colors, isSmallScreen),
+    [colors, isSmallScreen],
+  );
   const { t } = useLanguage();
 
   const lastLoadedAt = useRef(0);
   const scrollRef = useRef<ScrollView>(null);
-  useScrollToTopOnTabPress(() => scrollRef.current?.scrollTo({ y: 0, animated: true }));
+  useScrollToTopOnTabPress(() =>
+    scrollRef.current?.scrollTo({ y: 0, animated: true }),
+  );
   // Seeds every list/count from the last on-disk snapshot (see
   // lib/profileSnapshot.ts) so the screen paints instantly on open instead of
   // sitting blank until the nine Supabase round trips below land — mirrors
@@ -119,6 +181,22 @@ export default function ProfileScreen() {
     };
   }, []);
 
+  // Restores which sections/custom lists were collapsed last time — without
+  // this, every one of the toggles added above reset back open on every
+  // fresh mount of this screen (a tab switch away and back, or a cold
+  // start), which felt broken rather than like a saved preference.
+  useEffect(() => {
+    let active = true;
+    loadCollapsedProfileState().then(({ sections, lists }) => {
+      if (!active) return;
+      setCollapsedSections(sections);
+      setCollapsedListIds(lists);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const load = useCallback(() => {
     lastLoadedAt.current = Date.now();
     Promise.all([
@@ -129,22 +207,42 @@ export default function ProfileScreen() {
       fetchLists(),
       fetchAllListItems(),
       fetchEpisodeCount(),
-    ]).then(([shows, movies, favoriteMovies, favorites, lists, listItems, episodeCount]) => {
-      setShows(shows);
-      setMovies(movies);
-      setFavoriteMovies(favoriteMovies);
-      setFavorites(favorites);
-      setLists(lists);
-      setListItems(listItems);
-      setEpisodeCount(episodeCount);
-      saveProfileSnapshot({ shows, movies, favoriteMovies, favorites, lists, listItems, episodeCount });
-    });
+    ]).then(
+      ([
+        shows,
+        movies,
+        favoriteMovies,
+        favorites,
+        lists,
+        listItems,
+        episodeCount,
+      ]) => {
+        setShows(shows);
+        setMovies(movies);
+        setFavoriteMovies(favoriteMovies);
+        setFavorites(favorites);
+        setLists(lists);
+        setListItems(listItems);
+        setEpisodeCount(episodeCount);
+        saveProfileSnapshot({
+          shows,
+          movies,
+          favoriteMovies,
+          favorites,
+          lists,
+          listItems,
+          episodeCount,
+        });
+      },
+    );
     fetchMyProfile().then((p) => {
       setProfile(p);
       if (p) fetchFollowCounts(p.user_id).then(setFollowCounts);
       if (p?.is_admin) {
         Promise.all([fetchOpenReportCount(), fetchOpenSupportMessageCount()])
-          .then(([reports, support]) => setHasAdminAlerts(reports + support > 0))
+          .then(([reports, support]) =>
+            setHasAdminAlerts(reports + support > 0),
+          )
           .catch(() => {});
       }
     });
@@ -154,19 +252,26 @@ export default function ProfileScreen() {
     // by the same on-disk show cache every other screen warms.
     fetchFavoriteEpisodes().then(async (episodes) => {
       const showIds = [...new Set(episodes.map((e) => e.tvmaze_show_id))];
-      const showById = new Map<number, { name: string; image: string | null }>();
+      const showById = new Map<
+        number,
+        { name: string; image: string | null }
+      >();
       await Promise.allSettled(
         showIds.map(async (id) => {
           const show = await getCachedShow(id, () => getShow(id));
-          showById.set(id, { name: show.name, image: show.image?.medium ?? null });
-        })
+          showById.set(id, {
+            name: show.name,
+            image: show.image?.medium ?? null,
+          });
+        }),
       );
       setFavoriteEpisodes(
         episodes.map((e) => ({
           ...e,
-          showName: showById.get(e.tvmaze_show_id)?.name ?? `#${e.tvmaze_show_id}`,
+          showName:
+            showById.get(e.tvmaze_show_id)?.name ?? `#${e.tvmaze_show_id}`,
           showImage: showById.get(e.tvmaze_show_id)?.image ?? null,
-        }))
+        })),
       );
     });
     // Local IndexedDB read first — instant, no network round trip — then a
@@ -177,7 +282,9 @@ export default function ProfileScreen() {
     loadLocalStreakData().then((local) => {
       if (local) setStreakData(local);
     });
-    computeStreakData(announceBadges).then(setStreakData).catch(() => {});
+    computeStreakData(announceBadges)
+      .then(setStreakData)
+      .catch(() => {});
   }, [announceBadges]);
 
   // Stable references so MovieCard's memo() can skip re-rendering unrelated
@@ -189,7 +296,9 @@ export default function ProfileScreen() {
   }, []);
   const handleMovieRewatched = useCallback((updated: UserMovie) => {
     setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
-    setFavoriteMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+    setFavoriteMovies((prev) =>
+      prev.map((m) => (m.id === updated.id ? updated : m)),
+    );
   }, []);
 
   useFocusEffect(
@@ -202,7 +311,7 @@ export default function ProfileScreen() {
       refreshNotifications();
       if (Date.now() - lastLoadedAt.current < MIN_RELOAD_INTERVAL_MS) return;
       load();
-    }, [load, refreshNotifications])
+    }, [load, refreshNotifications]),
   );
 
   async function handleCreateList() {
@@ -213,13 +322,96 @@ export default function ProfileScreen() {
     fetchLists().then(setLists);
   }
 
+  // Optimistic — the card disappears immediately, rolled back with a
+  // re-fetch if the delete actually failed (offline, etc). Only touches
+  // this one list's items, same as app/list/[id].tsx's own removal.
+  function handleRemoveFromList(item: ListItem) {
+    setListItems((prev) => prev.filter((i) => i.id !== item.id));
+    removeShowFromList(item.list_id, item.tvmaze_id).catch(() => {
+      fetchAllListItems().then(setListItems);
+    });
+  }
+
+  function openListMenu(list: ShowList) {
+    setListMenuTarget(list);
+  }
+
+  function toggleListCollapsed(listId: string) {
+    setCollapsedListIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(listId)) next.delete(listId);
+      else next.add(listId);
+      saveCollapsedProfileState(collapsedSections, next);
+      return next;
+    });
+  }
+
+  function toggleSection(key: string) {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveCollapsedProfileState(next, collapsedListIds);
+      return next;
+    });
+  }
+
+  function confirmDeleteEmptyList(list: ShowList) {
+    setListMenuTarget(null);
+    alert(
+      t.listDetail.deleteEmptyTitle(list.name),
+      t.listDetail.deleteEmptyBody,
+      [
+        { text: t.listDetail.cancel, style: "cancel" },
+        {
+          text: t.listDetail.deleteList,
+          style: "destructive",
+          onPress: () =>
+            deleteList(list.id).then(() => {
+              setLists((prev) => prev.filter((l) => l.id !== list.id));
+            }),
+        },
+      ],
+    );
+  }
+
+  function deleteListAnyway(list: ShowList) {
+    setListMenuTarget(null);
+    alert(t.listDetail.deleteEmptyTitle(list.name), undefined, [
+      { text: t.listDetail.cancel, style: "cancel" },
+      {
+        text: t.listDetail.deleteList,
+        style: "destructive",
+        onPress: () =>
+          deleteList(list.id).then(() => {
+            setLists((prev) => prev.filter((l) => l.id !== list.id));
+            setListItems((prev) => prev.filter((i) => i.list_id !== list.id));
+          }),
+      },
+    ]);
+  }
+
+  function moveListAndDelete(fromList: ShowList, toListId: string) {
+    setListMenuTarget(null);
+    moveListItemsAndDeleteList(fromList.id, toListId).then(() => {
+      setLists((prev) => prev.filter((l) => l.id !== fromList.id));
+      fetchAllListItems().then(setListItems);
+    });
+  }
+
   async function handleChangeAvatar() {
-    const result = await DocumentPicker.getDocumentAsync({ type: "image/*", copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "image/*",
+      copyToCacheDirectory: true,
+    });
     if (result.canceled) return;
     const asset = result.assets[0];
     setUploadingAvatar(true);
     try {
-      const avatarUrl = await uploadAvatar(asset.uri, asset.mimeType ?? "image/jpeg");
+      const avatarUrl = await uploadAvatar(
+        asset.uri,
+        asset.mimeType ?? "image/jpeg",
+      );
       setProfile((prev) => (prev ? { ...prev, avatar_url: avatarUrl } : prev));
     } catch {
       alert(t.profile.changePhoto, t.profile.changePhotoFailed);
@@ -228,330 +420,664 @@ export default function ProfileScreen() {
     }
   }
 
-  const pausedShows = useMemo(() => shows.filter((s) => s.status === "paused"), [shows]);
-  const droppedShows = useMemo(() => shows.filter((s) => s.status === "dropped"), [shows]);
+  const pausedShows = useMemo(
+    () => shows.filter((s) => s.status === "paused"),
+    [shows],
+  );
+  const droppedShows = useMemo(
+    () => shows.filter((s) => s.status === "dropped"),
+    [shows],
+  );
 
   const email = session?.user.email ?? "";
   const displayName = profile?.username ?? email.split("@")[0] ?? "Moi";
   const tvTime = formatTvTime(episodeCount * AVG_EPISODE_MINUTES);
-  const movieWatchCount = useMemo(() => movies.reduce((sum, m) => sum + m.times_watched, 0), [movies]);
+  const movieWatchCount = useMemo(
+    () => movies.reduce((sum, m) => sum + m.times_watched, 0),
+    [movies],
+  );
   const movieTime = formatTvTime(movieWatchCount * AVG_MOVIE_MINUTES);
 
   const headerIn = useMountIn();
 
   return (
-    <ScrollView ref={scrollRef} style={styles.container} showsVerticalScrollIndicator={false}>
-      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
-      <Animated.View style={[styles.header, { opacity: headerIn.opacity, transform: headerIn.transform }]}>
-        <Pressable onPress={handleChangeAvatar} disabled={uploadingAvatar} accessibilityRole="button" accessibilityLabel={t.profile.changePhoto}>
-          <Avatar name={displayName} imageUri={profile?.avatar_url} size={isSmallScreen ? "sm" : "md"} />
-          <View style={styles.avatarEditBadge}>
-            {uploadingAvatar ? (
-              <ActivityIndicator size="small" color={colors.onAccent} />
-            ) : (
-              <Ionicons name="camera" size={isSmallScreen ? 11 : 13} color={colors.onAccent} />
+    <View style={{ flex: 1 }}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
+        <LinearGradient
+          colors={[colors.headerGlow, "transparent"]}
+          style={styles.headerGlow}
+        />
+        <Animated.View
+          style={[
+            styles.header,
+            { opacity: headerIn.opacity, transform: headerIn.transform },
+          ]}
+        >
+          <Pressable
+            onPress={handleChangeAvatar}
+            disabled={uploadingAvatar}
+            accessibilityRole="button"
+            accessibilityLabel={t.profile.changePhoto}
+          >
+            <Avatar
+              name={displayName}
+              imageUri={profile?.avatar_url}
+              size={isSmallScreen ? "sm" : "md"}
+            />
+            <View style={styles.avatarEditBadge}>
+              {uploadingAvatar ? (
+                <ActivityIndicator size="small" color={colors.onAccent} />
+              ) : (
+                <Ionicons
+                  name="camera"
+                  size={isSmallScreen ? 11 : 13}
+                  color={colors.onAccent}
+                />
+              )}
+            </View>
+          </Pressable>
+          <View style={styles.headerInfo}>
+            <Text style={styles.username}>{displayName}</Text>
+            {!!email && (
+              <Text style={styles.userEmail} numberOfLines={1}>
+                {email}
+              </Text>
             )}
           </View>
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.username}>{displayName}</Text>
-          {!!email && (
-            <Text style={styles.userEmail} numberOfLines={1}>
-              {email}
-            </Text>
-          )}
-        </View>
-        <Pressable
-          style={styles.bellBtn}
-          onPress={() => router.push("/notifications")}
-          accessibilityRole="button"
-          accessibilityLabel={t.social.notifications}
-        >
-          <Ionicons name="notifications-outline" size={isSmallScreen ? 18 : 20} color={colors.text} />
-          {unreadCount > 0 && <View style={styles.bellBadge} />}
-        </Pressable>
-        <Pressable
-          style={styles.bellBtn}
-          onPress={() => router.push("/settings")}
-          accessibilityRole="button"
-          accessibilityLabel={t.profile.settings}
-        >
-          <Ionicons name="settings-outline" size={isSmallScreen ? 18 : 20} color={colors.text} />
-          {hasAdminAlerts && <View style={styles.bellBadge} />}
-        </Pressable>
-      </Animated.View>
-
-      {profile && (
-        <View style={styles.followRow}>
           <Pressable
-            style={styles.followStat}
-            onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "followers" } })}
+            style={styles.bellBtn}
+            onPress={() => router.push("/notifications")}
+            accessibilityRole="button"
+            accessibilityLabel={t.social.notifications}
           >
-            <Text style={styles.followNumber}>{followCounts.followers}</Text>
-            <Text style={styles.followLabel}>{t.profile.followers}</Text>
+            <Ionicons
+              name="notifications-outline"
+              size={isSmallScreen ? 18 : 20}
+              color={colors.text}
+            />
+            {unreadCount > 0 && <View style={styles.bellBadge} />}
           </Pressable>
           <Pressable
-            style={[styles.followStat, styles.followStatBorder]}
-            onPress={() => router.push({ pathname: "/connections/[id]", params: { id: profile.user_id, type: "following" } })}
+            style={styles.bellBtn}
+            onPress={() => router.push("/settings")}
+            accessibilityRole="button"
+            accessibilityLabel={t.profile.settings}
           >
-            <Text style={styles.followNumber}>{followCounts.following}</Text>
-            <Text style={styles.followLabel}>{t.profile.following}</Text>
+            <Ionicons
+              name="settings-outline"
+              size={isSmallScreen ? 18 : 20}
+              color={colors.text}
+            />
+            {hasAdminAlerts && <View style={styles.bellBadge} />}
           </Pressable>
-        </View>
-      )}
+        </Animated.View>
 
-      <Pressable style={styles.importRow} onPress={() => router.push("/users/search")}>
-        <Ionicons name="people-outline" size={20} color={colors.text} />
-        <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.social.findPeople}</Text>
-        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-      </Pressable>
-
-      {isRecapAvailable() && (
-        <Pressable style={styles.recapBanner} onPress={() => router.push("/recap")}>
-          <View style={styles.recapBannerIcon}>
-            <Ionicons name="sparkles" size={20} color={colors.onAccent} />
+        {profile && (
+          <View style={styles.followRow}>
+            <Pressable
+              style={styles.followStat}
+              onPress={() =>
+                router.push({
+                  pathname: "/connections/[id]",
+                  params: { id: profile.user_id, type: "followers" },
+                })
+              }
+            >
+              <Text style={styles.followNumber}>{followCounts.followers}</Text>
+              <Text style={styles.followLabel}>{t.profile.followers}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.followStat, styles.followStatBorder]}
+              onPress={() =>
+                router.push({
+                  pathname: "/connections/[id]",
+                  params: { id: profile.user_id, type: "following" },
+                })
+              }
+            >
+              <Text style={styles.followNumber}>{followCounts.following}</Text>
+              <Text style={styles.followLabel}>{t.profile.following}</Text>
+            </Pressable>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.recapBannerTitle}>{t.profile.recapTitle(new Date().getFullYear())}</Text>
-            <Text style={styles.recapBannerSubtitle}>{t.profile.recapSubtitle}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.onAccent} />
-        </Pressable>
-      )}
+        )}
 
-      {streakData && (
         <Pressable
-          style={[styles.streakBanner, streakData.streakAtRisk && styles.streakBannerAtRisk]}
-          onPress={() => router.push("/streaks")}
+          style={styles.importRow}
+          onPress={() => router.push("/users/search")}
         >
-          <View style={[styles.streakBannerIcon, streakData.streakAtRisk && styles.streakBannerIconAtRisk]}>
-            <Ionicons name="flame" size={20} color={streakData.streakAtRisk ? colors.red : "#ff9f43"} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.streakBannerTitle}>{t.profile.streaksTitle}</Text>
-            <Text style={[styles.streakBannerSubtitle, streakData.streakAtRisk && styles.streakBannerSubtitleAtRisk]}>
-              {streakData.streakAtRisk
-                ? t.profile.streakBannerAtRisk(streakData.currentStreak)
-                : streakData.currentStreak > 0
-                  ? t.profile.streakBannerActive(streakData.currentStreak)
-                  : t.profile.streakBannerInactive}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={streakData.streakAtRisk ? colors.red : colors.textFaint} />
+          <Ionicons name="people-outline" size={20} color={colors.text} />
+          <Text style={[styles.importRowTitle, { flex: 1 }]}>
+            {t.social.findPeople}
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
         </Pressable>
-      )}
 
-      <SectionHeader title={t.profile.statistics} styles={styles} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsRow}>
-        <StatCard
-          icon="time-outline"
-          color={colors.blue}
-          label={t.profile.watchTime}
-          value={`${tvTime.months}${t.profile.months[0]} ${tvTime.days}${t.profile.days[0]} ${tvTime.hours}${t.profile.hours[0]}`}
-          colors={colors}
-          styles={styles}
-          onPress={() => router.push("/stats/shows")}
-        />
-        <StatCard
-          icon="checkmark-circle-outline"
-          color={colors.green}
-          label={t.profile.episodesWatched}
-          value={episodeCount.toLocaleString()}
-          colors={colors}
-          styles={styles}
-          onPress={() => router.push("/stats/shows")}
-        />
-        <StatCard
-          icon="time-outline"
-          color={colors.red}
-          label={t.profile.movieWatchTime}
-          value={`${movieTime.months}${t.profile.months[0]} ${movieTime.days}${t.profile.days[0]} ${movieTime.hours}${t.profile.hours[0]}`}
-          colors={colors}
-          styles={styles}
-          onPress={() => router.push("/stats/shows?tab=movies")}
-        />
-        <StatCard
-          icon="checkmark-circle-outline"
-          color={colors.yellow}
-          label={t.profile.moviesWatched}
-          value={movies.length.toLocaleString()}
-          colors={colors}
-          styles={styles}
-          onPress={() => router.push("/stats/shows?tab=movies")}
-        />
-      </ScrollView>
-
-      <SectionHeader title={t.profile.favorites} count={favorites.length} styles={styles} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
-        {favorites.length === 0 ? (
-          <Text style={styles.empty}>{t.profile.noFavorites}</Text>
-        ) : (
-          favorites.map((s) => (
-            <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />
-          ))
-        )}
-      </ScrollView>
-
-      {favoriteEpisodes.length > 0 && (
-        <>
-          <SectionHeader title={t.profile.favoriteEpisodes} count={favoriteEpisodes.length} styles={styles} />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
-            {favoriteEpisodes.map((e) => (
-              <ShowCard
-                key={e.id}
-                id={e.tvmaze_episode_id}
-                name={e.showName}
-                imageUrl={e.showImage}
-                subtitle={`S${String(e.season).padStart(2, "0")}E${String(e.number).padStart(2, "0")}`}
-                onPress={() =>
-                  router.push({
-                    pathname: "/episode/[id]",
-                    params: { id: String(e.tvmaze_episode_id), showId: String(e.tvmaze_show_id) },
-                  })
-                }
-              />
-            ))}
-          </ScrollView>
-        </>
-      )}
-
-      <SectionHeader title={t.profile.shows} count={shows.length} styles={styles} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
-        {shows.length === 0 ? (
-          <Text style={styles.empty}>{t.profile.noShows}</Text>
-        ) : (
-          shows.map((s) => (
-            <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />
-          ))
-        )}
-      </ScrollView>
-
-      <SectionHeader title={t.profile.favoriteMovies} count={favoriteMovies.length} styles={styles} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
-        {favoriteMovies.length === 0 ? (
-          <Text style={styles.empty}>{t.profile.noFavoriteMovies}</Text>
-        ) : (
-          favoriteMovies.map((m) => (
-            <View key={m.id} style={styles.movieCardWrap}>
-              <MovieCard
-                id={m.id}
-                title={m.title}
-                year={m.year}
-                posterPath={m.poster_path}
-                watchedAt={m.watched_at ?? m.created_at}
-                timesWatched={m.times_watched}
-                onUnwatched={handleMovieUnwatched}
-                onRewatched={handleMovieRewatched}
-              />
-            </View>
-          ))
-        )}
-      </ScrollView>
-
-      <SectionHeader title={t.profile.movies} count={movies.length} styles={styles} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
-        {movies.length === 0 ? (
-          <Text style={styles.empty}>{t.profile.noMovies}</Text>
-        ) : (
-          movies
-            .slice(0, 20)
-            .map((m) => (
-              <View key={m.id} style={styles.movieCardWrap}>
-                <MovieCard
-                  id={m.id}
-                  title={m.title}
-                  year={m.year}
-                  posterPath={m.poster_path}
-                  watchedAt={m.watched_at ?? m.created_at}
-                  timesWatched={m.times_watched}
-                  onUnwatched={handleMovieUnwatched}
-                  onRewatched={handleMovieRewatched}
-                />
-              </View>
-            ))
-        )}
-      </ScrollView>
-
-      <SectionHeader title={t.profile.lists} count={lists.length} styles={styles} />
-      {lists.map((list) => {
-        const items = listItems.filter((i) => i.list_id === list.id);
-        return (
+        {isRecapAvailable() && (
           <Pressable
-            key={list.id}
-            style={styles.listRow}
-            onPress={() => router.push({ pathname: "/list/[id]", params: { id: list.id } })}
+            style={styles.recapBanner}
+            onPress={() => router.push("/recap")}
           >
-            <View style={styles.listRowThumb}>
-              <Ionicons name="list-outline" size={20} color={colors.textMuted} />
+            <View style={styles.recapBannerIcon}>
+              <Ionicons name="sparkles" size={20} color={colors.onAccent} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.listRowName}>{list.name}</Text>
-              <Text style={styles.listRowCount}>{t.profile.seriesCount(items.length)}</Text>
+              <Text style={styles.recapBannerTitle}>
+                {t.profile.recapTitle(new Date().getFullYear())}
+              </Text>
+              <Text style={styles.recapBannerSubtitle}>
+                {t.profile.recapSubtitle}
+              </Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={colors.onAccent}
+            />
           </Pressable>
-        );
-      })}
+        )}
 
-      {creatingList ? (
-        <View style={styles.newListRow}>
-          <TextInput
-            style={styles.newListInput}
-            placeholder={t.profile.newListPlaceholder}
-            placeholderTextColor={colors.textFaint}
-            value={newListName}
-            onChangeText={setNewListName}
-            autoFocus
+        {streakData && (
+          <Pressable
+            style={[
+              styles.streakBanner,
+              streakData.streakAtRisk && styles.streakBannerAtRisk,
+            ]}
+            onPress={() => router.push("/streaks")}
+          >
+            <View
+              style={[
+                styles.streakBannerIcon,
+                streakData.streakAtRisk && styles.streakBannerIconAtRisk,
+              ]}
+            >
+              <Ionicons
+                name="flame"
+                size={20}
+                color={streakData.streakAtRisk ? colors.red : "#ff9f43"}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.streakBannerTitle}>
+                {t.profile.streaksTitle}
+              </Text>
+              <Text
+                style={[
+                  styles.streakBannerSubtitle,
+                  streakData.streakAtRisk && styles.streakBannerSubtitleAtRisk,
+                ]}
+              >
+                {streakData.streakAtRisk
+                  ? t.profile.streakBannerAtRisk(streakData.currentStreak)
+                  : streakData.currentStreak > 0
+                    ? t.profile.streakBannerActive(streakData.currentStreak)
+                    : t.profile.streakBannerInactive}
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={streakData.streakAtRisk ? colors.red : colors.textFaint}
+            />
+          </Pressable>
+        )}
+
+        <SectionHeader title={t.profile.statistics} styles={styles} />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.statsRow}
+        >
+          <StatCard
+            icon="time-outline"
+            color={colors.blue}
+            label={t.profile.watchTime}
+            value={`${tvTime.months}${t.profile.months[0]} ${tvTime.days}${t.profile.days[0]} ${tvTime.hours}${t.profile.hours[0]}`}
+            colors={colors}
+            styles={styles}
+            onPress={() => router.push("/stats/shows")}
           />
-          <Pressable style={styles.newListBtn} onPress={handleCreateList}>
-            <Ionicons name="checkmark" size={20} color={colors.onAccent} />
-          </Pressable>
+          <StatCard
+            icon="checkmark-circle-outline"
+            color={colors.green}
+            label={t.profile.episodesWatched}
+            value={episodeCount.toLocaleString()}
+            colors={colors}
+            styles={styles}
+            onPress={() => router.push("/stats/shows")}
+          />
+          <StatCard
+            icon="time-outline"
+            color={colors.red}
+            label={t.profile.movieWatchTime}
+            value={`${movieTime.months}${t.profile.months[0]} ${movieTime.days}${t.profile.days[0]} ${movieTime.hours}${t.profile.hours[0]}`}
+            colors={colors}
+            styles={styles}
+            onPress={() => router.push("/stats/shows?tab=movies")}
+          />
+          <StatCard
+            icon="checkmark-circle-outline"
+            color={colors.yellow}
+            label={t.profile.moviesWatched}
+            value={movies.length.toLocaleString()}
+            colors={colors}
+            styles={styles}
+            onPress={() => router.push("/stats/shows?tab=movies")}
+          />
+        </ScrollView>
+
+        <SectionHeader
+          title={t.profile.favorites}
+          count={favorites.length}
+          collapsed={collapsedSections.has("favorites")}
+          onToggle={() => toggleSection("favorites")}
+          colors={colors}
+          styles={styles}
+        />
+        {!collapsedSections.has("favorites") && (
+          <HorizontalScrollRow contentContainerStyle={styles.showsRow}>
+            {favorites.length === 0 ? (
+              <Text style={styles.empty}>{t.profile.noFavorites}</Text>
+            ) : (
+              favorites.map((s) => (
+                <ShowCard
+                  key={s.id}
+                  id={s.tvmaze_id}
+                  name={s.show_name}
+                  imageUrl={s.show_image}
+                />
+              ))
+            )}
+          </HorizontalScrollRow>
+        )}
+
+        {favoriteEpisodes.length > 0 && (
+          <>
+            <SectionHeader
+              title={t.profile.favoriteEpisodes}
+              count={favoriteEpisodes.length}
+              collapsed={collapsedSections.has("favoriteEpisodes")}
+              onToggle={() => toggleSection("favoriteEpisodes")}
+              colors={colors}
+              styles={styles}
+            />
+            {!collapsedSections.has("favoriteEpisodes") && (
+              <HorizontalScrollRow contentContainerStyle={styles.showsRow}>
+                {favoriteEpisodes.map((e) => (
+                  <ShowCard
+                    key={e.id}
+                    id={e.tvmaze_episode_id}
+                    name={e.showName}
+                    imageUrl={e.showImage}
+                    subtitle={`S${String(e.season).padStart(2, "0")}E${String(e.number).padStart(2, "0")}`}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/episode/[id]",
+                        params: {
+                          id: String(e.tvmaze_episode_id),
+                          showId: String(e.tvmaze_show_id),
+                        },
+                      })
+                    }
+                  />
+                ))}
+              </HorizontalScrollRow>
+            )}
+          </>
+        )}
+
+        <SectionHeader
+          title={t.profile.shows}
+          count={shows.length}
+          collapsed={collapsedSections.has("shows")}
+          onToggle={() => toggleSection("shows")}
+          colors={colors}
+          styles={styles}
+        />
+        {!collapsedSections.has("shows") && (
+          <HorizontalScrollRow contentContainerStyle={styles.showsRow}>
+            {shows.length === 0 ? (
+              <Text style={styles.empty}>{t.profile.noShows}</Text>
+            ) : (
+              shows.map((s) => (
+                <ShowCard
+                  key={s.id}
+                  id={s.tvmaze_id}
+                  name={s.show_name}
+                  imageUrl={s.show_image}
+                />
+              ))
+            )}
+          </HorizontalScrollRow>
+        )}
+
+        <SectionHeader
+          title={t.profile.favoriteMovies}
+          count={favoriteMovies.length}
+          collapsed={collapsedSections.has("favoriteMovies")}
+          onToggle={() => toggleSection("favoriteMovies")}
+          colors={colors}
+          styles={styles}
+        />
+        {!collapsedSections.has("favoriteMovies") && (
+          <HorizontalScrollRow contentContainerStyle={styles.showsRow}>
+            {favoriteMovies.length === 0 ? (
+              <Text style={styles.empty}>{t.profile.noFavoriteMovies}</Text>
+            ) : (
+              favoriteMovies.map((m) => (
+                <View key={m.id} style={styles.movieCardWrap}>
+                  <MovieCard
+                    id={m.id}
+                    title={m.title}
+                    year={m.year}
+                    posterPath={m.poster_path}
+                    watchedAt={m.watched_at ?? m.created_at}
+                    timesWatched={m.times_watched}
+                    onUnwatched={handleMovieUnwatched}
+                    onRewatched={handleMovieRewatched}
+                  />
+                </View>
+              ))
+            )}
+          </HorizontalScrollRow>
+        )}
+
+        <SectionHeader
+          title={t.profile.movies}
+          count={movies.length}
+          collapsed={collapsedSections.has("movies")}
+          onToggle={() => toggleSection("movies")}
+          colors={colors}
+          styles={styles}
+        />
+        {!collapsedSections.has("movies") && (
+          <HorizontalScrollRow contentContainerStyle={styles.showsRow}>
+            {movies.length === 0 ? (
+              <Text style={styles.empty}>{t.profile.noMovies}</Text>
+            ) : (
+              movies.slice(0, 20).map((m) => (
+                <View key={m.id} style={styles.movieCardWrap}>
+                  <MovieCard
+                    id={m.id}
+                    title={m.title}
+                    year={m.year}
+                    posterPath={m.poster_path}
+                    watchedAt={m.watched_at ?? m.created_at}
+                    timesWatched={m.times_watched}
+                    onUnwatched={handleMovieUnwatched}
+                    onRewatched={handleMovieRewatched}
+                  />
+                </View>
+              ))
+            )}
+          </HorizontalScrollRow>
+        )}
+
+        <SectionHeader
+          title={t.profile.paused}
+          count={pausedShows.length}
+          collapsed={collapsedSections.has("paused")}
+          onToggle={() => toggleSection("paused")}
+          colors={colors}
+          styles={styles}
+        />
+        {!collapsedSections.has("paused") && (
+          <HorizontalScrollRow contentContainerStyle={styles.showsRow}>
+            {pausedShows.length === 0 ? (
+              <Text style={styles.empty}>{t.profile.noPaused}</Text>
+            ) : (
+              pausedShows.map((s) => (
+                <ShowCard
+                  key={s.id}
+                  id={s.tvmaze_id}
+                  name={s.show_name}
+                  imageUrl={s.show_image}
+                />
+              ))
+            )}
+          </HorizontalScrollRow>
+        )}
+
+        <SectionHeader
+          title={t.profile.dropped}
+          count={droppedShows.length}
+          collapsed={collapsedSections.has("dropped")}
+          onToggle={() => toggleSection("dropped")}
+          colors={colors}
+          styles={styles}
+        />
+        {!collapsedSections.has("dropped") && (
+          <HorizontalScrollRow contentContainerStyle={styles.showsRow}>
+            {droppedShows.length === 0 ? (
+              <Text style={styles.empty}>{t.profile.noDropped}</Text>
+            ) : (
+              droppedShows.map((s) => (
+                <ShowCard
+                  key={s.id}
+                  id={s.tvmaze_id}
+                  name={s.show_name}
+                  imageUrl={s.show_image}
+                />
+              ))
+            )}
+          </HorizontalScrollRow>
+        )}
+
+        <View style={styles.listsCard}>
+          <View style={styles.listsCardHeader}>
+            <View style={styles.listsCardHeaderLeft}>
+              <Ionicons name="albums" size={18} color={colors.accent} />
+              <Text style={styles.listsCardTitle}>{t.profile.lists}</Text>
+              {lists.length > 0 && (
+                <View style={styles.sectionCountPill}>
+                  <Text style={styles.sectionCountText}>{lists.length}</Text>
+                </View>
+              )}
+            </View>
+            <Pressable
+              onPress={() => setCreatingList(true)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={t.profile.createList}
+            >
+              <Ionicons name="add-circle" size={24} color={colors.accent} />
+            </Pressable>
+          </View>
+
+          {creatingList && (
+            <View style={styles.newListRow}>
+              <TextInput
+                style={styles.newListInput}
+                placeholder={t.profile.newListPlaceholder}
+                placeholderTextColor={colors.textFaint}
+                value={newListName}
+                onChangeText={setNewListName}
+                autoFocus
+              />
+              <Pressable style={styles.newListBtn} onPress={handleCreateList}>
+                <Ionicons name="checkmark" size={20} color={colors.onAccent} />
+              </Pressable>
+            </View>
+          )}
+
+          {lists.length === 0
+            ? !creatingList && (
+                <Text style={styles.listsCardEmpty}>{t.profile.noLists}</Text>
+              )
+            : lists.map((list) => {
+                const items = listItems.filter((i) => i.list_id === list.id);
+                const collapsed = collapsedListIds.has(list.id);
+                return (
+                  <View key={list.id} style={styles.listsCardItem}>
+                    <Pressable
+                      style={styles.listsCardItemHeader}
+                      onPress={() => toggleListCollapsed(list.id)}
+                    >
+                      <Ionicons
+                        name={collapsed ? "chevron-forward" : "chevron-down"}
+                        size={14}
+                        color={colors.textFaint}
+                      />
+                      <Text style={styles.listsCardItemName} numberOfLines={1}>
+                        {list.name}
+                      </Text>
+                      <Text style={styles.listsCardItemCount}>
+                        {t.profile.seriesCount(items.length)}
+                      </Text>
+                      <Pressable
+                        onPress={() => openListMenu(list)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel={t.listDetail.deleteList}
+                      >
+                        <Ionicons
+                          name="ellipsis-horizontal"
+                          size={16}
+                          color={colors.textFaint}
+                        />
+                      </Pressable>
+                    </Pressable>
+                    {!collapsed && (
+                      <HorizontalScrollRow contentContainerStyle={styles.listsCardRow}>
+                        {items.length === 0 ? (
+                          <Text style={styles.empty}>{t.listDetail.empty}</Text>
+                        ) : (
+                          items.map((i) => (
+                            <ShowCard
+                              key={i.id}
+                              id={i.tvmaze_id}
+                              name={i.show_name}
+                              imageUrl={i.show_image}
+                              onRemove={() => handleRemoveFromList(i)}
+                            />
+                          ))
+                        )}
+                      </HorizontalScrollRow>
+                    )}
+                  </View>
+                );
+              })}
         </View>
-      ) : (
-        <Pressable style={styles.createList} onPress={() => setCreatingList(true)}>
-          <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
-          <Text style={styles.createListText}>{t.profile.createList}</Text>
-        </Pressable>
-      )}
-
-      <SectionHeader title={t.profile.paused} count={pausedShows.length} styles={styles} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
-        {pausedShows.length === 0 ? (
-          <Text style={styles.empty}>{t.profile.noPaused}</Text>
-        ) : (
-          pausedShows.map((s) => (
-            <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />
-          ))
-        )}
       </ScrollView>
 
-      <SectionHeader title={t.profile.dropped} count={droppedShows.length} styles={styles} />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
-        {droppedShows.length === 0 ? (
-          <Text style={styles.empty}>{t.profile.noDropped}</Text>
-        ) : (
-          droppedShows.map((s) => (
-            <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />
-          ))
-        )}
-      </ScrollView>
-
-    </ScrollView>
+      <Sheet visible={!!listMenuTarget} onClose={() => setListMenuTarget(null)}>
+        {listMenuTarget &&
+          (() => {
+            const target = listMenuTarget;
+            const items = listItems.filter((i) => i.list_id === target.id);
+            const otherLists = lists.filter((l) => l.id !== target.id);
+            if (items.length === 0) {
+              return (
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => confirmDeleteEmptyList(target)}
+                >
+                  <Ionicons name="trash-outline" size={20} color={colors.red} />
+                  <Text style={[styles.menuItemText, { color: colors.red }]}>
+                    {t.listDetail.deleteList}
+                  </Text>
+                </Pressable>
+              );
+            }
+            return (
+              <>
+                <Text style={styles.menuSheetTitle}>
+                  {t.listDetail.deleteNonEmptyTitle(target.name, items.length)}
+                </Text>
+                <Text style={styles.menuSheetSubtitle}>
+                  {t.listDetail.deleteNonEmptyBody}
+                </Text>
+                {otherLists.length > 0 ? (
+                  <>
+                    <Text style={styles.menuSectionLabel}>
+                      {t.listDetail.moveTo}
+                    </Text>
+                    {otherLists.map((l) => (
+                      <Pressable
+                        key={l.id}
+                        style={styles.menuItem}
+                        onPress={() => moveListAndDelete(target, l.id)}
+                      >
+                        <Ionicons
+                          name="list-outline"
+                          size={20}
+                          color={colors.text}
+                        />
+                        <Text style={styles.menuItemText}>{l.name}</Text>
+                      </Pressable>
+                    ))}
+                  </>
+                ) : (
+                  <Text style={styles.menuSheetSubtitle}>
+                    {t.listDetail.noOtherLists}
+                  </Text>
+                )}
+                <Pressable
+                  style={styles.menuItem}
+                  onPress={() => deleteListAnyway(target)}
+                >
+                  <Ionicons name="trash-outline" size={20} color={colors.red} />
+                  <Text style={[styles.menuItemText, { color: colors.red }]}>
+                    {t.listDetail.deleteAnyway}
+                  </Text>
+                </Pressable>
+              </>
+            );
+          })()}
+      </Sheet>
+    </View>
   );
 }
 
 type ProfileStyles = ReturnType<typeof createStyles>;
 
-function SectionHeader({ title, count, styles }: { title: string; count?: number; styles: ProfileStyles }) {
-  return (
-    <View style={styles.sectionHeader}>
+function SectionHeader({
+  title,
+  count,
+  action,
+  collapsed,
+  onToggle,
+  colors,
+  styles,
+}: {
+  title: string;
+  count?: number;
+  // Escape hatch for the one section that needs its own control next to the
+  // title/count (a custom list's "..." menu — see the lists section below);
+  // every other section header is just a label + count.
+  action?: ReactNode;
+  // When set, the whole header becomes pressable and shows a chevron — every
+  // one of Profile's horizontal rows (Favorites, Shows, Movies, Paused,
+  // Dropped, ...) is collapsible now, not just custom lists.
+  collapsed?: boolean;
+  onToggle?: () => void;
+  colors?: Colors;
+  styles: ProfileStyles;
+}) {
+  const content = (
+    <>
+      {onToggle && (
+        <Ionicons name={collapsed ? "chevron-forward" : "chevron-down"} size={14} color={colors?.textFaint} />
+      )}
       <Text style={styles.sectionTitle}>{title}</Text>
       {count !== undefined && count > 0 && (
         <View style={styles.sectionCountPill}>
           <Text style={styles.sectionCountText}>{count}</Text>
         </View>
       )}
-    </View>
+      {action && <View style={styles.sectionHeaderAction}>{action}</View>}
+    </>
+  );
+
+  if (!onToggle) return <View style={styles.sectionHeader}>{content}</View>;
+
+  return (
+    <Pressable style={styles.sectionHeader} onPress={onToggle}>
+      {content}
+    </Pressable>
   );
 }
 
@@ -583,256 +1109,385 @@ function StatCard({
       </View>
       <Text style={styles.statCardLabel}>{label}</Text>
       <Text style={styles.statCardValue}>{value}</Text>
-      {onPress && <Ionicons name="chevron-forward" size={14} color={colors.textFaint} style={styles.statCardChevron} />}
+      {onPress && (
+        <Ionicons
+          name="chevron-forward"
+          size={14}
+          color={colors.textFaint}
+          style={styles.statCardChevron}
+        />
+      )}
     </Wrapper>
   );
 }
 
 function createStyles(colors: Colors, isSmallScreen: boolean) {
   return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  headerGlow: { position: "absolute", top: 0, left: 0, right: 0, height: 160, pointerEvents: "none" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: isSmallScreen ? 10 : 14,
-    padding: isSmallScreen ? 12 : 16,
-    paddingTop: isSmallScreen ? 16 : 24,
-  },
-  headerInfo: { flex: 1 },
-  avatarEditBadge: {
-    position: "absolute",
-    bottom: -2,
-    right: -2,
-    width: isSmallScreen ? 18 : 22,
-    height: isSmallScreen ? 18 : 22,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: colors.background,
-  },
-  username: { fontSize: isSmallScreen ? 17 : 20, fontWeight: "800", color: colors.text },
-  userEmail: { fontSize: isSmallScreen ? 12 : 13, color: colors.textMuted, marginTop: 2 },
-  bellBtn: {
-    width: isSmallScreen ? 32 : 36,
-    height: isSmallScreen ? 32 : 36,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  bellBadge: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.red,
-  },
-  adminBadge: {
-    position: "absolute",
-    top: -2,
-    right: -2,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.red,
-    borderWidth: 1.5,
-    borderColor: colors.surface,
-  },
-  adminCountPill: {
-    backgroundColor: colors.red,
-    borderRadius: radius.pill,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    marginRight: 4,
-  },
-  adminCountPillText: { color: "#ffffff", fontSize: 11, fontWeight: "800" },
-  followRow: {
-    flexDirection: "row",
-    marginHorizontal: 16,
-    marginTop: 4,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  followStat: { flex: 1, alignItems: "center" },
-  followStatBorder: { borderLeftWidth: 1, borderLeftColor: colors.border },
-  followNumber: { fontSize: type.title, fontWeight: "800", color: colors.text },
-  followLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 24,
-    paddingBottom: 12,
-  },
-  sectionTitle: { fontSize: type.subtitle, fontWeight: "800", color: colors.text },
-  sectionCountPill: {
-    backgroundColor: colors.pillBg,
-    borderRadius: radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  sectionCountText: { fontSize: type.micro, fontWeight: "800", color: colors.textMuted },
-  recapBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginHorizontal: 16,
-    marginTop: 20,
-    padding: 14,
-    borderRadius: radius.lg,
-    backgroundColor: colors.accent,
-  },
-  recapBannerIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.pill,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  recapBannerTitle: { color: colors.onAccent, fontWeight: "800", fontSize: 14 },
-  recapBannerSubtitle: { color: colors.onAccent, opacity: 0.85, fontSize: 12, marginTop: 2 },
-  streakBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 14,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  streakBannerIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  streakBannerTitle: { color: colors.text, fontWeight: "800", fontSize: 14 },
-  streakBannerSubtitle: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-  streakBannerAtRisk: { borderColor: colors.red, backgroundColor: `${colors.red}11` },
-  streakBannerIconAtRisk: { backgroundColor: `${colors.red}22` },
-  streakBannerSubtitleAtRisk: { color: colors.red, fontWeight: "700" },
-  statsRow: { paddingHorizontal: 16, gap: 10 },
-  statCard: {
-    width: 140,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: 12,
-  },
-  statCardChevron: { position: "absolute", top: 12, right: 12 },
-  statCardIcon: {
-    width: 26,
-    height: 26,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  statCardLabel: { fontSize: 12, color: colors.textMuted, marginTop: 8 },
-  statCardValue: { fontSize: type.title, fontWeight: "800", color: colors.text, marginTop: 2 },
-  listRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  listRowThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.sm,
-    backgroundColor: colors.backgroundAlt,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  listRowName: { fontWeight: "700", fontSize: 14, color: colors.text },
-  listRowCount: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
-  newListRow: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 16, marginTop: 12 },
-  newListInput: {
-    flex: 1,
-    backgroundColor: colors.backgroundAlt,
-    borderRadius: radius.sm,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: colors.text,
-    fontSize: 14,
-  },
-  newListBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modalSubmitBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.sm,
-    padding: 14,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  modalSubmitBtnText: { color: colors.onAccent, fontWeight: "700", fontSize: 15 },
-  createList: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginHorizontal: 16,
-    marginTop: 12,
-    paddingVertical: 12,
-  },
-  createListText: { fontWeight: "700", fontSize: 14, color: colors.accent },
-  showsRow: { paddingHorizontal: 16, paddingBottom: 24 },
-  // MovieCard is built for equal-width grid columns (flex:1) — wrapping it in
-  // a fixed-width box here gives it the same kind of bounded parent a grid
-  // column would, so it renders correctly inside this horizontal scroll.
-  movieCardWrap: { width: 110, marginRight: 12 },
-  empty: { color: colors.textMuted },
-  importRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  importRowTitle: { fontWeight: "700", fontSize: 14, color: colors.text },
-  importRowSubtitle: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
-  importProgress: { marginHorizontal: 16, marginTop: 10 },
-  importProgressText: { fontSize: 12, fontWeight: "700", color: colors.text },
-  importProgressLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  settingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  languageSwitch: {
-    flexDirection: "row",
-    backgroundColor: colors.pillBg,
-    borderRadius: radius.sm,
-    padding: 3,
-    gap: 2,
-  },
-  signOut: { alignItems: "center", paddingVertical: 24 },
-  signOutText: { color: colors.red, fontWeight: "600" },
+    container: { flex: 1, backgroundColor: colors.background },
+    headerGlow: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 160,
+      pointerEvents: "none",
+    },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: isSmallScreen ? 10 : 14,
+      padding: isSmallScreen ? 12 : 16,
+      paddingTop: isSmallScreen ? 16 : 24,
+    },
+    headerInfo: { flex: 1 },
+    avatarEditBadge: {
+      position: "absolute",
+      bottom: -2,
+      right: -2,
+      width: isSmallScreen ? 18 : 22,
+      height: isSmallScreen ? 18 : 22,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accent,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 2,
+      borderColor: colors.background,
+    },
+    username: {
+      fontSize: isSmallScreen ? 17 : 20,
+      fontWeight: "800",
+      color: colors.text,
+    },
+    userEmail: {
+      fontSize: isSmallScreen ? 12 : 13,
+      color: colors.textMuted,
+      marginTop: 2,
+    },
+    bellBtn: {
+      width: isSmallScreen ? 32 : 36,
+      height: isSmallScreen ? 32 : 36,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    bellBadge: {
+      position: "absolute",
+      top: 8,
+      right: 8,
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: colors.red,
+    },
+    adminBadge: {
+      position: "absolute",
+      top: -2,
+      right: -2,
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: colors.red,
+      borderWidth: 1.5,
+      borderColor: colors.surface,
+    },
+    adminCountPill: {
+      backgroundColor: colors.red,
+      borderRadius: radius.pill,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      marginRight: 4,
+    },
+    adminCountPillText: { color: "#ffffff", fontSize: 11, fontWeight: "800" },
+    followRow: {
+      flexDirection: "row",
+      marginHorizontal: 16,
+      marginTop: 4,
+      paddingBottom: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    followStat: { flex: 1, alignItems: "center" },
+    followStatBorder: { borderLeftWidth: 1, borderLeftColor: colors.border },
+    followNumber: {
+      fontSize: type.title,
+      fontWeight: "800",
+      color: colors.text,
+    },
+    followLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+    sectionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingTop: 24,
+      paddingBottom: 12,
+    },
+    sectionTitle: {
+      fontSize: type.subtitle,
+      fontWeight: "800",
+      color: colors.text,
+    },
+    sectionCountPill: {
+      backgroundColor: colors.pillBg,
+      borderRadius: radius.pill,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+    },
+    sectionCountText: {
+      fontSize: type.micro,
+      fontWeight: "800",
+      color: colors.textMuted,
+    },
+    sectionHeaderAction: { marginLeft: "auto" },
+    recapBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginHorizontal: 16,
+      marginTop: 20,
+      padding: 14,
+      borderRadius: radius.lg,
+      backgroundColor: colors.accent,
+    },
+    recapBannerIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: radius.pill,
+      backgroundColor: "rgba(255,255,255,0.2)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    recapBannerTitle: {
+      color: colors.onAccent,
+      fontWeight: "800",
+      fontSize: 14,
+    },
+    recapBannerSubtitle: {
+      color: colors.onAccent,
+      opacity: 0.85,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    streakBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginHorizontal: 16,
+      marginTop: 12,
+      padding: 14,
+      borderRadius: radius.lg,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    streakBannerIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accentSoft,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    streakBannerTitle: { color: colors.text, fontWeight: "800", fontSize: 14 },
+    streakBannerSubtitle: {
+      color: colors.textMuted,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    streakBannerAtRisk: {
+      borderColor: colors.red,
+      backgroundColor: `${colors.red}11`,
+    },
+    streakBannerIconAtRisk: { backgroundColor: `${colors.red}22` },
+    streakBannerSubtitleAtRisk: { color: colors.red, fontWeight: "700" },
+    statsRow: { paddingHorizontal: 16, gap: 10 },
+    statCard: {
+      width: 140,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      padding: 12,
+    },
+    statCardChevron: { position: "absolute", top: 12, right: 12 },
+    statCardIcon: {
+      width: 26,
+      height: 26,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accentSoft,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    statCardLabel: { fontSize: 12, color: colors.textMuted, marginTop: 8 },
+    statCardValue: {
+      fontSize: type.title,
+      fontWeight: "800",
+      color: colors.text,
+      marginTop: 2,
+    },
+    // A bordered, accent-tinted card wrapping every custom list together —
+    // previously these were plain SectionHeader rows sandwiched between Movies
+    // and Paused, indistinguishable from the built-in status sections and easy
+    // to miss scrolling past. Grouping them in their own card (like the
+    // recap/streak banners above) gives them a visual identity of their own.
+    listsCard: {
+      marginHorizontal: 16,
+      marginTop: 24,
+      marginBottom: 24,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: `${colors.accent}40`,
+      backgroundColor: `${colors.accent}0d`,
+      padding: 14,
+      gap: 10,
+    },
+    listsCardHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    listsCardHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
+    listsCardTitle: {
+      fontSize: type.subtitle,
+      fontWeight: "800",
+      color: colors.text,
+    },
+    listsCardEmpty: { fontSize: 13, color: colors.textMuted, lineHeight: 19 },
+    listsCardItem: { gap: 6 },
+    listsCardItemHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+    listsCardItemName: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: colors.text,
+      flexShrink: 1,
+    },
+    listsCardItemCount: {
+      fontSize: 12,
+      color: colors.textMuted,
+      marginLeft: "auto",
+    },
+    // Nested inside listsCard's own 14px padding, unlike the page-level
+    // showsRow (16px) every other section's horizontal row uses — stacking
+    // both would double up the inset on a card that's already narrower than
+    // the full-width sections above/below it.
+    listsCardRow: { paddingBottom: 4 },
+    menuItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 12,
+    },
+    menuItemText: {
+      fontSize: type.body,
+      fontWeight: "600",
+      color: colors.text,
+    },
+    menuSheetTitle: {
+      fontSize: type.body,
+      fontWeight: "800",
+      color: colors.text,
+      marginBottom: 4,
+    },
+    menuSheetSubtitle: {
+      fontSize: type.bodySm,
+      color: colors.textMuted,
+      marginBottom: 8,
+      lineHeight: 19,
+    },
+    menuSectionLabel: {
+      fontSize: type.caption,
+      fontWeight: "800",
+      color: colors.textFaint,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginTop: 4,
+      marginBottom: 2,
+    },
+    newListRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginHorizontal: 16,
+      marginTop: 12,
+    },
+    newListInput: {
+      flex: 1,
+      backgroundColor: colors.backgroundAlt,
+      borderRadius: radius.sm,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      color: colors.text,
+      fontSize: 14,
+    },
+    newListBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: radius.sm,
+      backgroundColor: colors.accent,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    modalSubmitBtn: {
+      backgroundColor: colors.accent,
+      borderRadius: radius.sm,
+      padding: 14,
+      alignItems: "center",
+      marginTop: 4,
+    },
+    modalSubmitBtnText: {
+      color: colors.onAccent,
+      fontWeight: "700",
+      fontSize: 15,
+    },
+    createList: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginHorizontal: 16,
+      marginTop: 12,
+      paddingVertical: 12,
+    },
+    createListText: { fontWeight: "700", fontSize: 14, color: colors.accent },
+    showsRow: { paddingHorizontal: 16, paddingBottom: 24 },
+    // MovieCard is built for equal-width grid columns (flex:1) — wrapping it in
+    // a fixed-width box here gives it the same kind of bounded parent a grid
+    // column would, so it renders correctly inside this horizontal scroll.
+    movieCardWrap: { width: 110, marginRight: 12 },
+    empty: { color: colors.textMuted },
+    importRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginHorizontal: 16,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    importRowTitle: { fontWeight: "700", fontSize: 14, color: colors.text },
+    importRowSubtitle: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
+    importProgress: { marginHorizontal: 16, marginTop: 10 },
+    importProgressText: { fontSize: 12, fontWeight: "700", color: colors.text },
+    importProgressLabel: {
+      fontSize: 12,
+      color: colors.textMuted,
+      marginTop: 2,
+    },
+    settingRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginHorizontal: 16,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    languageSwitch: {
+      flexDirection: "row",
+      backgroundColor: colors.pillBg,
+      borderRadius: radius.sm,
+      padding: 3,
+      gap: 2,
+    },
+    signOut: { alignItems: "center", paddingVertical: 24 },
+    signOutText: { color: colors.red, fontWeight: "600" },
   });
 }

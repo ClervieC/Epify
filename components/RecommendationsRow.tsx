@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
+import { HorizontalScrollRow } from "./HorizontalScrollRow";
 
 export interface RecommendationItem {
   key: number;
@@ -24,7 +25,7 @@ export function RecommendationsRow({ items }: { items: RecommendationItem[] }) {
   return (
     <View>
       <Text style={styles.sectionHeader}>{t.common.youMightAlsoLike}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <HorizontalScrollRow>
         {items.map((item) => (
           <Pressable key={item.key} style={styles.card} onPress={item.onPress}>
             {item.posterUrl ? (
@@ -37,7 +38,7 @@ export function RecommendationsRow({ items }: { items: RecommendationItem[] }) {
             </Text>
           </Pressable>
         ))}
-      </ScrollView>
+      </HorizontalScrollRow>
     </View>
   );
 }

@@ -3,6 +3,30 @@ import { invalidateWatchedEpisodes } from "./showDataCache";
 
 export type ShowStatus = "watching" | "want_to_watch" | "watched" | "dropped" | "paused";
 
+// Marking a new episode watched, or adding a show to a custom list, means
+// the user is actively engaging with it again — leaving its status stuck on
+// "Paused"/"Dropped" while that happens reads as a bug (the show never
+// reappears in Watch Next, stays hidden in Profile's paused/dropped rows).
+// A single scoped UPDATE (not a read-then-write) — the WHERE clause itself
+// makes this a no-op for a show that's already watching/want_to_watch/fully
+// watched, or not tracked at all. Best-effort: never throws, since this is a
+// side effect of the real action (mark watched / add to list), not the
+// action itself.
+async function resumeIfPausedOrDropped(tvmazeId: number) {
+  const userId = await getCurrentUserId();
+  if (!userId) return;
+  try {
+    await supabase
+      .from("user_shows")
+      .update({ status: "watching" })
+      .eq("user_id", userId)
+      .eq("tvmaze_id", tvmazeId)
+      .in("status", ["paused", "dropped"]);
+  } catch {
+    // Best-effort — see comment above.
+  }
+}
+
 export interface UserShow {
   id: string;
   user_id: string;
@@ -195,6 +219,66 @@ export async function addShowToList(
     { onConflict: "list_id,tvmaze_id" }
   );
   if (error) throw error;
+  await resumeIfPausedOrDropped(show.tvmaze_id);
+}
+
+// Removes one show from one custom list only — leaves the show's own
+// tracked status (user_shows) untouched. Was missing entirely: app/list/[id].tsx
+// had no way to take an item back out of a list once added.
+export async function removeShowFromList(listId: string, tvmazeId: number) {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("list_items")
+    .delete()
+    .eq("list_id", listId)
+    .eq("tvmaze_id", tvmazeId)
+    .eq("user_id", userId);
+  if (error) throw error;
+}
+
+// Deletes a custom list and everything in it. Callers are expected to have
+// already confirmed with the user — app/list/[id].tsx checks emptiness (or
+// offers moveListItemsAndDeleteList below) before calling this directly.
+export async function deleteList(listId: string) {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const { error: itemsError } = await supabase
+    .from("list_items")
+    .delete()
+    .eq("list_id", listId)
+    .eq("user_id", userId);
+  if (itemsError) throw itemsError;
+
+  const { error } = await supabase.from("lists").delete().eq("id", listId).eq("user_id", userId);
+  if (error) throw error;
+}
+
+// Copies every item of a non-empty list into another list (skipping any
+// already present there, via onConflict ignore) then deletes the source
+// list — the "move the shows somewhere else first" path when deleting a
+// custom list that isn't empty (see app/list/[id].tsx).
+export async function moveListItemsAndDeleteList(fromListId: string, toListId: string) {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const items = await fetchListItems(fromListId);
+  if (items.length > 0) {
+    const { error } = await supabase.from("list_items").upsert(
+      items.map((i) => ({
+        list_id: toListId,
+        user_id: userId,
+        tvmaze_id: i.tvmaze_id,
+        show_name: i.show_name,
+        show_image: i.show_image,
+      })),
+      { onConflict: "list_id,tvmaze_id", ignoreDuplicates: true }
+    );
+    if (error) throw error;
+  }
+  await deleteList(fromListId);
 }
 
 export interface WatchedEpisode {
@@ -292,6 +376,7 @@ export async function setEpisodeWatched(params: {
     .single();
   if (error) throw error;
   invalidateWatchedEpisodes(params.tvmaze_show_id);
+  await resumeIfPausedOrDropped(params.tvmaze_show_id);
   return data as WatchedEpisode;
 }
 
@@ -316,6 +401,7 @@ export async function setEpisodesWatched(
   );
   if (error) throw error;
   invalidateWatchedEpisodes(showId);
+  await resumeIfPausedOrDropped(showId);
 }
 
 export async function setEpisodesUnwatched(showId: number, episodeIds: number[]) {

@@ -43,7 +43,7 @@ import {
   UserShow,
   WatchedEpisode,
 } from "../../lib/userShows";
-import { useColors, radius, type, Colors } from "../../lib/theme";
+import { useColors, radius, type, dropShadow, Colors } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useAddToListPrompt } from "../../context/AddToListPromptContext";
 import {
@@ -51,6 +51,7 @@ import {
   useMountIn,
   useSwipeDownToDismiss,
   useSwipeHorizontal,
+  NATIVE_DRIVER,
 } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { CommentsSection } from "../../components/CommentsSection";
@@ -72,6 +73,7 @@ import {
   CharacterVoteTally,
 } from "../../lib/characterVotes";
 import { FEELING_EMOJIS } from "../../lib/feelings";
+import { Pill } from "../../components/Pill";
 
 const MAX_DOTS = 5;
 const SIDEBAR_WIDTH = 340;
@@ -104,6 +106,14 @@ export default function EpisodeDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [reporting, setReporting] = useState(false);
   const [userShow, setUserShow] = useState<UserShow | null>(null);
+  // Shown once after marking the very last episode of an Ended show as
+  // watched (see toggleWatched below) — a small congratulatory banner,
+  // separate from the global badge-unlock toast (context/BadgeUnlockContext)
+  // since this is specific to this one episode/show rather than a
+  // cross-screen milestone.
+  const [finaleToastVisible, setFinaleToastVisible] = useState(false);
+  const finaleToastY = useRef(new Animated.Value(-80)).current;
+  const finaleToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, spoilerMode } = useLanguage();
@@ -136,9 +146,16 @@ export default function EpisodeDetailScreen() {
       // them turned every episode open into a fresh cold TVmaze round trip on
       // top of data we already had. Let those two populate whenever they're
       // ready instead of blocking first paint on them.
+      // "high" priority on every cache-miss fetcher here — this is a direct
+      // interactive tap (opening an episode), so it should jump ahead of
+      // whatever background low-priority batch (Watch List prefetch,
+      // Explore's discover resolution) is already queued instead of sitting
+      // behind it. A cache hit (the common case for a tracked show, already
+      // warmed by the Watch List's own background load) skips the queue
+      // entirely either way.
       Promise.all([
         showIdNum
-          ? getCachedEpisodes(showIdNum, () => getShowEpisodes(showIdNum))
+          ? getCachedEpisodes(showIdNum, () => getShowEpisodes(showIdNum, "high"))
           : Promise.resolve([]),
         showIdNum
           ? getCachedWatchedEpisodes(showIdNum, () =>
@@ -157,10 +174,10 @@ export default function EpisodeDetailScreen() {
       });
 
       if (showIdNum) {
-        getCachedShow(showIdNum, () => getShow(showIdNum)).then(
+        getCachedShow(showIdNum, () => getShow(showIdNum, "high")).then(
           (sh) => active && setShow(sh),
         );
-        getShowCast(showIdNum)
+        getShowCast(showIdNum, "high")
           .then((c) => active && setCast(c))
           .catch(() => {});
         fetchUserShows()
@@ -193,6 +210,12 @@ export default function EpisodeDetailScreen() {
     setCurrentIndex(Math.max(0, Math.min(episodes.length - 1, i)));
   }
 
+  useEffect(() => {
+    return () => {
+      if (finaleToastTimer.current) clearTimeout(finaleToastTimer.current);
+    };
+  }, []);
+
   // Desktop web only (see isDesktopWeb below) — left/right arrow keys move
   // between episodes the same way the on-screen prev/next buttons do.
   useEffect(() => {
@@ -222,6 +245,26 @@ export default function EpisodeDetailScreen() {
     setUserShow(result);
   }
 
+  // True only once the show itself has ended (still-running shows can
+  // always get more episodes later, so "last episode fetched so far" would
+  // be a false positive) and this is the last episode in that final list.
+  function isSeriesFinale(episode: TVMazeEpisode) {
+    if (show?.status !== "Ended" || episodes.length === 0) return false;
+    return episode.id === episodes[episodes.length - 1].id;
+  }
+
+  function showFinaleToast() {
+    if (finaleToastTimer.current) clearTimeout(finaleToastTimer.current);
+    setFinaleToastVisible(true);
+    finaleToastY.setValue(-80);
+    Animated.spring(finaleToastY, { toValue: 0, useNativeDriver: NATIVE_DRIVER, speed: 14, bounciness: 8 }).start();
+    finaleToastTimer.current = setTimeout(() => {
+      Animated.timing(finaleToastY, { toValue: -80, duration: 220, useNativeDriver: NATIVE_DRIVER }).start(() =>
+        setFinaleToastVisible(false)
+      );
+    }, 3200);
+  }
+
   async function toggleWatched(episode: TVMazeEpisode) {
     const isWatched = !!watchedMap[episode.id];
     const result = await setEpisodeWatched({
@@ -232,7 +275,17 @@ export default function EpisodeDetailScreen() {
       watched: !isWatched,
     });
     setWatchedMap((prev) => ({ ...prev, [episode.id]: result }));
-    if (!isWatched) await ensureInList();
+    if (!isWatched) {
+      await ensureInList();
+      // Resumes a paused/dropped show back to "watching" server-side (see
+      // resumeIfPausedOrDropped in lib/userShows.ts) — mirrored in local
+      // state so a status-dependent UI here wouldn't show stale paused/
+      // dropped state until the next full reload.
+      setUserShow((prev) =>
+        prev && (prev.status === "paused" || prev.status === "dropped") ? { ...prev, status: "watching" } : prev
+      );
+      if (isSeriesFinale(episode)) showFinaleToast();
+    }
   }
 
   async function rewatchEpisode(episode: TVMazeEpisode) {
@@ -395,6 +448,7 @@ export default function EpisodeDetailScreen() {
               watched={watchedMap[currentEpisode.id] ?? null}
               remaining={remaining}
               spoilerMode={spoilerMode}
+              isSeriesFinale={isSeriesFinale(currentEpisode)}
               sideInset={SIDE_NAV_INSET}
               onToggleWatched={() => toggleWatched(currentEpisode)}
               onRewatch={() => rewatchEpisode(currentEpisode)}
@@ -426,6 +480,9 @@ export default function EpisodeDetailScreen() {
             targetTvmazeEpisodeId: currentEpisode.id,
           }}
         />
+        {finaleToastVisible && show && (
+          <FinaleToast showName={show.name} translateY={finaleToastY} t={t} colors={colors} styles={styles} />
+        )}
       </View>
     );
   }
@@ -496,6 +553,7 @@ export default function EpisodeDetailScreen() {
         watched={watchedMap[currentEpisode.id] ?? null}
         remaining={remaining}
         spoilerMode={spoilerMode}
+        isSeriesFinale={isSeriesFinale(currentEpisode)}
         onToggleWatched={() => toggleWatched(currentEpisode)}
         onRewatch={() => rewatchEpisode(currentEpisode)}
         onUndoRewatch={() => undoRewatchEpisode(currentEpisode)}
@@ -517,11 +575,49 @@ export default function EpisodeDetailScreen() {
           targetTvmazeEpisodeId: currentEpisode.id,
         }}
       />
+      {finaleToastVisible && show && (
+        <FinaleToast showName={show.name} translateY={finaleToastY} t={t} colors={colors} styles={styles} />
+      )}
     </View>
   );
 }
 
 type EpisodeStyles = ReturnType<typeof createStyles>;
+
+// Small congratulatory banner slid in from the top when the episode just
+// marked watched (see toggleWatched/showFinaleToast above) turns out to be
+// the last one of an Ended show — same slide-in/fade-out shape as the
+// global badge-unlock toast (context/BadgeUnlockContext.tsx), but scoped to
+// this screen since it's about this one show, not a cross-screen milestone.
+function FinaleToast({
+  showName,
+  translateY,
+  t,
+  colors,
+  styles,
+}: {
+  showName: string;
+  translateY: Animated.Value;
+  t: Translations;
+  colors: Colors;
+  styles: EpisodeStyles;
+}) {
+  return (
+    <Animated.View style={[styles.finaleToast, { transform: [{ translateY }] }]} pointerEvents="none">
+      <View style={styles.finaleToastCard}>
+        <View style={styles.finaleToastIconWrap}>
+          <Ionicons name="ribbon" size={20} color={colors.badgeLast} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.finaleToastTitle}>{t.episodeDetail.finaleToastTitle}</Text>
+          <Text style={styles.finaleToastBody} numberOfLines={2}>
+            {t.episodeDetail.finaleToastBody(showName)}
+          </Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+}
 
 type SidebarRow =
   | { type: "header"; season: number }
@@ -643,6 +739,7 @@ function EpisodePage({
   watched,
   remaining,
   spoilerMode,
+  isSeriesFinale,
   sideInset,
   onToggleWatched,
   onRewatch,
@@ -663,6 +760,7 @@ function EpisodePage({
   watched: WatchedEpisode | null;
   remaining: number | null;
   spoilerMode: boolean;
+  isSeriesFinale?: boolean;
   sideInset?: number;
   onToggleWatched: () => void;
   onRewatch: () => void;
@@ -859,10 +957,17 @@ function EpisodePage({
             style={[styles.heroGradient, { pointerEvents: "none" }]}
           />
           <View style={styles.heroBottom}>
-            <Text style={styles.code}>
-              S{String(episode.season).padStart(2, "0")} · E
-              {String(episode.number).padStart(2, "0")}
-            </Text>
+            <View style={styles.heroCodeRow}>
+              <Text style={styles.code}>
+                S{String(episode.season).padStart(2, "0")} · E
+                {String(episode.number).padStart(2, "0")}
+              </Text>
+              {isSeriesFinale && (
+                <Pill size="sm" uppercase color={colors.badgeLast} textColor="#fff">
+                  {t.episodeRow.last}
+                </Pill>
+              )}
+            </View>
             <Text style={styles.title}>{episode.name}</Text>
           </View>
         </Reanimated.View>
@@ -1249,6 +1354,37 @@ function createStyles(colors: Colors) {
       height: 110,
     },
     heroBottom: { position: "absolute", left: 20, right: 20, bottom: 40 },
+    heroCodeRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    finaleToast: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      paddingTop: 50,
+      paddingHorizontal: 16,
+      zIndex: 1000,
+    },
+    finaleToastCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.lg,
+      padding: 12,
+      ...dropShadow({ opacity: 0.2, radius: 16, offsetY: 6, elevation: 8 }),
+    },
+    finaleToastIconWrap: {
+      width: 40,
+      height: 40,
+      borderRadius: radius.pill,
+      backgroundColor: `${colors.badgeLast}22`,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    finaleToastTitle: { fontSize: type.body, fontWeight: "800", color: colors.text },
+    finaleToastBody: { fontSize: type.caption, color: colors.textMuted, marginTop: 1 },
     sheet: {
       backgroundColor: colors.background,
       borderTopLeftRadius: radius.lg,

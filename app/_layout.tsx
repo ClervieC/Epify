@@ -90,7 +90,6 @@ function RootNavigation() {
         <Stack.Screen name="show/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="show/tmdb/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="episode/[id]" options={{ headerShown: false, presentation: "modal" }} />
-        <Stack.Screen name="list/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="users/search" options={{ headerShown: false }} />
         <Stack.Screen name="users/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="connections/[id]" options={{ headerShown: false }} />
