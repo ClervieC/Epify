@@ -741,8 +741,88 @@ create policy "Admins update support messages"
   using (exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin))
   with check (exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin));
 
+-- Lets lib/support.ts's sendSupportReply flip a resolved ticket's own status
+-- back to 'open' when the user follows up on it — without this, only the
+-- "Admins update" policy above could touch this table at all, so that
+-- reopen-on-reply silently updated zero rows for every non-admin user.
+create policy "Users reopen their own support messages"
+  on public.support_messages
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 create index if not exists support_messages_status_idx on public.support_messages (status, created_at desc);
 create index if not exists support_messages_user_idx on public.support_messages (user_id);
+
+-- ============================================================
+-- Support message replies — turns support_messages from a one-shot "send a
+-- message, get a single resolution_note back" dead end into a real threaded
+-- conversation. support_messages.body stays the ticket's original message;
+-- every reply after that, from either the user or an admin, is a row here.
+-- resolution_note/resolved_by/resolved_at stay on support_messages purely as
+-- the "marked resolved" audit trail — the actual back-and-forth lives here.
+-- Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.support_message_replies (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references public.support_messages (id) on delete cascade,
+  author_id uuid not null references auth.users (id) on delete cascade,
+  is_admin boolean not null default false,
+  body text not null check (char_length(trim(body)) between 1 and 2000),
+  created_at timestamptz not null default now()
+);
+
+alter table public.support_message_replies enable row level security;
+
+create policy "Users view replies on their own tickets"
+  on public.support_message_replies
+  for select
+  using (
+    exists (
+      select 1 from public.support_messages m
+      where m.id = message_id and m.user_id = auth.uid()
+    )
+  );
+
+create policy "Users reply to their own tickets"
+  on public.support_message_replies
+  for insert
+  with check (
+    auth.uid() = author_id
+    and is_admin = false
+    and exists (
+      select 1 from public.support_messages m
+      where m.id = message_id and m.user_id = auth.uid()
+    )
+  );
+
+create policy "Admins view all replies"
+  on public.support_message_replies
+  for select
+  using (exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin));
+
+create policy "Admins reply to any ticket"
+  on public.support_message_replies
+  for insert
+  with check (
+    auth.uid() = author_id
+    and is_admin = true
+    and exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin)
+  );
+
+create index if not exists support_message_replies_message_idx on public.support_message_replies (message_id, created_at);
+
+-- ============================================================
+-- Support "read" tracking — lets the admin console clear a conversation's
+-- "needs reply" badge the moment an admin actually opens it (see
+-- app/admin/support/[userId].tsx), independent of whether they've sent a
+-- reply yet. Without this, needsResponse could only ever go by whether the
+-- last message was an admin's own, which meant simply reading a message
+-- without answering right away left the badge on forever (or, worse, gave
+-- no way to acknowledge "I've seen this" at all). Purely additive — safe to
+-- run once.
+-- ============================================================
+alter table public.support_messages add column if not exists admin_read_at timestamptz;
 
 -- ============================================================
 -- Badge unlocks — records the moment (device time, on whichever

@@ -51,7 +51,7 @@ import { useLanguage } from "../../lib/i18n";
 import { fetchMyProfile, uploadAvatar, Profile } from "../../lib/profiles";
 import { fetchFollowCounts } from "../../lib/follows";
 import { fetchOpenReportCount } from "../../lib/reports";
-import { fetchOpenSupportMessageCount } from "../../lib/support";
+import { fetchSupportNeedsResponseCount } from "../../lib/support";
 import { isRecapAvailable } from "../../lib/recap";
 import {
   computeStreakData,
@@ -239,7 +239,7 @@ export default function ProfileScreen() {
       setProfile(p);
       if (p) fetchFollowCounts(p.user_id).then(setFollowCounts);
       if (p?.is_admin) {
-        Promise.all([fetchOpenReportCount(), fetchOpenSupportMessageCount()])
+        Promise.all([fetchOpenReportCount(), fetchSupportNeedsResponseCount()])
           .then(([reports, support]) =>
             setHasAdminAlerts(reports + support > 0),
           )

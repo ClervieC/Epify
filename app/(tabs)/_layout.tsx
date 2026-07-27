@@ -9,7 +9,7 @@ import { useNotifications } from "../../context/NotificationsContext";
 import { useActivityUnseen } from "../../context/ActivityContext";
 import { fetchMyProfile } from "../../lib/profiles";
 import { fetchOpenReportCount } from "../../lib/reports";
-import { fetchOpenSupportMessageCount } from "../../lib/support";
+import { fetchSupportNeedsResponseCount } from "../../lib/support";
 
 interface TabBarProps {
   state: { routes: { key: string; name: string }[]; index: number };
@@ -107,7 +107,7 @@ export default function TabsLayout() {
         setHasAdminAlerts(false);
         return;
       }
-      Promise.all([fetchOpenReportCount(), fetchOpenSupportMessageCount()])
+      Promise.all([fetchOpenReportCount(), fetchSupportNeedsResponseCount()])
         .then(([reports, support]) => setHasAdminAlerts(reports > 0 || support > 0))
         .catch(() => {});
     });

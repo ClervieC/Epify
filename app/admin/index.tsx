@@ -1,32 +1,16 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextInput } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
-import { fetchMyProfile, fetchAllProfilesForAdmin, setUserBanned, Profile } from "../../lib/profiles";
+import { fetchMyProfile, fetchAllProfilesForAdmin, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
 import { fetchReports, resolveReport, dismissReport, Report, ReportStatus, ReportTargetType } from "../../lib/reports";
-import { fetchSupportMessagesForAdmin, resolveSupportMessage, SupportMessage, SupportStatus } from "../../lib/support";
+import { fetchSupportConversationsForAdmin, SupportConversation } from "../../lib/support";
 import { useLanguage } from "../../lib/i18n";
+import { shortDate } from "../../lib/dates";
 import { alert } from "../../lib/alert";
 import { useGoBack } from "../../lib/useGoBack";
-
-// Deliberately not using lib/theme.ts's useColors()/light-dark palette — an
-// admin moderation console reads content other users flagged as abusive or
-// broken; keeping it visually distinct (dark, fixed, slightly clinical)
-// from the rest of the app is the point, so there's never a moment of
-// confusing it for a normal in-app screen, on either light or dark system
-// theme.
-const C = {
-  bg: "#0a0c10",
-  surface: "#14171d",
-  border: "#262b34",
-  text: "#e8eaed",
-  textMuted: "#8b92a0",
-  accent: "#4d8cff",
-  red: "#ff5c5c",
-  green: "#3ecf8e",
-  yellow: "#e0a400",
-};
+import { C } from "../../lib/adminTheme";
 
 const STATUS_TABS: ReportStatus[] = ["open", "resolved", "dismissed"];
 
@@ -37,6 +21,15 @@ const TARGET_ICON: Record<ReportTargetType, keyof typeof Ionicons.glyphMap> = {
   show: "tv-outline",
   episode: "film-outline",
   movie: "videocam-outline",
+};
+
+const TARGET_COLOR: Record<ReportTargetType, string> = {
+  user: C.red,
+  comment: C.accent,
+  movie_comment: C.accent,
+  show: C.yellow,
+  episode: C.yellow,
+  movie: C.yellow,
 };
 
 export default function AdminScreen() {
@@ -52,9 +45,8 @@ export default function AdminScreen() {
   const [users, setUsers] = useState<Profile[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [userQuery, setUserQuery] = useState("");
-  const [supportStatus, setSupportStatus] = useState<SupportStatus>("open");
-  const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
-  const [supportLoading, setSupportLoading] = useState(false);
+  const [conversations, setConversations] = useState<SupportConversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
 
   // Gated server-side too (see the "Admins view/update all reports" RLS
   // policies in supabase/schema.sql) — this client-side check is purely so
@@ -81,11 +73,11 @@ export default function AdminScreen() {
       .finally(() => setUsersLoading(false));
   }, []);
 
-  const loadSupport = useCallback((s: SupportStatus) => {
-    setSupportLoading(true);
-    fetchSupportMessagesForAdmin(s)
-      .then(setSupportMessages)
-      .finally(() => setSupportLoading(false));
+  const loadConversations = useCallback(() => {
+    setConversationsLoading(true);
+    fetchSupportConversationsForAdmin()
+      .then(setConversations)
+      .finally(() => setConversationsLoading(false));
   }, []);
 
   useFocusEffect(
@@ -103,8 +95,8 @@ export default function AdminScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (authorized && view === "support") loadSupport(supportStatus);
-    }, [authorized, view, supportStatus, loadSupport])
+      if (authorized && view === "support") loadConversations();
+    }, [authorized, view, loadConversations])
   );
 
   if (authorized === null) {
@@ -130,36 +122,34 @@ export default function AdminScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Pressable
-          onPress={goBack}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-        >
+        <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={22} color={C.text} />
         </Pressable>
         <Text style={styles.headerTitle}>{t.admin.title}</Text>
         <View style={{ width: 22 }} />
       </View>
 
-      <View style={styles.tabs}>
-        <Pressable style={[styles.tab, view === "reports" && styles.tabActive]} onPress={() => setView("reports")}>
-          <Text style={[styles.tabText, view === "reports" && styles.tabTextActive]}>{t.admin.reportsTab}</Text>
-        </Pressable>
-        <Pressable style={[styles.tab, view === "users" && styles.tabActive]} onPress={() => setView("users")}>
-          <Text style={[styles.tabText, view === "users" && styles.tabTextActive]}>{t.admin.usersTab}</Text>
-        </Pressable>
-        <Pressable style={[styles.tab, view === "support" && styles.tabActive]} onPress={() => setView("support")}>
-          <Text style={[styles.tabText, view === "support" && styles.tabTextActive]}>{t.admin.supportTab}</Text>
-        </Pressable>
+      <View style={styles.segmented}>
+        {(
+          [
+            ["reports", t.admin.reportsTab, "flag-outline"],
+            ["users", t.admin.usersTab, "people-outline"],
+            ["support", t.admin.supportTab, "chatbubbles-outline"],
+          ] as const
+        ).map(([key, label, icon]) => (
+          <Pressable key={key} style={[styles.segment, view === key && styles.segmentActive]} onPress={() => setView(key)}>
+            <Ionicons name={icon} size={15} color={view === key ? "#fff" : C.textMuted} />
+            <Text style={[styles.segmentText, view === key && styles.segmentTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
       </View>
 
       {view === "reports" ? (
         <>
-          <View style={styles.tabs}>
+          <View style={styles.chipRow}>
             {STATUS_TABS.map((s) => (
-              <Pressable key={s} style={[styles.tab, status === s && styles.tabActive]} onPress={() => setStatus(s)}>
-                <Text style={[styles.tabText, status === s && styles.tabTextActive]}>
+              <Pressable key={s} style={[styles.chip, status === s && styles.chipActive]} onPress={() => setStatus(s)}>
+                <Text style={[styles.chipText, status === s && styles.chipTextActive]}>
                   {s === "open" ? t.admin.open : s === "resolved" ? t.admin.resolved : t.admin.dismissed}
                 </Text>
               </Pressable>
@@ -171,7 +161,7 @@ export default function AdminScreen() {
           ) : reports.length === 0 ? (
             <Text style={styles.empty}>{t.admin.noReports}</Text>
           ) : (
-            <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
+            <ScrollView contentContainerStyle={styles.list}>
               {reports.map((r) => (
                 <ReportCard key={r.id} report={r} onActed={() => load(status)} />
               ))}
@@ -180,9 +170,10 @@ export default function AdminScreen() {
         </>
       ) : view === "users" ? (
         <>
-          <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+          <View style={styles.searchRow}>
+            <Ionicons name="search" size={16} color={C.textMuted} />
             <TextInput
-              style={styles.noteInput}
+              style={styles.searchInput}
               placeholder={t.admin.searchUsersPlaceholder}
               placeholderTextColor={C.textMuted}
               value={userQuery}
@@ -195,55 +186,63 @@ export default function AdminScreen() {
           ) : users.length === 0 ? (
             <Text style={styles.empty}>{t.admin.noUsers}</Text>
           ) : (
-            <ScrollView contentContainerStyle={{ padding: 16, paddingTop: 0, gap: 10 }}>
+            <ScrollView contentContainerStyle={styles.list}>
               {users.map((u) => (
                 <UserCard key={u.user_id} profile={u} onActed={() => loadUsers(userQuery)} />
               ))}
             </ScrollView>
           )}
         </>
+      ) : conversationsLoading ? (
+        <ActivityIndicator color={C.accent} style={{ marginTop: 24 }} />
+      ) : conversations.length === 0 ? (
+        <Text style={styles.empty}>{t.admin.noConversations}</Text>
       ) : (
-        <>
-          <View style={styles.tabs}>
-            {(["open", "resolved"] as SupportStatus[]).map((s) => (
-              <Pressable key={s} style={[styles.tab, supportStatus === s && styles.tabActive]} onPress={() => setSupportStatus(s)}>
-                <Text style={[styles.tabText, supportStatus === s && styles.tabTextActive]}>
-                  {s === "open" ? t.admin.open : t.admin.resolved}
+        <ScrollView contentContainerStyle={styles.list}>
+          {conversations.map((c) => (
+            <Pressable
+              key={c.userId}
+              style={styles.conversationRow}
+              onPress={() => router.push({ pathname: "/admin/support/[userId]", params: { userId: c.userId } })}
+            >
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{c.username[0]?.toUpperCase()}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <View style={styles.conversationTopRow}>
+                  <Text style={styles.conversationName} numberOfLines={1}>
+                    {c.username}
+                  </Text>
+                  <Text style={styles.conversationDate}>{shortDate(c.lastAt)}</Text>
+                </View>
+                <Text style={styles.conversationPreview} numberOfLines={1}>
+                  {c.lastBody}
                 </Text>
-              </Pressable>
-            ))}
-          </View>
-          {supportLoading ? (
-            <ActivityIndicator color={C.accent} style={{ marginTop: 24 }} />
-          ) : supportMessages.length === 0 ? (
-            <Text style={styles.empty}>{t.admin.noSupportMessages}</Text>
-          ) : (
-            <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
-              {supportMessages.map((m) => (
-                <SupportCard key={m.id} message={m} onActed={() => loadSupport(supportStatus)} />
-              ))}
-            </ScrollView>
-          )}
-        </>
+              </View>
+              {c.needsResponse && <View style={styles.needsResponseDot} />}
+              <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
+            </Pressable>
+          ))}
+        </ScrollView>
       )}
     </View>
   );
 }
 
-function targetSummary(r: Report): string {
+function targetSummary(t: ReturnType<typeof useLanguage>["t"], r: Report): string {
   switch (r.target_type) {
     case "user":
-      return `user ${r.target_user_id?.slice(0, 8)}`;
+      return `${t.admin.targetUser} · ${r.target_user_id?.slice(0, 8)}`;
     case "comment":
-      return `comment ${r.target_comment_id?.slice(0, 8)}`;
+      return `${t.admin.targetComment} · ${r.target_comment_id?.slice(0, 8)}`;
     case "movie_comment":
-      return `movie comment ${r.target_movie_comment_id?.slice(0, 8)}`;
+      return `${t.admin.targetMovieComment} · ${r.target_movie_comment_id?.slice(0, 8)}`;
     case "show":
-      return `show #${r.target_tvmaze_show_id}`;
+      return `${t.admin.targetShow} #${r.target_tvmaze_show_id}`;
     case "episode":
-      return `episode #${r.target_tvmaze_episode_id} (show #${r.target_tvmaze_show_id})`;
+      return `${t.admin.targetEpisode} #${r.target_tvmaze_episode_id}`;
     case "movie":
-      return `movie #${r.target_tmdb_id}`;
+      return `${t.admin.targetMovie} #${r.target_tmdb_id}`;
   }
 }
 
@@ -264,19 +263,30 @@ function ReportCard({ report, onActed }: { report: Report; onActed: () => void }
     }
   }
 
+  const color = TARGET_COLOR[report.target_type];
+
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
-        <Ionicons name={TARGET_ICON[report.target_type]} size={16} color={C.accent} />
-        <Text style={styles.cardTarget}>{targetSummary(report)}</Text>
-        <Text style={styles.cardDate}>{report.created_at.slice(0, 10)}</Text>
+        <View style={[styles.iconWrap, { backgroundColor: `${color}22` }]}>
+          <Ionicons name={TARGET_ICON[report.target_type]} size={15} color={color} />
+        </View>
+        <Text style={styles.cardTarget} numberOfLines={1}>
+          {targetSummary(t, report)}
+        </Text>
+        <Text style={styles.cardDate}>{shortDate(report.created_at)}</Text>
       </View>
-      <Text style={styles.cardReason}>{report.reason}</Text>
-      <Text style={styles.cardMeta}>
-        {t.admin.reportedBy} {report.reporter_id.slice(0, 8)}
-      </Text>
 
-      {report.status === "open" && (
+      <Text style={styles.cardReason}>{report.reason}</Text>
+
+      <View style={styles.cardMetaRow}>
+        <Ionicons name="person-circle-outline" size={13} color={C.textMuted} />
+        <Text style={styles.cardMeta}>
+          {t.admin.reportedBy} {report.reporter_id.slice(0, 8)}
+        </Text>
+      </View>
+
+      {report.status === "open" ? (
         <>
           <TextInput
             style={styles.noteInput}
@@ -287,16 +297,21 @@ function ReportCard({ report, onActed }: { report: Report; onActed: () => void }
           />
           <View style={styles.actionRow}>
             <Pressable style={[styles.actionBtn, styles.resolveBtn]} onPress={() => act("resolve")} disabled={busy}>
+              <Ionicons name="checkmark" size={14} color="#0a0c10" />
               <Text style={styles.actionBtnText}>{t.admin.resolve}</Text>
             </Pressable>
             <Pressable style={[styles.actionBtn, styles.dismissBtn]} onPress={() => act("dismiss")} disabled={busy}>
+              <Ionicons name="close" size={14} color="#0a0c10" />
               <Text style={styles.actionBtnText}>{t.admin.dismiss}</Text>
             </Pressable>
           </View>
         </>
-      )}
-      {report.status !== "open" && report.resolution_note && (
-        <Text style={styles.cardResolutionNote}>{report.resolution_note}</Text>
+      ) : (
+        report.resolution_note && (
+          <View style={styles.quoteBlock}>
+            <Text style={styles.quoteText}>{report.resolution_note}</Text>
+          </View>
+        )
       )}
     </View>
   );
@@ -304,85 +319,77 @@ function ReportCard({ report, onActed }: { report: Report; onActed: () => void }
 
 function UserCard({ profile, onActed }: { profile: Profile; onActed: () => void }) {
   const { t } = useLanguage();
-  const [busy, setBusy] = useState(false);
+  const [banBusy, setBanBusy] = useState(false);
+  const [adminBusy, setAdminBusy] = useState(false);
 
   async function toggleBanned() {
-    setBusy(true);
+    setBanBusy(true);
     try {
       await setUserBanned(profile.user_id, !profile.is_banned);
       onActed();
     } catch {
       alert("Failed", "Couldn't update this user.");
     } finally {
-      setBusy(false);
+      setBanBusy(false);
+    }
+  }
+
+  async function toggleAdmin() {
+    setAdminBusy(true);
+    try {
+      await setUserAdmin(profile.user_id, !profile.is_admin);
+      onActed();
+    } catch {
+      alert("Failed", "Couldn't update this user.");
+    } finally {
+      setAdminBusy(false);
     }
   }
 
   return (
     <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Ionicons name="person-outline" size={16} color={C.accent} />
-        <Text style={styles.cardTarget}>{profile.username}</Text>
-        {profile.is_admin && <Text style={styles.cardDate}>{t.admin.adminBadge}</Text>}
+      <View style={styles.userRow}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{profile.username[0]?.toUpperCase()}</Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.cardTarget} numberOfLines={1}>
+            {profile.username}
+          </Text>
+          <View style={styles.badgeRow}>
+            {profile.is_admin && (
+              <View style={[styles.badge, { backgroundColor: `${C.accent}22` }]}>
+                <Text style={[styles.badgeText, { color: C.accent }]}>{t.admin.adminBadge}</Text>
+              </View>
+            )}
+            {profile.is_banned && (
+              <View style={[styles.badge, { backgroundColor: `${C.red}22` }]}>
+                <Text style={[styles.badgeText, { color: C.red }]}>{t.admin.bannedLabel}</Text>
+              </View>
+            )}
+          </View>
+        </View>
       </View>
-      {profile.is_banned && <Text style={[styles.cardMeta, { color: C.red }]}>{t.admin.bannedLabel}</Text>}
       <View style={styles.actionRow}>
+        <Pressable
+          style={[styles.actionBtn, profile.is_admin ? styles.dismissBtn : styles.replyBtn]}
+          onPress={toggleAdmin}
+          disabled={adminBusy}
+        >
+          <Ionicons name={profile.is_admin ? "shield-outline" : "shield-checkmark-outline"} size={14} color={profile.is_admin ? "#0a0c10" : "#fff"} />
+          <Text style={[styles.actionBtnText, !profile.is_admin && { color: "#fff" }]}>
+            {profile.is_admin ? t.admin.demote : t.admin.promote}
+          </Text>
+        </Pressable>
         <Pressable
           style={[styles.actionBtn, profile.is_banned ? styles.resolveBtn : styles.dismissBtn]}
           onPress={toggleBanned}
-          disabled={busy || profile.is_admin}
+          disabled={banBusy || profile.is_admin}
         >
+          <Ionicons name={profile.is_banned ? "lock-open-outline" : "lock-closed-outline"} size={14} color="#0a0c10" />
           <Text style={styles.actionBtnText}>{profile.is_banned ? t.admin.unban : t.admin.ban}</Text>
         </Pressable>
       </View>
-    </View>
-  );
-}
-
-function SupportCard({ message, onActed }: { message: SupportMessage; onActed: () => void }) {
-  const { t } = useLanguage();
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function handleResolve() {
-    setBusy(true);
-    try {
-      await resolveSupportMessage(message.id, note.trim() || null);
-      onActed();
-    } catch {
-      alert("Failed", "Couldn't update this message.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Ionicons name="chatbubbles-outline" size={16} color={C.accent} />
-        <Text style={styles.cardTarget}>{t.admin.reportedBy} {message.user_id.slice(0, 8)}</Text>
-        <Text style={styles.cardDate}>{message.created_at.slice(0, 10)}</Text>
-      </View>
-      <Text style={styles.cardReason}>{message.body}</Text>
-
-      {message.status === "open" ? (
-        <>
-          <TextInput
-            style={styles.noteInput}
-            placeholder={t.admin.resolutionNotePlaceholder}
-            placeholderTextColor={C.textMuted}
-            value={note}
-            onChangeText={setNote}
-          />
-          <View style={styles.actionRow}>
-            <Pressable style={[styles.actionBtn, styles.resolveBtn]} onPress={handleResolve} disabled={busy}>
-              <Text style={styles.actionBtnText}>{t.admin.resolve}</Text>
-            </Pressable>
-          </View>
-        </>
-      ) : (
-        message.resolution_note && <Text style={styles.cardResolutionNote}>{message.resolution_note}</Text>
-      )}
     </View>
   );
 }
@@ -402,33 +409,98 @@ const styles = StyleSheet.create({
     borderBottomColor: C.border,
   },
   headerTitle: { color: C.text, fontWeight: "800", fontSize: 17, letterSpacing: 0.3 },
-  tabs: { flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
-  tab: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, backgroundColor: C.surface },
-  tabActive: { backgroundColor: C.accent },
-  tabText: { color: C.textMuted, fontSize: 13, fontWeight: "700" },
-  tabTextActive: { color: "#ffffff" },
+  segmented: {
+    flexDirection: "row",
+    margin: 16,
+    marginBottom: 8,
+    backgroundColor: C.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 3,
+    gap: 3,
+  },
+  segment: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 8, borderRadius: 8 },
+  segmentActive: { backgroundColor: C.accent },
+  segmentText: { color: C.textMuted, fontSize: 12, fontWeight: "700" },
+  segmentTextActive: { color: "#fff" },
+  chipRow: { flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
+  chip: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  chipActive: { backgroundColor: C.accent, borderColor: C.accent },
+  chipText: { color: C.textMuted, fontSize: 12, fontWeight: "700" },
+  chipTextActive: { color: "#fff" },
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 10,
+  },
+  searchInput: { flex: 1, color: C.text, fontSize: 13 },
   empty: { color: C.textMuted, textAlign: "center", marginTop: 32 },
-  card: { backgroundColor: C.surface, borderRadius: 10, borderWidth: 1, borderColor: C.border, padding: 12 },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
+  list: { padding: 16, paddingTop: 0, gap: 10 },
+  card: { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 12, gap: 8 },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  iconWrap: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
   cardTarget: { flex: 1, color: C.text, fontWeight: "700", fontSize: 13 },
   cardDate: { color: C.textMuted, fontSize: 11 },
-  cardReason: { color: C.text, fontSize: 13, lineHeight: 18, marginBottom: 6 },
-  cardMeta: { color: C.textMuted, fontSize: 11, marginBottom: 8 },
-  cardResolutionNote: { color: C.textMuted, fontSize: 12, fontStyle: "italic", marginTop: 4 },
+  cardReason: { color: C.text, fontSize: 13, lineHeight: 18 },
+  cardMetaRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  cardMeta: { color: C.textMuted, fontSize: 11 },
+  quoteBlock: { borderLeftWidth: 2, borderLeftColor: C.accent, paddingLeft: 10 },
+  quoteText: { color: C.textMuted, fontSize: 12, fontStyle: "italic", lineHeight: 17 },
   noteInput: {
     backgroundColor: C.bg,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 6,
+    borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
     color: C.text,
     fontSize: 13,
-    marginBottom: 8,
   },
   actionRow: { flexDirection: "row", gap: 8 },
-  actionBtn: { flex: 1, paddingVertical: 8, borderRadius: 6, alignItems: "center" },
+  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 9, borderRadius: 8 },
+  actionBtnDisabled: { opacity: 0.5 },
   resolveBtn: { backgroundColor: C.green },
+  reopenBtn: { backgroundColor: C.yellow },
+  replyBtn: { backgroundColor: C.accent },
   dismissBtn: { backgroundColor: C.red },
   actionBtnText: { color: "#0a0c10", fontWeight: "800", fontSize: 12 },
+  userRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { color: C.text, fontWeight: "800", fontSize: 14 },
+  badgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
+  badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
+  badgeText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
+  conversationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: C.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 12,
+  },
+  conversationTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  conversationName: { color: C.text, fontWeight: "700", fontSize: 13, flexShrink: 1 },
+  conversationDate: { color: C.textMuted, fontSize: 11 },
+  conversationPreview: { color: C.textMuted, fontSize: 12, marginTop: 2 },
+  needsResponseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.accent },
 });

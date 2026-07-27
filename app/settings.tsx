@@ -13,7 +13,7 @@ import { Language, StaleWatchlistMonths } from "../lib/userSettings";
 import { fetchMyProfile, Profile } from "../lib/profiles";
 import { changePassword, exportMyData, deleteAccount } from "../lib/account";
 import { fetchOpenReportCount } from "../lib/reports";
-import { fetchOpenSupportMessageCount } from "../lib/support";
+import { fetchSupportNeedsResponseCount } from "../lib/support";
 import { alert } from "../lib/alert";
 import { useGoBack } from "../lib/useGoBack";
 import { Pill } from "../components/Pill";
@@ -60,7 +60,7 @@ export default function SettingsScreen() {
       fetchMyProfile().then((p) => {
         setProfile(p);
         if (p?.is_admin) {
-          Promise.all([fetchOpenReportCount(), fetchOpenSupportMessageCount()])
+          Promise.all([fetchOpenReportCount(), fetchSupportNeedsResponseCount()])
             .then(([reports, support]) => setOpenAlertCount(reports + support))
             .catch(() => {});
         }

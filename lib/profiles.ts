@@ -71,6 +71,15 @@ export async function setUserBanned(userId: string, banned: boolean): Promise<vo
   if (error) throw error;
 }
 
+// Promote/demote — same "Admins update any profile" RLS policy already
+// covers this column, no schema change needed. Separate from setUserBanned
+// since they're independent axes (an admin can still be suspended, though
+// the UI disables that combination — see app/admin/index.tsx's UserCard).
+export async function setUserAdmin(userId: string, isAdmin: boolean): Promise<void> {
+  const { error } = await supabase.from("profiles").update({ is_admin: isAdmin }).eq("user_id", userId);
+  if (error) throw error;
+}
+
 // `uri` is whatever DocumentPicker handed back (see app/(tabs)/profile.tsx)
 // — a local file:// URI on native, a blob:/data: URI on web. fetch() reads
 // either into a Blob uniformly, which is what supabase-js's storage upload
