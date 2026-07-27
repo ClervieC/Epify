@@ -163,7 +163,7 @@ function createStyles(colors: Colors) {
       borderTopWidth: 1,
       borderTopColor: colors.border,
       paddingTop: 8,
-      paddingBottom: 10,
+      paddingBottom: 20,
     },
     item: {
       flex: 1,
