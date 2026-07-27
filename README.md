@@ -10,6 +10,14 @@ App de suivi de séries (remplaçant TVTime) : à voir / en cours / vues / arrê
 ## Mise en route
 
 1. Crée les tables Supabase : ouvre le SQL editor de ton projet et exécute [supabase/schema.sql](supabase/schema.sql).
+   > **Self-hosted uniquement** : contrairement à Supabase Cloud (où le SQL editor tourne en superuser `postgres` et accorde tout implicitement), une instance self-hosted (VPS, Docker) doit recevoir explicitement le droit de créer des clés étrangères vers `auth.users` — beaucoup de tables du schéma en dépendent (`comments`, `user_shows`, `notifications`, etc.). Avant d'exécuter `schema.sql` (ou toute migration qui ajoute une table référençant `auth.users`), lance une fois, connectée en tant que `supabase_admin` :
+   > ```
+   > sudo docker exec -it <nom_du_container_postgres> psql -U supabase_admin -d postgres -c "
+   > GRANT REFERENCES ON auth.users TO postgres;
+   > GRANT REFERENCES ON auth.users TO anon, authenticated, service_role;
+   > "
+   > ```
+   > Sans ça, toute table qui fait `references auth.users (id)` échoue avec `42501: permission denied for table users`.
 2. Les clés d'API sont dans `.env` (non versionné). Vérifie qu'elles sont correctes :
    - `EXPO_PUBLIC_SUPABASE_URL`
    - `EXPO_PUBLIC_SUPABASE_ANON_KEY`

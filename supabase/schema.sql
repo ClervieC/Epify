@@ -1,4 +1,16 @@
 -- Run this in the Supabase SQL editor for your project.
+--
+-- Self-hosted (VPS/Docker) only: unlike Supabase Cloud, where the SQL
+-- editor runs as the postgres superuser and grants everything implicitly,
+-- a self-hosted instance needs REFERENCES on auth.users granted explicitly
+-- before any of the many tables below that do `references auth.users (id)`
+-- can be created — otherwise this whole file fails partway through with
+-- `42501: permission denied for table users`. Run once, connected as
+-- supabase_admin:
+--   sudo docker exec -it <postgres_container_name> psql -U supabase_admin -d postgres -c "
+--     GRANT REFERENCES ON auth.users TO postgres;
+--     GRANT REFERENCES ON auth.users TO anon, authenticated, service_role;
+--   "
 
 create type show_status as enum ('watching', 'want_to_watch', 'watched', 'dropped', 'paused');
 
