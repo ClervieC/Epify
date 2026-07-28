@@ -12,6 +12,7 @@ import { Link } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
+import { LanguagePicker } from "../../components/LanguagePicker";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -36,6 +37,7 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container}>
+      <LanguagePicker />
       <Image
         source={require("../../assets/logo.png")}
         style={styles.logo}

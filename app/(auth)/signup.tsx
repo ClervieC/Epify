@@ -14,6 +14,7 @@ import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { createProfile } from "../../lib/profiles";
 import { savePendingUsername } from "../../lib/pendingUsername";
+import { LanguagePicker } from "../../components/LanguagePicker";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const MIN_PASSWORD_LENGTH = 6;
@@ -74,6 +75,7 @@ export default function SignupScreen() {
 
   return (
     <View style={styles.container}>
+      <LanguagePicker />
       <Image
         source={require("../../assets/logo.png")}
         style={styles.logo}
