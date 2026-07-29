@@ -87,10 +87,21 @@ function createCache<T>(name: string, ttlMs: number) {
       }
 
       try {
-        const data = await fetcher();
+        let data = await fetcher();
         // A concurrent invalidate() that landed after this fetch started
-        // means the data we just fetched is already stale — don't write it.
-        if ((invalidatedAt.get(id) ?? 0) < startedAt) set(id, data);
+        // (e.g. marking an episode watched while this exact show's watched
+        // list was already being re-fetched — see the Watch Next screen's
+        // loadData()) means the data we just fetched predates that mutation.
+        // Not writing it to cache used to be enough, but it was still handed
+        // back to whoever's awaiting *this* call, silently overwriting a
+        // fresher optimistic update with pre-mutation data (the show's Watch
+        // Next row would then look stuck on the episode that was just marked
+        // watched). One refetch — now started after the invalidation —
+        // actually reflects the mutation instead.
+        if ((invalidatedAt.get(id) ?? 0) >= startedAt) {
+          data = await fetcher();
+        }
+        set(id, data);
         return data;
       } catch (err) {
         // Network blip — better to show stale data than an error screen.
