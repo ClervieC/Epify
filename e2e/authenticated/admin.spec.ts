@@ -76,6 +76,18 @@ test("a submitted report appears in the admin Open queue", async ({ page }) => {
   await page.goto("/admin");
   await expect(page.getByText(uniqueReason)).toBeVisible({ timeout: 20_000 });
 
+  // The report's target now resolves to a real name via TVmaze (see
+  // targetSummary in app/admin/index.tsx) instead of a bare "#1" — this
+  // resolution is best-effort/async (see resolveReportLabels), so give it
+  // the same generous timeout as everything else here rather than assuming
+  // it's already landed the instant the card itself renders.
+  const reportCard = page
+    .locator("div")
+    .filter({ hasText: uniqueReason })
+    .filter({ hasText: "Resolve" })
+    .last();
+  await expect(reportCard.getByText("Under the Dome", { exact: false })).toBeVisible({ timeout: 20_000 });
+
   // Cleanup — resolves the report this test just filed so it doesn't sit
   // in the real Open queue after the run. The smallest element containing
   // both the reason text and a "Resolve" button is this report's own card

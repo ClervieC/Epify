@@ -1,6 +1,6 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
-import { invalidateWatchedEpisodes } from "./showDataCache";
+import { invalidateWatchedEpisodes, patchCachedWatchedEpisodes } from "./showDataCache";
 
 // Persisted fallback for fetchUserShows() below — every show/episode detail
 // screen calls it (alongside the TVmaze data, which is already cached and
@@ -68,6 +68,20 @@ export async function clearUserShowsCache(): Promise<void> {
     await userShowsCache.removeItem(USER_SHOWS_CACHE_KEY);
   } catch {
     // Best-effort.
+  }
+}
+
+// Instant, local-only read of the same persisted fallback fetchUserShows()
+// writes to — used by show/episode detail screens to paint their "is this
+// tracked?" state immediately instead of waiting on a live Supabase
+// round-trip just to answer that one question. Callers still follow up with
+// a real fetchUserShows() to correct this if it's gone stale.
+export async function getCachedUserShowsFast(): Promise<UserShow[] | null> {
+  try {
+    const cached = await userShowsCache.getItem(USER_SHOWS_CACHE_KEY);
+    return cached ? (JSON.parse(cached) as UserShow[]) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -390,7 +404,14 @@ export async function setEpisodeWatched(params: {
       .eq("user_id", userId)
       .eq("tvmaze_episode_id", params.tvmaze_episode_id);
     if (error) throw error;
-    invalidateWatchedEpisodes(params.tvmaze_show_id);
+    // Patches the cache with the now-known-correct list instead of just
+    // invalidating it — otherwise the Shows tab's next focus (e.g. right
+    // after unmarking an episode from its own detail screen) paid a real
+    // network round trip just to re-learn what this call already knows,
+    // showing the episode as still watched for a beat in the meantime.
+    patchCachedWatchedEpisodes(params.tvmaze_show_id, (prev) =>
+      prev.filter((w) => w.tvmaze_episode_id !== params.tvmaze_episode_id)
+    );
     return null;
   }
 
@@ -410,9 +431,13 @@ export async function setEpisodeWatched(params: {
     .select()
     .single();
   if (error) throw error;
-  invalidateWatchedEpisodes(params.tvmaze_show_id);
+  const row = data as WatchedEpisode;
+  patchCachedWatchedEpisodes(params.tvmaze_show_id, (prev) => [
+    ...prev.filter((w) => w.tvmaze_episode_id !== params.tvmaze_episode_id),
+    row,
+  ]);
   await resumeIfPausedOrDropped(params.tvmaze_show_id);
-  return data as WatchedEpisode;
+  return row;
 }
 
 export async function setEpisodesWatched(

@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useColors, radius, type, Colors } from "../lib/theme";
+import { useColors, radius, type, Colors, dropShadow } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
+import { alert } from "../lib/alert";
 import { Profile } from "../lib/profiles";
 import { Avatar } from "./Avatar";
 import { EmptyState } from "./EmptyState";
@@ -59,6 +60,11 @@ export function CommentsSection({
   // explicit cancel, or (implicitly, next render) if that comment is deleted
   // out from under it since it won't be found by id anymore.
   const [replyingTo, setReplyingTo] = useState<{ id: string; author: string } | null>(null);
+  // Collapsed by default, like a real feed post's replies — a thread only
+  // shows its replies once expanded, either by tapping "View replies" or by
+  // tapping "Reply" (see startReply below), rather than every comment
+  // dumping its whole thread on screen at once.
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -103,24 +109,27 @@ export function CommentsSection({
 
   function startReply(comment: CommentLike) {
     setReplyingTo({ id: comment.id, author: comment.author?.username ?? t.comments.unknownUser });
+    setExpandedThreads((prev) => new Set(prev).add(comment.id));
   }
 
-  return (
-    <View>
-      {replyingTo && (
-        <View style={styles.replyingToRow}>
-          <Text style={styles.replyingToText} numberOfLines={1}>
-            {t.comments.replyingTo(replyingTo.author)}
-          </Text>
-          <Pressable onPress={() => setReplyingTo(null)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Cancel reply">
-            <Ionicons name="close" size={16} color={colors.textFaint} />
-          </Pressable>
-        </View>
-      )}
+  function toggleThread(id: string) {
+    setExpandedThreads((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Shared between the top-level composer and the inline reply composer
+  // below — only one is ever rendered at a time (see replyingTo), so there's
+  // no ambiguity about which one `text`/`posting`/`postError` belong to.
+  const composer = (placeholder: string) => (
+    <>
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
-          placeholder={replyingTo ? t.comments.replyPlaceholder : t.comments.placeholder}
+          placeholder={placeholder}
           placeholderTextColor={colors.textFaint}
           value={text}
           onChangeText={setText}
@@ -141,46 +150,77 @@ export function CommentsSection({
         </Pressable>
       </View>
       {postError && <Text style={styles.errorText}>{t.comments.postError}</Text>}
+    </>
+  );
+
+  return (
+    <View>
+      {/* Always here, in the same place — never repurposed into the reply
+          box below, so nothing about this one moves/disappears when you
+          tap "Reply" on a comment (that opens its own separate inline
+          composer under that thread instead). */}
+      {composer(t.comments.placeholder)}
 
       {loading ? (
         <ActivityIndicator color={colors.textFaint} style={{ marginTop: 16 }} />
       ) : comments.length === 0 ? (
         <EmptyState icon="chatbubble-outline" title={t.comments.empty} />
       ) : (
-        topLevel.map((c) => (
-          <View key={c.id}>
-            <CommentRow
-              comment={c}
-              myUserId={myUserId}
-              onDelete={onDelete}
-              onToggleReaction={onToggleReaction}
-              onReply={() => startReply(c)}
-              onReport={() => setReportingCommentId(c.id)}
-              colors={colors}
-              styles={styles}
-              t={t}
-            />
-            {(repliesByParent.get(c.id) ?? []).map((reply) => (
-              <View key={reply.id} style={styles.replyWrap}>
-                <CommentRow
-                  comment={reply}
-                  myUserId={myUserId}
-                  onDelete={onDelete}
-                  onToggleReaction={onToggleReaction}
-                  // Replying to a reply isn't supported — see the note on
-                  // CommentLike.parent_comment_id — so this reuses startReply
-                  // with the *top-level* comment, keeping the thread one
-                  // level deep instead of nesting indefinitely.
-                  onReply={() => startReply(c)}
-                  onReport={() => setReportingCommentId(reply.id)}
-                  colors={colors}
-                  styles={styles}
-                  t={t}
-                />
-              </View>
-            ))}
-          </View>
-        ))
+        topLevel.map((c) => {
+          const replies = repliesByParent.get(c.id) ?? [];
+          const expanded = expandedThreads.has(c.id);
+          return (
+            <View key={c.id}>
+              <CommentRow
+                comment={c}
+                myUserId={myUserId}
+                onDelete={onDelete}
+                onToggleReaction={onToggleReaction}
+                onReply={() => startReply(c)}
+                onReport={() => setReportingCommentId(c.id)}
+                colors={colors}
+                styles={styles}
+                t={t}
+                repliesCount={replies.length}
+                repliesExpanded={expanded}
+                onToggleReplies={() => toggleThread(c.id)}
+              />
+              {expanded &&
+                replies.map((reply) => (
+                  <View key={reply.id} style={styles.replyWrap}>
+                    <CommentRow
+                      comment={reply}
+                      myUserId={myUserId}
+                      onDelete={onDelete}
+                      onToggleReaction={onToggleReaction}
+                      // Replying to a reply isn't supported — see the note on
+                      // CommentLike.parent_comment_id — so this reuses startReply
+                      // with the *top-level* comment, keeping the thread one
+                      // level deep instead of nesting indefinitely.
+                      onReply={() => startReply(c)}
+                      onReport={() => setReportingCommentId(reply.id)}
+                      colors={colors}
+                      styles={styles}
+                      t={t}
+                    />
+                  </View>
+                ))}
+              {replyingTo?.id === c.id && (
+                <View style={styles.replyWrap}>
+                  <View style={styles.replyingToRow}>
+                    <Text style={styles.replyingToText} numberOfLines={1}>
+                      {t.comments.replyingTo(replyingTo.author)}
+                    </Text>
+                    <Pressable onPress={() => setReplyingTo(null)} hitSlop={8} accessibilityRole="button" accessibilityLabel="Cancel reply">
+                      <Ionicons name="close" size={16} color={colors.textFaint} />
+                    </Pressable>
+                  </View>
+                  {composer(t.comments.replyPlaceholder)}
+                </View>
+              )}
+            </View>
+          );
+        })
       )}
       <ReportModal
         visible={reportingCommentId !== null}
@@ -207,6 +247,9 @@ function CommentRow({
   colors,
   styles,
   t,
+  repliesCount,
+  repliesExpanded,
+  onToggleReplies,
 }: {
   comment: CommentLike;
   myUserId: string | null;
@@ -217,6 +260,12 @@ function CommentRow({
   colors: Colors;
   styles: Styles;
   t: ReturnType<typeof useLanguage>["t"];
+  // Only set for a top-level comment (see the CommentsSection call site) —
+  // a reply is never itself repliable, so it never has its own thread to
+  // expand/collapse.
+  repliesCount?: number;
+  repliesExpanded?: boolean;
+  onToggleReplies?: () => void;
 }) {
   return (
     <View style={styles.commentRow}>
@@ -228,7 +277,12 @@ function CommentRow({
         <Text style={styles.commentDate}>{c.created_at.slice(0, 10)}</Text>
         {c.user_id === myUserId ? (
           <Pressable
-            onPress={() => onDelete(c.id)}
+            onPress={() =>
+              alert(t.comments.deleteTitle, t.comments.deleteBody, [
+                { text: t.comments.cancel, style: "cancel" },
+                { text: t.comments.delete, style: "destructive", onPress: () => onDelete(c.id) },
+              ])
+            }
             hitSlop={8}
             style={styles.deleteBtn}
             accessibilityRole="button"
@@ -271,6 +325,20 @@ function CommentRow({
           <Text style={styles.replyBtnText}>{t.comments.reply}</Text>
         </Pressable>
       </View>
+      {!!repliesCount && (
+        <Pressable
+          style={styles.viewRepliesBtn}
+          onPress={onToggleReplies}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={repliesExpanded ? t.comments.hideReplies : t.comments.viewReplies(repliesCount)}
+        >
+          <Ionicons name={repliesExpanded ? "chevron-up" : "chevron-down"} size={13} color={colors.accent} />
+          <Text style={styles.viewRepliesText}>
+            {repliesExpanded ? t.comments.hideReplies : t.comments.viewReplies(repliesCount)}
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -315,6 +383,7 @@ function createStyles(colors: Colors) {
       borderRadius: radius.md,
       padding: 12,
       marginBottom: 10,
+      ...dropShadow({ opacity: 0.08, radius: 8, offsetY: 2, elevation: 2 }),
     },
     // Indents a reply under its parent, with a left rule so the thread
     // reads as a nested conversation instead of just another comment.
@@ -324,6 +393,13 @@ function createStyles(colors: Colors) {
       borderLeftWidth: 2,
       borderLeftColor: colors.border,
     },
+    viewRepliesBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      marginTop: 10,
+    },
+    viewRepliesText: { fontSize: type.caption, fontWeight: "700", color: colors.accent },
     commentHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
     commentAuthor: { flex: 1, fontWeight: "800", fontSize: type.body, color: colors.text },
     commentDate: { fontSize: type.micro, color: colors.textFaint },

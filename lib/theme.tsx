@@ -30,7 +30,11 @@ const lightColors = {
   badgePremiere: "#111111",
   badgeNew: "#7c5cff",
   badgeAired: "#05b920",
-  badgeLast: "#e0453c",
+  // A paler, muted red rather than the full-strength `red` above — a
+  // series finale is a small heads-up, not an error/warning, so it
+  // shouldn't compete for attention the same way. Still reads as "red
+  // family" (finales are a little bittersweet) without being alarming.
+  badgeLast: "#c96a5f",
   pillBg: "#eeeeee",
   starOn: "#7c5cff",
   starOff: "#e2e2e4",
@@ -63,7 +67,7 @@ const darkColors: typeof lightColors = {
   badgePremiere: "#2a3247",
   badgeNew: "#8a72ff",
   badgeAired: "#05b920",
-  badgeLast: "#ff6b62",
+  badgeLast: "#d98f86",
   pillBg: "#1c2540",
   starOn: "#8a72ff",
   starOff: "#2c3550",

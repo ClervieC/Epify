@@ -3,9 +3,11 @@ import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextI
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
-import { fetchMyProfile, fetchAllProfilesForAdmin, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
+import { fetchMyProfile, fetchAllProfilesForAdmin, fetchProfiles, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
 import { fetchReports, resolveReport, dismissReport, Report, ReportStatus, ReportTargetType } from "../../lib/reports";
 import { fetchSupportConversationsForAdmin, SupportConversation } from "../../lib/support";
+import { getShow, getEpisodeWithShow } from "../../lib/tvmaze";
+import { mapWithConcurrency } from "../../lib/concurrency";
 import { useLanguage } from "../../lib/i18n";
 import { shortDate } from "../../lib/dates";
 import { alert } from "../../lib/alert";
@@ -22,6 +24,11 @@ const TARGET_ICON: Record<ReportTargetType, keyof typeof Ionicons.glyphMap> = {
   episode: "film-outline",
   movie: "videocam-outline",
 };
+
+interface EpisodeInfo {
+  name: string;
+  showName: string | null;
+}
 
 const TARGET_COLOR: Record<ReportTargetType, string> = {
   user: C.red,
@@ -47,6 +54,13 @@ export default function AdminScreen() {
   const [userQuery, setUserQuery] = useState("");
   const [conversations, setConversations] = useState<SupportConversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
+  // Reports only store raw ids (reporter_id/target_user_id, TVmaze show/
+  // episode ids) — these resolve them to display names so a report reads
+  // as "Breaking Bad (#169)" / "reported by clervie" instead of a bare id
+  // an admin has to look up by hand to know what's actually being reported.
+  const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
+  const [showNames, setShowNames] = useState<Map<number, string>>(new Map());
+  const [episodeInfo, setEpisodeInfo] = useState<Map<number, EpisodeInfo>>(new Map());
 
   // Gated server-side too (see the "Admins view/update all reports" RLS
   // policies in supabase/schema.sql) — this client-side check is purely so
@@ -62,9 +76,63 @@ export default function AdminScreen() {
   const load = useCallback((s: ReportStatus) => {
     setLoading(true);
     fetchReports(s)
-      .then(setReports)
+      .then((data) => {
+        setReports(data);
+        resolveReportLabels(data);
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  // Best-effort, non-blocking — the report cards already fall back to the
+  // raw id/number if any of these lookups fails or hasn't resolved yet.
+  function resolveReportLabels(data: Report[]) {
+    const userIds = Array.from(
+      new Set(
+        data.flatMap((r) => [r.reporter_id, r.target_user_id]).filter((id): id is string => !!id),
+      ),
+    );
+    fetchProfiles(userIds)
+      .then((profiles) => setUserNames(new Map(profiles.map((p) => [p.user_id, p.username]))))
+      .catch(() => {});
+
+    const showIds = Array.from(
+      new Set(
+        data
+          .filter((r) => r.target_type === "show" && r.target_tvmaze_show_id != null)
+          .map((r) => r.target_tvmaze_show_id as number),
+      ),
+    );
+    mapWithConcurrency(showIds, 5, (id) =>
+      getShow(id)
+        .then((show) => [id, show.name] as const)
+        .catch(() => [id, null] as const),
+    ).then((entries) => {
+      setShowNames((prev) => {
+        const next = new Map(prev);
+        for (const [id, name] of entries) if (name) next.set(id, name);
+        return next;
+      });
+    });
+
+    const episodeIds = Array.from(
+      new Set(
+        data
+          .filter((r) => r.target_type === "episode" && r.target_tvmaze_episode_id != null)
+          .map((r) => r.target_tvmaze_episode_id as number),
+      ),
+    );
+    mapWithConcurrency(episodeIds, 5, (id) =>
+      getEpisodeWithShow(id)
+        .then((ep) => [id, { name: ep.name, showName: ep._embedded.show.name }] as const)
+        .catch(() => [id, null] as const),
+    ).then((entries) => {
+      setEpisodeInfo((prev) => {
+        const next = new Map(prev);
+        for (const [id, info] of entries) if (info) next.set(id, info);
+        return next;
+      });
+    });
+  }
 
   const loadUsers = useCallback((query: string) => {
     setUsersLoading(true);
@@ -163,7 +231,14 @@ export default function AdminScreen() {
           ) : (
             <ScrollView contentContainerStyle={styles.list}>
               {reports.map((r) => (
-                <ReportCard key={r.id} report={r} onActed={() => load(status)} />
+                <ReportCard
+                  key={r.id}
+                  report={r}
+                  onActed={() => load(status)}
+                  userNames={userNames}
+                  showNames={showNames}
+                  episodeInfo={episodeInfo}
+                />
               ))}
             </ScrollView>
           )}
@@ -229,24 +304,49 @@ export default function AdminScreen() {
   );
 }
 
-function targetSummary(t: ReturnType<typeof useLanguage>["t"], r: Report): string {
+function targetSummary(
+  t: ReturnType<typeof useLanguage>["t"],
+  r: Report,
+  userNames: Map<string, string>,
+  showNames: Map<number, string>,
+  episodeInfo: Map<number, EpisodeInfo>,
+): string {
   switch (r.target_type) {
-    case "user":
-      return `${t.admin.targetUser} · ${r.target_user_id?.slice(0, 8)}`;
+    case "user": {
+      const name = r.target_user_id ? userNames.get(r.target_user_id) : undefined;
+      return `${t.admin.targetUser} · ${name ?? r.target_user_id?.slice(0, 8)}`;
+    }
     case "comment":
       return `${t.admin.targetComment} · ${r.target_comment_id?.slice(0, 8)}`;
     case "movie_comment":
       return `${t.admin.targetMovieComment} · ${r.target_movie_comment_id?.slice(0, 8)}`;
-    case "show":
-      return `${t.admin.targetShow} #${r.target_tvmaze_show_id}`;
-    case "episode":
-      return `${t.admin.targetEpisode} #${r.target_tvmaze_episode_id}`;
+    case "show": {
+      const name = r.target_tvmaze_show_id ? showNames.get(r.target_tvmaze_show_id) : undefined;
+      return name ? `${name} (#${r.target_tvmaze_show_id})` : `${t.admin.targetShow} #${r.target_tvmaze_show_id}`;
+    }
+    case "episode": {
+      const info = r.target_tvmaze_episode_id ? episodeInfo.get(r.target_tvmaze_episode_id) : undefined;
+      if (!info) return `${t.admin.targetEpisode} #${r.target_tvmaze_episode_id}`;
+      return `${info.showName ? `${info.showName} · ` : ""}${info.name} (#${r.target_tvmaze_episode_id})`;
+    }
     case "movie":
       return `${t.admin.targetMovie} #${r.target_tmdb_id}`;
   }
 }
 
-function ReportCard({ report, onActed }: { report: Report; onActed: () => void }) {
+function ReportCard({
+  report,
+  onActed,
+  userNames,
+  showNames,
+  episodeInfo,
+}: {
+  report: Report;
+  onActed: () => void;
+  userNames: Map<string, string>;
+  showNames: Map<number, string>;
+  episodeInfo: Map<number, EpisodeInfo>;
+}) {
   const { t } = useLanguage();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -272,7 +372,7 @@ function ReportCard({ report, onActed }: { report: Report; onActed: () => void }
           <Ionicons name={TARGET_ICON[report.target_type]} size={15} color={color} />
         </View>
         <Text style={styles.cardTarget} numberOfLines={1}>
-          {targetSummary(t, report)}
+          {targetSummary(t, report, userNames, showNames, episodeInfo)}
         </Text>
         <Text style={styles.cardDate}>{shortDate(report.created_at)}</Text>
       </View>
@@ -282,7 +382,7 @@ function ReportCard({ report, onActed }: { report: Report; onActed: () => void }
       <View style={styles.cardMetaRow}>
         <Ionicons name="person-circle-outline" size={13} color={C.textMuted} />
         <Text style={styles.cardMeta}>
-          {t.admin.reportedBy} {report.reporter_id.slice(0, 8)}
+          {t.admin.reportedBy} {userNames.get(report.reporter_id) ?? report.reporter_id.slice(0, 8)}
         </Text>
       </View>
 

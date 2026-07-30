@@ -13,7 +13,7 @@ import {
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { getShowEpisodes, TVMazeEpisode } from "../../lib/tvmaze";
+import { getShow, getShowEpisodes, TVMazeEpisode } from "../../lib/tvmaze";
 import {
   decrementRewatch,
   fetchUserShows,
@@ -26,6 +26,7 @@ import {
   WatchedEpisode,
 } from "../../lib/userShows";
 import {
+  getCachedShow,
   getCachedEpisodes,
   getCachedWatchedEpisodes,
 } from "../../lib/showDataCache";
@@ -49,6 +50,7 @@ import {
 } from "../../lib/dates";
 import { EpisodeRow } from "../../components/EpisodeRow";
 import { FeelingSheet } from "../../components/FeelingSheet";
+import { FinaleToast, useFinaleToast } from "../../components/FinaleToast";
 import { Pill } from "../../components/Pill";
 import { EmptyState } from "../../components/EmptyState";
 import { useColors, radius, Colors } from "../../lib/theme";
@@ -66,6 +68,11 @@ interface TrackedShow {
   episodes: TVMazeEpisode[];
   watchedIds: Set<number>;
   watchedList: WatchedEpisode[];
+  // TVmaze's own show status ("Ended", "Running", ...) — separate from
+  // show.status (this app's own watching/paused/... tracking state). Only
+  // used to detect a series finale (see isSeriesFinale below); null if the
+  // lookup failed (best-effort, same as episodes/watchedList above).
+  tvmazeStatus: string | null;
 }
 
 interface EnrichedEpisode {
@@ -79,6 +86,10 @@ interface EnrichedEpisode {
   // Full series episode count — only set for "Not started" rows, where
   // there's no watch progress yet to summarize instead.
   totalEpisodes?: number;
+  // The show has ended and this is its last episode — see the "LAST" pill
+  // in components/EpisodeRow.tsx (already used by the episode detail
+  // screen; this wires the same signal into the Watch List/History rows).
+  isSeriesFinale?: boolean;
 }
 
 type EnrichedShowResult =
@@ -120,8 +131,21 @@ function computeEnrichedForShow(
   t: TrackedShow,
   now: number,
 ): EnrichedShowResult {
-  const { show, episodes, watchedIds, watchedList } = t;
-  const aired = episodes.filter((e) => new Date(e.airstamp).getTime() <= now);
+  const { show, episodes, watchedIds, watchedList, tvmazeStatus } = t;
+  // A TBA episode (no confirmed air date yet) comes back from TVmaze with a
+  // null/empty airstamp — `new Date(null).getTime()` is 0 (Jan 1 1970), not
+  // NaN, so without the truthiness check it read as "aired ages ago" and
+  // showed up in Watch Next/My List as ready to watch, when it's actually
+  // not out yet at all.
+  const aired = episodes.filter((e) => !!e.airstamp && new Date(e.airstamp).getTime() <= now);
+  // An Ended show has nothing left to air, so its last aired episode (by
+  // season/number, not airstamp — a special/bonus episode can air out of
+  // sequence after the numerically-last one) is the series finale. Feeds
+  // the "LAST" pill (see isSeriesFinale on EnrichedEpisode).
+  const finaleEpisode =
+    tvmazeStatus === "Ended" && aired.length > 0
+      ? [...aired].sort((a, b) => a.season - b.season || a.number - b.number).at(-1)
+      : undefined;
   const nextEpisode = [...aired]
     .sort((a, b) => a.season - b.season || a.number - b.number)
     .find((e) => !watchedIds.has(e.id));
@@ -144,6 +168,7 @@ function computeEnrichedForShow(
         // bottom right after being checked, instead of moving up the way a
         // normal "just watched" episode does.
         watchedAt: latestWatchedAt(watchedList),
+        isSeriesFinale: !!finaleEpisode && finaleEpisode.id === rewatchNext.episode.id,
       },
     };
   }
@@ -171,18 +196,19 @@ function computeEnrichedForShow(
         // are already available to watch.
         totalEpisodes: aired.length,
         isNew: isNewPilot,
+        isSeriesFinale: !!finaleEpisode && finaleEpisode.id === nextEpisode.id,
       },
     };
   }
 
-  const lastAired = aired.reduce<TVMazeEpisode | null>((latest, e) => {
-    if (!latest) return e;
-    return new Date(e.airstamp).getTime() > new Date(latest.airstamp).getTime()
-      ? e
-      : latest;
-  }, null);
-  const isLastEpisode = lastAired?.id === nextEpisode.id;
-  const isNew = isLastEpisode && diffDaysFromToday(nextEpisode.airstamp) >= -6;
+  // Recency of the next-up episode itself, not whether it happens to be the
+  // single most-recently-aired one — a multiple-episodes-at-once release
+  // (a season premiere dropping 3 at once, say) used to only ever flag the
+  // last of those three "new," since nextEpisode only matches that one once
+  // the earlier two have already been watched. Checking nextEpisode's own
+  // airstamp means every episode from that same drop gets the "NEW" pill in
+  // turn as Watch Next advances through them, not just the last one.
+  const isNew = diffDaysFromToday(nextEpisode.airstamp) >= -6;
   const extraEpisodes = aired.filter((e) => !watchedIds.has(e.id)).length - 1;
 
   return {
@@ -191,6 +217,7 @@ function computeEnrichedForShow(
       show,
       episode: nextEpisode,
       watched: false,
+      isSeriesFinale: !!finaleEpisode && finaleEpisode.id === nextEpisode.id,
       watchedAt: latestWatchedAt(watchedList),
       isNew,
       extraEpisodes: extraEpisodes > 0 ? extraEpisodes : undefined,
@@ -228,7 +255,8 @@ function sameEnrichedResult(
     a.item.isNew === bi.isNew &&
     a.item.extraEpisodes === bi.extraEpisodes &&
     a.item.watchedAt === bi.watchedAt &&
-    a.item.totalEpisodes === bi.totalEpisodes
+    a.item.totalEpisodes === bi.totalEpisodes &&
+    a.item.isSeriesFinale === bi.isSeriesFinale
   );
 }
 
@@ -279,6 +307,7 @@ const WatchListEpisodeRow = memo(function WatchListEpisodeRow({
         totalEpisodes={item.totalEpisodes}
         title={item.episode.name}
         isNew={item.isNew}
+        isSeriesFinale={item.isSeriesFinale}
         watched={item.watched}
         timesWatched={item.timesWatched}
         dimmed={dimmed}
@@ -532,6 +561,20 @@ export default function ShowsScreen() {
   // (Sheet's backdrop) or picking nothing just closes it without saving.
   const [feelingPromptItem, setFeelingPromptItem] =
     useState<EnrichedEpisode | null>(null);
+  // Freezes Watch Next on the episode just marked watched, same idea as
+  // feelingPromptItem above but unconditional — with the feeling-prompt
+  // setting OFF, feelingPromptItem never gets set at all, so the row used to
+  // jump straight to the show's *next* unwatched episode the instant the
+  // checkmark landed. That next episode is, correctly, unwatched — but
+  // showing up in the exact spot the just-watched one occupied a moment ago
+  // reads as "the episode I just checked is still unwatched," when it's
+  // actually a different episode entirely. This holds the row on the
+  // just-watched episode for a beat so the checkmark is actually seen before
+  // Watch Next advances, whether or not the feeling sheet ever appears.
+  const [justWatchedItem, setJustWatchedItem] =
+    useState<EnrichedEpisode | null>(null);
+  const justWatchedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finaleToast = useFinaleToast();
   const listRef = useRef<FlatList<WatchListRow>>(null);
   const upcomingListRef = useRef<FlatList<UpcomingRow>>(null);
   const hasLoadedOnce = useRef(false);
@@ -548,6 +591,19 @@ export default function ShowsScreen() {
   useEffect(() => {
     trackedRef.current = tracked;
   }, [tracked]);
+  // Show ids the user has directly edited (marked watched/unwatched,
+  // rewatched, rated) since the current loadData() run started. A
+  // long-running loadData() streams results in per-show as each show's own
+  // network fetch resolves (see flush()/currentList() below) — a show whose
+  // fetch had already resolved and been folded into this run's local byId
+  // map, several seconds before the user toggled one of its episodes, would
+  // otherwise get silently overwritten back to its pre-toggle state the next
+  // time *any other show* still in flight triggers a flush, since flush()
+  // rebuilds the whole list from that frozen byId snapshot. Checked in
+  // currentList() below to keep trackedRef's live version for these shows
+  // instead. Cleared at the start of every new loadData() run, since that
+  // run's own fresh fetch for the show is authoritative once it lands.
+  const locallyEditedRef = useRef<Set<number>>(new Set());
   const watchListScrollY = useRef(0);
   const upcomingScrollY = useRef(0);
   // Same cooldown as lastHistoryLoadAt below, same reason — without it every
@@ -595,10 +651,22 @@ export default function ShowsScreen() {
   // Episode/show lookup built from the already-loaded tracked shows, used to
   // hydrate the lazily paginated history rows without extra network calls.
   const episodeIndex = useMemo(() => {
-    const map = new Map<number, { show: UserShow; episode: TVMazeEpisode }>();
-    for (const { show, episodes } of tracked) {
+    const map = new Map<
+      number,
+      { show: UserShow; episode: TVMazeEpisode; isSeriesFinale: boolean }
+    >();
+    for (const { show, episodes, tvmazeStatus } of tracked) {
+      // Same "last episode by season/number, only once the show has ended"
+      // rule as computeEnrichedForShow's own finaleEpisode — precomputed
+      // once per show here so History rows (built below from a paginated
+      // watched_episodes query, not from computeEnrichedForShow) can show
+      // the same "LAST" pill.
+      const finaleEpisode =
+        tvmazeStatus === "Ended" && episodes.length > 0
+          ? [...episodes].sort((a, b) => a.season - b.season || a.number - b.number).at(-1)
+          : undefined;
       for (const episode of episodes) {
-        map.set(episode.id, { show, episode });
+        map.set(episode.id, { show, episode, isSeriesFinale: finaleEpisode?.id === episode.id });
       }
     }
     return map;
@@ -613,19 +681,28 @@ export default function ShowsScreen() {
     // reason. They're also independently allowed to fail: settling instead
     // of Promise.all-ing means a TVmaze hiccup doesn't throw away watched
     // status that Supabase already returned successfully, and vice versa.
-    const [episodesResult, watchedResult] = await Promise.allSettled([
+    // Show info (status) rides along the same Promise.allSettled — it's what
+    // detects a series finale for the "LAST" pill (see isSeriesFinale in
+    // computeEnrichedForShow), and getCachedShow is already a long-lived
+    // (24h) cache most tracked shows have warmed just by having been opened
+    // once, so this rarely costs a real network round trip.
+    const [episodesResult, watchedResult, showResult] = await Promise.allSettled([
       getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id)),
       getCachedWatchedEpisodes(show.tvmaze_id, () =>
         fetchWatchedEpisodes(show.tvmaze_id),
       ),
+      getCachedShow(show.tvmaze_id, () => getShow(show.tvmaze_id)),
     ]);
     const episodes =
       episodesResult.status === "fulfilled" ? episodesResult.value : [];
     const watchedList =
       watchedResult.status === "fulfilled" ? watchedResult.value : [];
+    const tvmazeStatus =
+      showResult.status === "fulfilled" ? showResult.value.status : null;
     return {
       show,
       episodes,
+      tvmazeStatus,
       watchedIds: new Set(watchedList.map((w) => w.tvmaze_episode_id)),
       watchedList,
     };
@@ -634,6 +711,10 @@ export default function ShowsScreen() {
   const loadData = useCallback(async () => {
     const myGeneration = ++loadGenerationRef.current;
     setLoadGeneration(myGeneration);
+    // This run's own fetches are authoritative once they land — see
+    // locallyEditedRef's own comment above for why older runs must not
+    // clobber a more recent local edit mid-flight.
+    locallyEditedRef.current = new Set();
 
     if (!hasLoadedOnce.current) {
       setLoading(true);
@@ -685,7 +766,13 @@ export default function ShowsScreen() {
       .map((t) => t.show.tvmaze_id);
     function currentList() {
       return order
-        .map((id) => byId.get(id))
+        .map((id) => {
+          if (locallyEditedRef.current.has(id)) {
+            const live = trackedRef.current.find((t) => t.show.tvmaze_id === id);
+            if (live) return live;
+          }
+          return byId.get(id);
+        })
         .filter((t): t is TrackedShow => !!t);
     }
     let flushScheduled = false;
@@ -845,8 +932,12 @@ export default function ShowsScreen() {
       return () => {
         active = false;
       };
+      // `tab` intentionally excluded — goToWatchList/goToUpcoming already call
+      // loadData() themselves when switching sub-tabs, so including it here
+      // used to fire a second, redundant full reload (fetchUserShows + every
+      // tracked show's episodes) on every tab switch.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [loadData, tab]),
+    }, [loadData]),
   );
 
   function goToWatchList() {
@@ -883,6 +974,7 @@ export default function ShowsScreen() {
           watched: true,
           watchedAt: w.watched_at,
           timesWatched: w.times_watched,
+          isSeriesFinale: hit.isSeriesFinale,
         });
       }
       enriched.reverse(); // oldest-of-this-page first, so it reads top-to-bottom chronologically
@@ -989,24 +1081,21 @@ export default function ShowsScreen() {
     for (const t of tracked) {
       const showId = t.show.tvmaze_id;
 
-      // While the feeling-prompt sheet is open for this show, freeze its Watch
-      // Next row on the episode that was just marked watched instead of
-      // immediately recomputing to whatever's next. Without this, the row
-      // swapped to a different (still-unwatched) episode — or disappeared
-      // entirely — in the very same instant the checkmark should have
-      // confirmed, before the flash/bounce animations even got a frame to
-      // play. The sheet popping up on top of that made it look like the tap
-      // hadn't registered at all, since by the time it was dismissed the row
-      // underneath was already showing a different, unchecked episode.
-      if (feelingPromptItem && feelingPromptItem.show.tvmaze_id === showId) {
+      // Freeze this show's Watch Next row on the episode that was just
+      // marked watched instead of immediately recomputing to whatever's
+      // next — see justWatchedItem's own comment above for why. Covers both
+      // the feeling-prompt-open case and the setting-off case, since
+      // justWatchedItem is set unconditionally on every unwatched->watched
+      // toggle now.
+      if (justWatchedItem && justWatchedItem.show.tvmaze_id === showId) {
         const prev = cache.get(showId);
         const alreadyFrozen =
           prev?.kind === "started" &&
-          prev.item.episode.id === feelingPromptItem.episode.id &&
+          prev.item.episode.id === justWatchedItem.episode.id &&
           prev.item.watched;
         const frozen: EnrichedShowResult = alreadyFrozen
           ? prev!
-          : { kind: "started", item: { ...feelingPromptItem, watched: true } };
+          : { kind: "started", item: { ...justWatchedItem, watched: true } };
         nextCache.set(showId, frozen);
         started.push(frozen.item);
         continue;
@@ -1042,7 +1131,7 @@ export default function ShowsScreen() {
     );
 
     return { watchNext: [...newPilots, ...started], haventStarted: stillNotStarted };
-  }, [tracked, feelingPromptItem]);
+  }, [tracked, justWatchedItem]);
 
   const upcoming = useMemo<EnrichedEpisode[]>(() => {
     const result: EnrichedEpisode[] = [];
@@ -1095,6 +1184,7 @@ export default function ShowsScreen() {
       watched: !currentlyWatched,
     });
 
+    locallyEditedRef.current.add(item.show.tvmaze_id);
     setTracked((prev) =>
       prev.map((t) => {
         if (t.show.tvmaze_id !== item.show.tvmaze_id) return t;
@@ -1112,18 +1202,39 @@ export default function ShowsScreen() {
         return { ...t, watchedIds: nextIds, watchedList: nextList };
       }),
     );
+    // Unwatching from History (dimmed rows, see renderWatchListRow) should
+    // drop the row immediately — historyItems is its own separate state (fed
+    // by fetchWatchedEpisodesPage, not `tracked`), so the tracked update
+    // above alone doesn't touch it and the just-unwatched episode stayed
+    // sitting in the history list looking watched.
+    if (currentlyWatched) {
+      setHistoryItems((prev) => prev.filter((h) => h.episode.id !== item.episode.id));
+    }
 
     // Only on the unwatched -> watched transition, never on unwatch or on a
-    // rewatch (which goes through the WatchedCheck rewatch prompt instead) —
-    // and only if the user hasn't turned this off in Settings.
-    if (!currentlyWatched && showFeelingPromptRef.current) setFeelingPromptItem(item);
+    // rewatch (which goes through the WatchedCheck rewatch prompt instead).
+    if (!currentlyWatched) {
+      if (item.isSeriesFinale) finaleToast.show(item.show.show_name);
+      if (justWatchedTimer.current) clearTimeout(justWatchedTimer.current);
+      setJustWatchedItem(item);
+      if (showFeelingPromptRef.current) {
+        // The feeling sheet's own onClose/onSelect clears justWatchedItem
+        // once it's actually dismissed (see below) — no timer needed here,
+        // the sheet itself is the "beat" the user needs to see the check.
+        setFeelingPromptItem(item);
+      } else {
+        justWatchedTimer.current = setTimeout(() => setJustWatchedItem(null), 1200);
+      }
+    }
   }, []);
 
   const handleQuickFeeling = useCallback(
     async (feelingKey: string) => {
       const item = feelingPromptItem;
       setFeelingPromptItem(null);
+      setJustWatchedItem(null);
       if (!item) return;
+      locallyEditedRef.current.add(item.show.tvmaze_id);
       await rateEpisode(item.show.tvmaze_id, item.episode.id, null, feelingKey);
       setTracked((prev) =>
         prev.map((t) =>
@@ -1145,6 +1256,7 @@ export default function ShowsScreen() {
 
   const rewatchEpisode = useCallback(async (item: EnrichedEpisode) => {
     if (item.timesWatched === undefined) return;
+    locallyEditedRef.current.add(item.show.tvmaze_id);
     const result = await incrementRewatch(item.episode.id, item.timesWatched);
     setTracked((prev) =>
       prev.map((t) =>
@@ -1171,6 +1283,7 @@ export default function ShowsScreen() {
   // exactly, just decrementing instead of incrementing.
   const undoRewatchEpisode = useCallback(async (item: EnrichedEpisode) => {
     if (item.timesWatched === undefined) return;
+    locallyEditedRef.current.add(item.show.tvmaze_id);
     const result = await decrementRewatch(item.episode.id, item.timesWatched);
     setTracked((prev) =>
       prev.map((t) =>
@@ -1650,9 +1763,15 @@ export default function ShowsScreen() {
 
       <FeelingSheet
         visible={!!feelingPromptItem}
-        onClose={() => setFeelingPromptItem(null)}
+        onClose={() => {
+          setFeelingPromptItem(null);
+          setJustWatchedItem(null);
+        }}
         onSelect={handleQuickFeeling}
       />
+      {finaleToast.visible && (
+        <FinaleToast showName={finaleToast.showName} translateY={finaleToast.translateY} />
+      )}
     </View>
   );
 }

@@ -77,6 +77,11 @@ test("can mark a movie watched, rate it, react, and comment", async ({ page }) =
   // components/CommentsSection.tsx) — going up one level from the body
   // text lands directly on that row.
   const commentRow = page.getByText(uniqueComment, { exact: true }).locator("xpath=..");
+  // Deleting now asks for confirmation via a native window.confirm (see
+  // lib/alert.ts's web fallback) — Playwright auto-dismisses dialogs it has
+  // no listener for, which would silently cancel the delete, so this has to
+  // accept it explicitly.
+  page.once("dialog", (dialog) => dialog.accept());
   await commentRow.getByLabel("Delete comment").click();
   await expect(page.getByText(uniqueComment)).not.toBeVisible({ timeout: 10_000 });
 

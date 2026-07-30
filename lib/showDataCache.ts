@@ -154,6 +154,26 @@ export function invalidateWatchedEpisodes(showId: number) {
   watchedCache.invalidate(showId);
 }
 
+// Writes a known-correct watched-episodes list straight into the cache
+// instead of just invalidating it — used right after a mutation whose
+// result is already known (see setEpisodeWatched in lib/userShows.ts), so
+// the next read (e.g. the Shows tab's loadData() on refocus after marking an
+// episode watched from its own detail screen) is an instant cache hit
+// instead of a real network round trip. Falls back to a plain invalidate if
+// this show was never cached in the first place — nothing to correctly
+// patch, and a wrong guess here would be worse than just refetching.
+export function patchCachedWatchedEpisodes(
+  showId: number,
+  updater: (prev: WatchedEpisode[]) => WatchedEpisode[]
+) {
+  const current = watchedCache.get(showId);
+  if (current === null) {
+    invalidateWatchedEpisodes(showId);
+    return;
+  }
+  watchedCache.set(showId, updater(current));
+}
+
 export function invalidateShow(showId: number) {
   showInfoCache.invalidate(showId);
   episodesCache.invalidate(showId);

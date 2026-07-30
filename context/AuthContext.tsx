@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import { fetchMyProfile, createProfile } from "../lib/profiles";
 import { consumePendingUsername } from "../lib/pendingUsername";
 import { clearWatchingSnapshot } from "../lib/watchingSnapshot";
+import { clearMoviesSnapshot } from "../lib/moviesSnapshot";
 import { clearAllShowDataCaches } from "../lib/showDataCache";
 import { resetPrefetchState } from "../lib/backgroundPrefetch";
 import { clearLocalShowStats } from "../lib/showStats";
@@ -20,6 +21,7 @@ import { shouldShowOnboarding } from "../lib/onboarding";
 // watched status, etc. straight from disk.
 function clearUserScopedCaches() {
   clearWatchingSnapshot();
+  clearMoviesSnapshot();
   clearAllShowDataCaches();
   resetPrefetchState();
   clearLocalShowStats();

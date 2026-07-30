@@ -26,6 +26,7 @@ export interface TrackedShowSnapshot {
   episodes: SnapshotEpisode[];
   watchedIds: number[];
   watchedList: WatchedEpisode[];
+  tvmazeStatus: string | null;
 }
 
 const STORAGE_KEY = "watching_snapshot_v1";
@@ -97,6 +98,7 @@ interface TrackedShowLike {
   episodes: TVMazeEpisode[];
   watchedIds: Set<number>;
   watchedList: WatchedEpisode[];
+  tvmazeStatus: string | null;
 }
 
 export function toSnapshotShow(t: TrackedShowLike): TrackedShowSnapshot {
@@ -105,6 +107,7 @@ export function toSnapshotShow(t: TrackedShowLike): TrackedShowSnapshot {
     episodes: t.episodes.map(({ summary: _summary, image: _image, ...rest }) => rest),
     watchedIds: Array.from(t.watchedIds),
     watchedList: t.watchedList,
+    tvmazeStatus: t.tvmazeStatus,
   };
 }
 
@@ -114,5 +117,6 @@ export function fromSnapshotShow(t: TrackedShowSnapshot): TrackedShowLike {
     episodes: t.episodes.map((e) => ({ ...e, summary: null, image: null })),
     watchedIds: new Set(t.watchedIds),
     watchedList: t.watchedList,
+    tvmazeStatus: t.tvmazeStatus ?? null,
   };
 }

@@ -84,6 +84,10 @@ export interface TVMazeShow {
   externals: { imdb: string | null; thetvdb: number | null };
 }
 
+export interface TVMazeEpisodeWithShow extends TVMazeEpisode {
+  _embedded: { show: TVMazeShow };
+}
+
 export interface TVMazeEpisode {
   id: number;
   name: string;
@@ -319,8 +323,13 @@ export async function getShowsPool(pageCount: number) {
   return results.flat();
 }
 
-export function getEpisode(id: number) {
-  return get<TVMazeEpisode>(`/episodes/${id}`);
+// Embeds the parent show — currently only used by the admin reports screen,
+// which needs a show name/number to display for an episode-type report
+// (the report itself only stores the episode's TVmaze id).
+export function getEpisodeWithShow(id: number) {
+  return withCache(`episode-with-show:${id}`, ONE_DAY, () =>
+    get<TVMazeEpisodeWithShow>(`/episodes/${id}?embed=show`),
+  );
 }
 
 // Defaults to low priority since the biggest caller (lib/tvtimeImport.ts)

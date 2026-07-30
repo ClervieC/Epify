@@ -33,6 +33,7 @@ import {
 import {
   fetchEpisodeFeelingCounts,
   fetchUserShows,
+  getCachedUserShowsFast,
   fetchWatchedEpisodes,
   decrementRewatch,
   incrementRewatch,
@@ -180,6 +181,15 @@ export default function EpisodeDetailScreen() {
         getShowCast(showIdNum, "high")
           .then((c) => active && setCast(c))
           .catch(() => {});
+        // Paint from the instant local cache first, then correct from the
+        // live fetch — avoids waiting on a Supabase round-trip just to know
+        // whether this show is tracked (see getCachedUserShowsFast).
+        getCachedUserShowsFast().then(
+          (cached) =>
+            active &&
+            cached &&
+            setUserShow(cached.find((s) => s.tvmaze_id === showIdNum) ?? null),
+        );
         fetchUserShows()
           .then(
             (shows) =>

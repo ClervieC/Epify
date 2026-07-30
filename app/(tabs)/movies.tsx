@@ -1,11 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, Pressable, Animated, FlatList, StyleSheet, ActivityIndicator, useWindowDimensions } from "react-native";
+import {
+  View,
+  Text,
+  Pressable,
+  Animated,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  useWindowDimensions,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
+import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
-import { fetchUserMovies, fetchMovieWatchlist, setMovieWatched, UserMovie } from "../../lib/userMovies";
-import { getMovieDetails, isMovieReleased, posterUrl, TMDBMovieDetails } from "../../lib/tmdb";
+import {
+  fetchUserMovies,
+  fetchMovieWatchlist,
+  setMovieWatched,
+  UserMovie,
+} from "../../lib/userMovies";
+import {
+  getMovieDetails,
+  isMovieReleased,
+  posterUrl,
+  TMDBMovieDetails,
+} from "../../lib/tmdb";
 import { mapWithConcurrency } from "../../lib/concurrency";
+import { loadMoviesSnapshot, saveMoviesSnapshot } from "../../lib/moviesSnapshot";
 import { diffDaysFromToday } from "../../lib/dates";
 import { MovieCard } from "../../components/MovieCard";
 import { EmptyState } from "../../components/EmptyState";
@@ -37,6 +59,10 @@ type UpcomingEntry = { movie: UserMovie; tmdb: TMDBMovieDetails | null };
 // re-triggered the Upcoming tab's TMDB-lookup effect below even while
 // sitting on the "list" sub-tab.
 const MIN_RELOAD_INTERVAL_MS = 10_000;
+// Device-local UI preference, same reasoning as lib/onboarding.ts's use of
+// the default AsyncStorage rather than createAsyncStorage's IndexedDB
+// variant — this is a single small boolean, not a cache.
+const SORT_STORAGE_KEY = "movies_to_watch_sort_asc_v1";
 
 export default function MoviesScreen() {
   const router = useRouter();
@@ -47,22 +73,57 @@ export default function MoviesScreen() {
   // which of the two release-based tabs is active — split into toWatchList/
   // upcomingList below rather than fetched separately per tab, since it's
   // the same TMDB lookup pass either way.
-  const [resolvedWatchlist, setResolvedWatchlist] = useState<UpcomingEntry[] | null>(null);
+  const [resolvedWatchlist, setResolvedWatchlist] = useState<
+    UpcomingEntry[] | null
+  >(null);
   const [loaded, setLoaded] = useState(false);
+  // Release-date order for "To Watch" only — Upcoming stays soonest-first
+  // always, since a countdown list read newest-release-first isn't a
+  // meaningful alternative view the way it is for an already-released queue.
+  const [toWatchSortAsc, setToWatchSortAsc] = useState(true);
+  // Restores the last-picked sort direction — without this every app
+  // restart silently reset back to ascending regardless of what was chosen
+  // last.
+  useEffect(() => {
+    AsyncStorage.getItem(SORT_STORAGE_KEY).then((value) => {
+      if (value !== null) setToWatchSortAsc(value === "true");
+    });
+  }, []);
+  function toggleToWatchSort() {
+    setToWatchSortAsc((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem(SORT_STORAGE_KEY, String(next)).catch(() => {});
+      return next;
+    });
+  }
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
   const { width } = useWindowDimensions();
-  const columns = Math.max(3, Math.floor((width - SCREEN_PADDING * 2 + GAP) / (TARGET_COLUMN_WIDTH + GAP)));
+  const columns = Math.max(
+    3,
+    Math.floor(
+      (width - SCREEN_PADDING * 2 + GAP) / (TARGET_COLUMN_WIDTH + GAP),
+    ),
+  );
   const underlineGrow = useGrowIn(tab);
   const listRef = useRef<FlatList<Block>>(null);
   const toWatchListRef = useRef<FlatList<UpcomingEntry>>(null);
   const upcomingListRef = useRef<FlatList<UpcomingEntry>>(null);
   useScrollToTopOnTabPress(() => {
-    const ref = tab === "list" ? listRef : tab === "toWatch" ? toWatchListRef : upcomingListRef;
+    const ref =
+      tab === "list"
+        ? listRef
+        : tab === "toWatch"
+          ? toWatchListRef
+          : upcomingListRef;
     ref.current?.scrollToOffset({ offset: 0, animated: true });
   });
 
+  // Guards the snapshot hydration below against overwriting real data with a
+  // stale disk snapshot once the real fetch has already landed — set the
+  // moment either one actually paints, never just on focus/mount.
+  const hasLoadedOnce = useRef(false);
   const lastLoadedAt = useRef(0);
   const reload = useCallback(() => {
     lastLoadedAt.current = Date.now();
@@ -70,15 +131,36 @@ export default function MoviesScreen() {
       .then(([w, wl]) => {
         setMovies(w);
         setWatchlist(wl);
+        hasLoadedOnce.current = true;
+        saveMoviesSnapshot({ movies: w, watchlist: wl });
       })
       .finally(() => setLoaded(true));
+  }, []);
+
+  // Cold-launch hydration: paint the last known movies/watchlist from disk
+  // immediately instead of a blank/spinner screen until fetchUserMovies()/
+  // fetchMovieWatchlist() come back over the network — mirrors the Shows
+  // tab's watchingSnapshot. Only runs once, before the first real reload();
+  // the focus-triggered reload() below still runs and overwrites this as
+  // soon as it lands.
+  useEffect(() => {
+    let active = true;
+    loadMoviesSnapshot().then((snapshot) => {
+      if (!active || !snapshot || hasLoadedOnce.current) return;
+      setMovies(snapshot.movies);
+      setWatchlist(snapshot.watchlist);
+      setLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       if (Date.now() - lastLoadedAt.current < MIN_RELOAD_INTERVAL_MS) return;
       reload();
-    }, [reload])
+    }, [reload]),
   );
 
   // Stable references (empty deps, functional setState) so MovieCard's
@@ -106,8 +188,18 @@ export default function MoviesScreen() {
   // the user was sitting on "list" and never opened either of the others —
   // this defers the work until one of them is actually opened, at which
   // point it fetches with whatever watchlist is current.
+  // Tracks which watchlist array reference this TMDB pass was last resolved
+  // for — since both release-based tabs now stay mounted (see the always-
+  // rendered panes below), switching back to one of them re-runs this
+  // effect (tab is still a dep, needed to defer the very first lookup until
+  // one of them is actually opened) but there's no reason to redo the whole
+  // lookup pass again when the watchlist itself hasn't actually changed
+  // since the last time it resolved.
+  const resolvedForWatchlistRef = useRef<UserMovie[] | null>(null);
   useEffect(() => {
     if (tab !== "toWatch" && tab !== "upcoming") return;
+    if (resolvedForWatchlistRef.current === watchlist) return;
+    resolvedForWatchlistRef.current = watchlist;
     let active = true;
     setResolvedWatchlist(null);
     mapWithConcurrency(watchlist, 4, (m) =>
@@ -115,7 +207,7 @@ export default function MoviesScreen() {
         ? getMovieDetails(m.tmdb_id)
             .then((tmdb) => ({ movie: m, tmdb }))
             .catch(() => ({ movie: m, tmdb: null }))
-        : Promise.resolve({ movie: m, tmdb: null })
+        : Promise.resolve({ movie: m, tmdb: null }),
     ).then((results) => {
       if (!active) return;
       setResolvedWatchlist(results);
@@ -131,30 +223,41 @@ export default function MoviesScreen() {
 
   const toWatchList = useMemo(() => {
     if (!resolvedWatchlist) return null;
+    const direction = toWatchSortAsc ? 1 : -1;
     return resolvedWatchlist
       .filter((e) => !isFutureRelease(e))
       .sort((a, b) => {
-        const aTime = a.tmdb?.release_date ? new Date(a.tmdb.release_date).getTime() : -Infinity;
-        const bTime = b.tmdb?.release_date ? new Date(b.tmdb.release_date).getTime() : -Infinity;
-        return aTime - bTime;
+        const aTime = a.tmdb?.release_date
+          ? new Date(a.tmdb.release_date).getTime()
+          : -Infinity;
+        const bTime = b.tmdb?.release_date
+          ? new Date(b.tmdb.release_date).getTime()
+          : -Infinity;
+        return (aTime - bTime) * direction;
       });
-  }, [resolvedWatchlist]);
+  }, [resolvedWatchlist, toWatchSortAsc]);
 
   const upcomingList = useMemo(() => {
     if (!resolvedWatchlist) return null;
-    return resolvedWatchlist
-      .filter(isFutureRelease)
-      .sort((a, b) => {
-        const aTime = new Date(a.tmdb!.release_date).getTime();
-        const bTime = new Date(b.tmdb!.release_date).getTime();
-        return aTime - bTime;
-      });
+    return resolvedWatchlist.filter(isFutureRelease).sort((a, b) => {
+      const aTime = new Date(a.tmdb!.release_date).getTime();
+      const bTime = new Date(b.tmdb!.release_date).getTime();
+      return aTime - bTime;
+    });
   }, [resolvedWatchlist]);
 
-  async function handleMarkWatched(movie: UserMovie) {
-    await setMovieWatched(movie.title, movie.year, true, movie.tmdb_id ?? undefined);
-    reload();
-  }
+  const handleMarkWatched = useCallback(
+    async (movie: UserMovie) => {
+      await setMovieWatched(
+        movie.title,
+        movie.year,
+        true,
+        movie.tmdb_id ?? undefined,
+      );
+      reload();
+    },
+    [reload],
+  );
 
   // Movies already arrive sorted by watched_at descending, so grouping by
   // year and chunking each group into rows of `columns` is a single pass —
@@ -183,6 +286,59 @@ export default function MoviesScreen() {
     return result;
   }, [movies, columns]);
 
+  // Stable renderItem references — an inline arrow recreated every render
+  // (e.g. every underline-animation tick when switching tabs) forces
+  // FlatList to re-render every visible row's CellRenderer even though
+  // MovieCard/UpcomingRow themselves are memoized and the underlying data
+  // hasn't changed.
+  const renderBlock = useCallback(
+    ({ item: block }: { item: Block }) =>
+      block.type === "header" ? (
+        <View style={styles.yearHeaderRow}>
+          <Pill uppercase>{block.year}</Pill>
+        </View>
+      ) : (
+        <View style={styles.row}>
+          {block.items.map((m) => (
+            <MovieCard
+              key={m.id}
+              id={m.id}
+              title={m.title}
+              year={m.year}
+              posterPath={m.poster_path}
+              watchedAt={m.watched_at ?? m.created_at}
+              timesWatched={m.times_watched}
+              onUnwatched={handleUnwatched}
+              onRewatched={handleRewatched}
+            />
+          ))}
+          {/* Pad an incomplete last row so its cards stay left-aligned
+              and the same width as a full row, instead of stretching. */}
+          {Array.from({ length: columns - block.items.length }, (_, i) => (
+            <View key={`spacer-${i}`} style={{ flex: 1 }} />
+          ))}
+        </View>
+      ),
+    [styles, columns, handleUnwatched, handleRewatched],
+  );
+
+  const renderUpcomingEntry = useCallback(
+    ({ item }: { item: UpcomingEntry }) => (
+      <UpcomingRow
+        entry={item}
+        onPress={() =>
+          item.movie.tmdb_id &&
+          router.push(`/movie/tmdb/${item.movie.tmdb_id}`)
+        }
+        onMarkWatched={() => handleMarkWatched(item.movie)}
+        colors={colors}
+        styles={styles}
+        t={t}
+      />
+    ),
+    [router, handleMarkWatched, colors, styles, t],
+  );
+
   if (!loaded) {
     return (
       <View style={styles.empty}>
@@ -193,34 +349,131 @@ export default function MoviesScreen() {
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
+      <LinearGradient
+        colors={[colors.headerGlow, "transparent"]}
+        style={styles.headerGlow}
+      />
       <View style={styles.header}>
         <Text style={styles.title}>{t.movies.title}</Text>
         {/* accent tone rather than the default neutral pillBg — neutral was
             close enough to the header gradient's own tint to nearly vanish
             into it. */}
         {tab === "list" && <Pill tone="accent">{movies.length}</Pill>}
+        {tab === "toWatch" && (
+          <View style={styles.headerRightGroup}>
+            <Pressable
+              style={styles.sortBtn}
+              onPress={toggleToWatchSort}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={
+                toWatchSortAsc
+                  ? t.movies.sortDescending
+                  : t.movies.sortAscending
+              }
+            >
+              <Ionicons
+                name={toWatchSortAsc ? "arrow-down" : "arrow-up"}
+                size={14}
+                color={colors.accent}
+              />
+              <Text style={styles.sortBtnText}>{t.movies.releaseDate}</Text>
+            </Pressable>
+            {toWatchList && toWatchList.length > 0 && (
+              <Pill tone="accent">{toWatchList.length}</Pill>
+            )}
+          </View>
+        )}
+        {tab === "upcoming" && upcomingList && upcomingList.length > 0 && (
+          <Pill tone="accent">{upcomingList.length}</Pill>
+        )}
       </View>
 
       <View style={styles.tabsRow}>
-        <Pressable style={styles.tabBtn} onPress={() => setTab("list")}>
-          <Text style={[styles.tabText, tab === "list" && styles.tabTextActive]}>{t.movies.tabList}</Text>
-          {tab === "list" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
+        <Pressable
+          style={styles.tabBtn}
+          onPress={() => {
+            setTab("list");
+            listRef.current?.scrollToOffset({ offset: 0, animated: false });
+          }}
+        >
+          <Text
+            style={[styles.tabText, tab === "list" && styles.tabTextActive]}
+          >
+            {t.movies.tabList}
+          </Text>
+          {tab === "list" && (
+            <Animated.View
+              style={[
+                styles.tabUnderline,
+                { transform: [{ scaleX: underlineGrow }] },
+              ]}
+            />
+          )}
         </Pressable>
-        <Pressable style={styles.tabBtn} onPress={() => setTab("toWatch")}>
-          <Text style={[styles.tabText, tab === "toWatch" && styles.tabTextActive]}>{t.movies.tabToWatch}</Text>
-          {tab === "toWatch" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
+        <Pressable
+          style={styles.tabBtn}
+          onPress={() => {
+            setTab("toWatch");
+            toWatchListRef.current?.scrollToOffset({
+              offset: 0,
+              animated: false,
+            });
+          }}
+        >
+          <Text
+            style={[styles.tabText, tab === "toWatch" && styles.tabTextActive]}
+          >
+            {t.movies.tabToWatch}
+          </Text>
+          {tab === "toWatch" && (
+            <Animated.View
+              style={[
+                styles.tabUnderline,
+                { transform: [{ scaleX: underlineGrow }] },
+              ]}
+            />
+          )}
         </Pressable>
-        <Pressable style={styles.tabBtn} onPress={() => setTab("upcoming")}>
-          <Text style={[styles.tabText, tab === "upcoming" && styles.tabTextActive]}>{t.movies.tabUpcoming}</Text>
-          {tab === "upcoming" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
+        <Pressable
+          style={styles.tabBtn}
+          onPress={() => {
+            setTab("upcoming");
+            upcomingListRef.current?.scrollToOffset({
+              offset: 0,
+              animated: false,
+            });
+          }}
+        >
+          <Text
+            style={[styles.tabText, tab === "upcoming" && styles.tabTextActive]}
+          >
+            {t.movies.tabUpcoming}
+          </Text>
+          {tab === "upcoming" && (
+            <Animated.View
+              style={[
+                styles.tabUnderline,
+                { transform: [{ scaleX: underlineGrow }] },
+              ]}
+            />
+          )}
         </Pressable>
       </View>
 
-      {tab === "list" ? (
-        movies.length === 0 ? (
+      {/* All three panes stay mounted at once (just hidden via display:none
+          for the inactive ones) instead of the previous conditional
+          render, which unmounted/remounted a fresh FlatList on every tab
+          switch and reset its scroll position back to the top each time —
+          each tab now keeps its own scroll offset independently. */}
+      <View style={[styles.tabPane, tab !== "list" && styles.tabPaneHidden]}>
+        {movies.length === 0 ? (
           <View style={styles.empty}>
-            <EmptyState icon="film-outline" title={t.movies.title} subtitle={t.movies.empty} />
+            <EmptyState
+              icon="film-outline"
+              title={t.movies.title}
+              subtitle={t.movies.empty}
+            />
           </View>
         ) : (
           <FlatList
@@ -228,42 +481,21 @@ export default function MoviesScreen() {
             contentContainerStyle={styles.list}
             data={blocks}
             keyExtractor={(block) => block.key}
-            renderItem={({ item: block }) =>
-              block.type === "header" ? (
-                <View style={styles.yearHeaderRow}>
-                  <Pill uppercase>{block.year}</Pill>
-                </View>
-              ) : (
-                <View style={styles.row}>
-                  {block.items.map((m) => (
-                    <MovieCard
-                      key={m.id}
-                      id={m.id}
-                      title={m.title}
-                      year={m.year}
-                      posterPath={m.poster_path}
-                      watchedAt={m.watched_at ?? m.created_at}
-                      timesWatched={m.times_watched}
-                      onUnwatched={handleUnwatched}
-                      onRewatched={handleRewatched}
-                    />
-                  ))}
-                  {/* Pad an incomplete last row so its cards stay left-aligned
-                      and the same width as a full row, instead of stretching. */}
-                  {Array.from({ length: columns - block.items.length }, (_, i) => (
-                    <View key={`spacer-${i}`} style={{ flex: 1 }} />
-                  ))}
-                </View>
-              )
-            }
+            renderItem={renderBlock}
           />
-        )
-      ) : tab === "toWatch" ? (
-        toWatchList === null ? (
+        )}
+      </View>
+
+      <View style={[styles.tabPane, tab !== "toWatch" && styles.tabPaneHidden]}>
+        {toWatchList === null ? (
           <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
         ) : toWatchList.length === 0 ? (
           <View style={styles.empty}>
-            <EmptyState icon="bookmark-outline" title={t.movies.tabToWatch} subtitle={t.movies.emptyUpcoming} />
+            <EmptyState
+              icon="bookmark-outline"
+              title={t.movies.tabToWatch}
+              subtitle={t.movies.emptyUpcoming}
+            />
           </View>
         ) : (
           <FlatList
@@ -271,42 +503,34 @@ export default function MoviesScreen() {
             contentContainerStyle={styles.upcomingList}
             data={toWatchList}
             keyExtractor={(entry) => entry.movie.id}
-            renderItem={({ item }) => (
-              <UpcomingRow
-                entry={item}
-                onPress={() => item.movie.tmdb_id && router.push(`/movie/tmdb/${item.movie.tmdb_id}`)}
-                onMarkWatched={() => handleMarkWatched(item.movie)}
-                colors={colors}
-                styles={styles}
-                t={t}
-              />
-            )}
+            renderItem={renderUpcomingEntry}
           />
-        )
-      ) : upcomingList === null ? (
-        <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
-      ) : upcomingList.length === 0 ? (
-        <View style={styles.empty}>
-          <EmptyState icon="calendar-outline" title={t.movies.tabUpcoming} subtitle={t.movies.emptyUpcomingReleases} />
-        </View>
-      ) : (
-        <FlatList
-          ref={upcomingListRef}
-          contentContainerStyle={styles.upcomingList}
-          data={upcomingList}
-          keyExtractor={(entry) => entry.movie.id}
-          renderItem={({ item }) => (
-            <UpcomingRow
-              entry={item}
-              onPress={() => item.movie.tmdb_id && router.push(`/movie/tmdb/${item.movie.tmdb_id}`)}
-              onMarkWatched={() => handleMarkWatched(item.movie)}
-              colors={colors}
-              styles={styles}
-              t={t}
+        )}
+      </View>
+
+      <View
+        style={[styles.tabPane, tab !== "upcoming" && styles.tabPaneHidden]}
+      >
+        {upcomingList === null ? (
+          <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
+        ) : upcomingList.length === 0 ? (
+          <View style={styles.empty}>
+            <EmptyState
+              icon="calendar-outline"
+              title={t.movies.tabUpcoming}
+              subtitle={t.movies.emptyUpcomingReleases}
             />
-          )}
-        />
-      )}
+          </View>
+        ) : (
+          <FlatList
+            ref={upcomingListRef}
+            contentContainerStyle={styles.upcomingList}
+            data={upcomingList}
+            keyExtractor={(entry) => entry.movie.id}
+            renderItem={renderUpcomingEntry}
+          />
+        )}
+      </View>
     </View>
   );
 }
@@ -333,23 +557,42 @@ function UpcomingRow({
   const poster = entry.tmdb ? posterUrl(entry.tmdb.poster_path, "w200") : null;
   const isFuture = !isMovieReleased(entry.tmdb?.release_date);
   const releaseDate = entry.tmdb?.release_date
-    ? new Date(entry.tmdb.release_date).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
+    ? new Date(entry.tmdb.release_date).toLocaleDateString(undefined, {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })
     : null;
   // Mirrors EpisodeRow's daysAway treatment — a day-count badge takes the
   // checkmark's spot for not-yet-released movies, since there's nothing to
   // mark watched yet; the checkmark returns once it's actually out.
-  const daysUntil = isFuture && entry.tmdb ? diffDaysFromToday(entry.tmdb.release_date) : null;
+  const daysUntil =
+    isFuture && entry.tmdb ? diffDaysFromToday(entry.tmdb.release_date) : null;
 
   return (
     <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={onPress}>
       <Animated.View
-        style={[styles.upcomingRow, { opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }]}
+        style={[
+          styles.upcomingRow,
+          {
+            opacity: mountIn.opacity,
+            transform: [...mountIn.transform, { scale }],
+          },
+        ]}
       >
         {poster ? (
-          <Image source={{ uri: poster }} style={styles.upcomingPoster} contentFit="cover" />
+          <Image
+            source={{ uri: poster }}
+            style={styles.upcomingPoster}
+            contentFit="cover"
+          />
         ) : (
-          <View style={[styles.upcomingPoster, styles.upcomingPosterPlaceholder]}>
-            <Text style={styles.upcomingPlaceholderText}>{entry.movie.title[0]?.toUpperCase()}</Text>
+          <View
+            style={[styles.upcomingPoster, styles.upcomingPosterPlaceholder]}
+          >
+            <Text style={styles.upcomingPlaceholderText}>
+              {entry.movie.title[0]?.toUpperCase()}
+            </Text>
           </View>
         )}
         <View style={{ flex: 1 }}>
@@ -359,7 +602,11 @@ function UpcomingRow({
           {/* Only not-yet-released movies get a release-date line — an
               already-released one just sits in the queue with nothing more
               to say about it until it's actually watched. */}
-          {isFuture && releaseDate && <Text style={styles.upcomingRelease}>{t.movies.releasesOn(releaseDate)}</Text>}
+          {isFuture && releaseDate && (
+            <Text style={styles.upcomingRelease}>
+              {t.movies.releasesOn(releaseDate)}
+            </Text>
+          )}
         </View>
         {daysUntil !== null ? (
           <View style={styles.upcomingDaysCol}>
@@ -377,16 +624,39 @@ function UpcomingRow({
 function createStyles(colors: Colors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
-    headerGlow: { position: "absolute", top: 0, left: 0, right: 0, height: 140, pointerEvents: "none" },
+    headerGlow: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 140,
+      pointerEvents: "none",
+    },
     header: {
       flexDirection: "row",
       alignItems: "center",
+      justifyContent: "space-between",
       gap: 10,
       paddingHorizontal: 16,
       paddingTop: 20,
       paddingBottom: 4,
     },
     title: { fontSize: type.title, fontWeight: "800", color: colors.text },
+    headerRightGroup: { flexDirection: "row", alignItems: "center", gap: 8 },
+    sortBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 3,
+      borderRadius: radius.pill,
+      backgroundColor: colors.accentSoft,
+    },
+    sortBtnText: {
+      fontSize: type.caption,
+      fontWeight: "700",
+      color: colors.accent,
+    },
     tabsRow: {
       flexDirection: "row",
       borderBottomWidth: 1,
@@ -394,13 +664,30 @@ function createStyles(colors: Colors) {
       marginTop: 10,
     },
     tabBtn: { flex: 1, alignItems: "center", paddingVertical: 12 },
-    tabText: { fontWeight: "800", fontSize: 13, color: colors.textFaint, letterSpacing: 0.4 },
+    tabText: {
+      fontWeight: "800",
+      fontSize: 13,
+      color: colors.textFaint,
+      letterSpacing: 0.4,
+    },
     tabTextActive: { color: colors.accent },
-    tabUnderline: { height: 2, backgroundColor: colors.accent, width: "60%", marginTop: 6 },
+    tabUnderline: {
+      height: 2,
+      backgroundColor: colors.accent,
+      width: "60%",
+      marginTop: 6,
+    },
+    tabPane: { flex: 1 },
+    tabPaneHidden: { display: "none" },
     list: { padding: 16, paddingTop: 4 },
     yearHeaderRow: { paddingTop: 20, paddingBottom: 12 },
     row: { flexDirection: "row", gap: 12, marginBottom: 20 },
-    empty: { flex: 1, backgroundColor: colors.background, alignItems: "center", justifyContent: "center" },
+    empty: {
+      flex: 1,
+      backgroundColor: colors.background,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     upcomingList: { padding: 16 },
     upcomingRow: {
       flexDirection: "row",
@@ -411,13 +698,46 @@ function createStyles(colors: Colors) {
       padding: 10,
       marginBottom: 10,
     },
-    upcomingPoster: { width: 52, height: 74, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
-    upcomingPosterPlaceholder: { alignItems: "center", justifyContent: "center" },
-    upcomingPlaceholderText: { color: colors.textFaint, fontSize: type.title, fontWeight: "800" },
-    upcomingTitle: { fontWeight: "700", fontSize: type.body, color: colors.text },
-    upcomingRelease: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
-    upcomingDaysCol: { alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
-    upcomingDaysNumber: { fontWeight: "800", fontSize: type.title, color: colors.text },
-    upcomingDaysLabel: { fontSize: type.micro, fontWeight: "700", color: colors.textMuted, marginTop: 1 },
+    upcomingPoster: {
+      width: 52,
+      height: 74,
+      borderRadius: radius.sm,
+      backgroundColor: colors.backgroundAlt,
+    },
+    upcomingPosterPlaceholder: {
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    upcomingPlaceholderText: {
+      color: colors.textFaint,
+      fontSize: type.title,
+      fontWeight: "800",
+    },
+    upcomingTitle: {
+      fontWeight: "700",
+      fontSize: type.body,
+      color: colors.text,
+    },
+    upcomingRelease: {
+      fontSize: type.caption,
+      color: colors.textMuted,
+      marginTop: 2,
+    },
+    upcomingDaysCol: {
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 4,
+    },
+    upcomingDaysNumber: {
+      fontWeight: "800",
+      fontSize: type.title,
+      color: colors.text,
+    },
+    upcomingDaysLabel: {
+      fontSize: type.micro,
+      fontWeight: "700",
+      color: colors.textMuted,
+      marginTop: 1,
+    },
   });
 }

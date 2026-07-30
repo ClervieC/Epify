@@ -7,9 +7,9 @@ import {
   StyleSheet,
   ActivityIndicator,
   Pressable,
-  Image,
   TextInput,
 } from "react-native";
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -36,6 +36,7 @@ import {
   createList,
   fetchLists,
   fetchUserShows,
+  getCachedUserShowsFast,
   fetchWatchedEpisodes,
   decrementRewatch,
   incrementRewatch,
@@ -50,7 +51,7 @@ import {
   UserShow,
   WatchedEpisode,
 } from "../../lib/userShows";
-import { useColors, radius, type, Colors } from "../../lib/theme";
+import { useColors, radius, type, Colors, dropShadow } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
 import { useGrowIn, useFadeIn, useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
@@ -111,6 +112,14 @@ export default function ShowDetailScreen() {
   // to this screen (e.g. after adding the show) would keep bouncing the
   // tab back to Info on every refocus.
   const initialTabSet = useRef(false);
+  // expo-router-on-web keeps this screen mounted in the DOM underneath
+  // whatever's pushed on top of it (see e2e/authenticated/episode-detail.spec.ts's
+  // openFirstEpisode comment) — without this, a slow fetchUserShows()
+  // resolving *after* the user has already tapped into an episode could
+  // still flip this screen's tab to "about" behind the episode screen,
+  // which then rendered its own now-visible-in-the-DOM CommentsSection
+  // alongside the episode's, producing two "Add a comment" inputs at once.
+  const isFocusedRef = useRef(true);
   // Same one-shot idea for which season starts expanded — otherwise
   // collapsing a season by hand would keep getting overridden back open on
   // every refocus-triggered reload.
@@ -138,25 +147,36 @@ export default function ShowDetailScreen() {
     // here should jump ahead of whatever background low-priority batch (Watch
     // List prefetch, Explore's discover resolution) is already queued rather
     // than wait behind it. Cache hits skip the queue entirely either way.
-    const [showData, episodeData, userShows, watchedData] = await Promise.all([
+    // fetchUserShows() is deliberately NOT in this Promise.all — it's a live
+    // Supabase call just to answer "is this show tracked," and waiting on it
+    // used to hold back show/episodes/watched (all already cached, near
+    // instant) every time this screen opened. See applyUserShow below.
+    const [showData, episodeData, watchedData] = await Promise.all([
       getCachedShow(showId, () => getShow(showId, "high")),
       getCachedEpisodes(showId, () => getShowEpisodes(showId, "high")),
-      fetchUserShows(),
       getCachedWatchedEpisodes(showId, () => fetchWatchedEpisodes(showId)),
     ]);
     setShow(showData);
     setEpisodes(episodeData);
-    const matchedUserShow = userShows.find((s) => s.tvmaze_id === showId) ?? null;
-    setUserShow(matchedUserShow);
     setWatched(watchedData);
-    // A show you're not already tracking has no watch progress worth
-    // landing on Episodes for — Info (overview, cast) is the more useful
-    // default there, same idea as a movie's own detail page leading with
-    // its overview rather than anything watch-related.
-    if (!initialTabSet.current) {
-      initialTabSet.current = true;
-      if (!matchedUserShow) setTab("about");
+
+    // A show you're not already tracking has no watch progress worth landing
+    // on Episodes for — Info (overview, cast) is the more useful default
+    // there, same idea as a movie's own detail page leading with its
+    // overview rather than anything watch-related. Paint this from the
+    // instant local cache first (near-zero latency), then correct it from
+    // the live fetch below if it's gone stale — initialTabSet guards against
+    // the tab flipping back once it's already been set once.
+    function applyUserShow(userShows: UserShow[]) {
+      const matched = userShows.find((s) => s.tvmaze_id === showId) ?? null;
+      setUserShow(matched);
+      if (!initialTabSet.current) {
+        initialTabSet.current = true;
+        if (!matched && isFocusedRef.current) setTab("about");
+      }
     }
+    getCachedUserShowsFast().then((cached) => cached && applyUserShow(cached));
+    fetchUserShows().then(applyUserShow).catch(() => {});
     // Open the season the viewer has actually reached — the earliest aired
     // episode they haven't watched yet — rather than always landing
     // collapsed on Season 1. If every aired episode is already watched
@@ -166,7 +186,7 @@ export default function ShowDetailScreen() {
       const watchedIdSet = new Set(watchedData.map((w) => w.tvmaze_episode_id));
       const now = Date.now();
       const nextUnwatched = episodeData
-        .filter((e) => new Date(e.airstamp).getTime() <= now && !watchedIdSet.has(e.id))
+        .filter((e) => !!e.airstamp && new Date(e.airstamp).getTime() <= now && !watchedIdSet.has(e.id))
         .sort((a, b) => a.season - b.season || a.number - b.number)[0];
       if (nextUnwatched) {
         setExpandedSeason(nextUnwatched.season);
@@ -228,6 +248,7 @@ export default function ShowDetailScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      isFocusedRef.current = true;
       setLoading(true);
       setLoadError(false);
       load()
@@ -235,6 +256,7 @@ export default function ShowDetailScreen() {
         .finally(() => active && setLoading(false));
       return () => {
         active = false;
+        isFocusedRef.current = false;
       };
     }, [load])
   );
@@ -279,6 +301,13 @@ export default function ShowDetailScreen() {
   }
 
   const watchedIds = useMemo(() => new Set(watched.map((w) => w.tvmaze_episode_id)), [watched]);
+  // O(1) times_watched lookups for the per-season rewatch-count computation
+  // below — this used to be a watched.find() per episode, redone on every
+  // render for every season (not just when `watched` actually changes).
+  const watchedTimesById = useMemo(
+    () => new Map(watched.map((w) => [w.tvmaze_episode_id, w.times_watched])),
+    [watched],
+  );
 
   const seasons = useMemo(() => {
     const bySeason = new Map<number, TVMazeEpisode[]>();
@@ -292,13 +321,13 @@ export default function ShowDetailScreen() {
   const continueTracking = useMemo(() => {
     const now = Date.now();
     return episodes
-      .filter((e) => new Date(e.airstamp).getTime() <= now && !watchedIds.has(e.id))
+      .filter((e) => !!e.airstamp && new Date(e.airstamp).getTime() <= now && !watchedIds.has(e.id))
       .sort((a, b) => a.season - b.season || a.number - b.number)
       .slice(0, 5);
   }, [episodes, watchedIds]);
 
   const airedEpisodes = useMemo(
-    () => episodes.filter((e) => new Date(e.airstamp).getTime() <= Date.now()),
+    () => episodes.filter((e) => !!e.airstamp && new Date(e.airstamp).getTime() <= Date.now()),
     [episodes]
   );
   const progress = airedEpisodes.length > 0 ? watched.length / airedEpisodes.length : 0;
@@ -416,7 +445,7 @@ export default function ShowDetailScreen() {
     if (!isWatched) {
       const earlierUnwatched = episodes.filter((e) => {
         const isEarlier = e.season < ep.season || (e.season === ep.season && e.number < ep.number);
-        const aired = new Date(e.airstamp).getTime() <= Date.now();
+        const aired = !!e.airstamp && new Date(e.airstamp).getTime() <= Date.now();
         return isEarlier && aired && !watchedIds.has(e.id);
       });
 
@@ -472,7 +501,7 @@ export default function ShowDetailScreen() {
   }
 
   async function markSeasonWatched(eps: TVMazeEpisode[]) {
-    const unwatched = eps.filter((e) => !watchedIds.has(e.id) && new Date(e.airstamp).getTime() <= Date.now());
+    const unwatched = eps.filter((e) => !watchedIds.has(e.id) && !!e.airstamp && new Date(e.airstamp).getTime() <= Date.now());
     if (unwatched.length === 0) return;
     await setEpisodesWatched(
       showId,
@@ -590,7 +619,7 @@ export default function ShowDetailScreen() {
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <GestureDetector gesture={swipeDownGesture}>
           <Reanimated.View style={[styles.hero, swipeDownStyle]}>
-            {show.image && <Image source={{ uri: show.image.original }} style={styles.heroImage} />}
+            {show.image && <Image source={{ uri: show.image.original }} style={styles.heroImage} contentFit="cover" />}
             <LinearGradient colors={["transparent", colors.background]} style={[styles.heroGradient, { pointerEvents: "none" }]} />
             <View style={styles.heroTopRow}>
               <Pressable
@@ -646,7 +675,8 @@ export default function ShowDetailScreen() {
                     ? styles.progressBarDropped
                     : userShow?.status === "paused"
                       ? styles.progressBarPaused
-                      : progress >= 1 && styles.progressBarComplete,
+                      : progress >= 1 &&
+                        (show.status === "Ended" ? styles.progressBarEnded : styles.progressBarComplete),
                 ]}
               />
             </View>
@@ -715,7 +745,7 @@ export default function ShowDetailScreen() {
                           // actually unique.
                           <View key={`${c.person.id}-${c.character.id}`} style={styles.castCard}>
                             {c.person.image ? (
-                              <Image source={{ uri: c.person.image.medium }} style={styles.castImage} />
+                              <Image source={{ uri: c.person.image.medium }} style={styles.castImage} contentFit="cover" />
                             ) : (
                               <View style={[styles.castImage, styles.castImagePlaceholder]}>
                                 <Ionicons name="person" size={24} color={colors.textFaint} />
@@ -764,7 +794,7 @@ export default function ShowDetailScreen() {
                   // here too so handleSeasonCheckPress knows whether to
                   // offer "undo rewatch" alongside unwatch/rewatch.
                   const seasonTimesWatched = Math.min(
-                    ...eps.map((e) => watched.find((w) => w.tvmaze_episode_id === e.id)?.times_watched ?? 1),
+                    ...eps.map((e) => watchedTimesById.get(e.id) ?? 1),
                   );
                   const expanded = expandedSeason === seasonNum;
                   return (
@@ -940,7 +970,7 @@ function TrackCard({
     <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={onPress}>
       <Animated.View style={[styles.trackCard, { opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }]}>
         {episode.image ? (
-          <Image source={{ uri: episode.image.medium }} style={styles.trackImage} />
+          <Image source={{ uri: episode.image.medium }} style={styles.trackImage} contentFit="cover" />
         ) : (
           <View style={[styles.trackImage, { backgroundColor: colors.backgroundAlt }]} />
         )}
@@ -1043,7 +1073,7 @@ function SeasonSection({
               {aired && (
                 <WatchedCheck
                   watched={watchedIds.has(ep.id)}
-                  timesWatched={watched.find((w) => w.tvmaze_episode_id === ep.id)?.times_watched}
+                  timesWatched={watchedTimesById.get(ep.id)}
                   onToggle={() => onToggleEpisode(ep)}
                   onRewatch={() => onRewatchEpisode(ep)}
                   onUndoRewatch={() => onUndoRewatchEpisode(ep)}
@@ -1096,6 +1126,11 @@ function createStyles(colors: Colors) {
   progressTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.pillBg, overflow: "hidden" },
   progressBar: { height: 6, borderRadius: 3, backgroundColor: colors.accent },
   progressBarComplete: { backgroundColor: colors.green },
+  // A 5th, distinct color — every other progress-bar state already has one
+  // (accent/purple = watching, green = caught up & still airing, yellow =
+  // paused, red = dropped), so "fully watched and the series is over" needs
+  // its own rather than doubling up on any of those.
+  progressBarEnded: { backgroundColor: colors.blue },
   progressBarDropped: { backgroundColor: colors.red },
   progressBarPaused: { backgroundColor: colors.yellow },
   progressLabel: { fontSize: 12, fontWeight: "800", color: colors.textMuted, width: 36, textAlign: "right" },
@@ -1122,12 +1157,23 @@ function createStyles(colors: Colors) {
   summary: { color: colors.text, fontSize: 14, lineHeight: 21, marginBottom: 12 },
   meta: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
   castCard: { width: 84, marginRight: 12 },
-  castImage: { width: 84, height: 84, borderRadius: radius.md, backgroundColor: colors.backgroundAlt },
+  castImage: {
+    width: 84,
+    height: 84,
+    borderRadius: radius.md,
+    backgroundColor: colors.backgroundAlt,
+    ...dropShadow({ opacity: 0.12, radius: 6, offsetY: 2, elevation: 2 }),
+  },
   castImagePlaceholder: { alignItems: "center", justifyContent: "center" },
   castName: { fontWeight: "700", fontSize: 12, color: colors.text, marginTop: 6 },
   castCharacter: { fontSize: 11, color: colors.textMuted },
   trackCard: { width: 130, marginRight: 12 },
-  trackImage: { width: 130, height: 80, borderRadius: radius.sm },
+  trackImage: {
+    width: 130,
+    height: 80,
+    borderRadius: radius.sm,
+    ...dropShadow({ opacity: 0.12, radius: 6, offsetY: 2, elevation: 2 }),
+  },
   trackCode: { fontWeight: "800", fontSize: 12, color: colors.text, marginTop: 6 },
   trackTitle: { fontSize: 12, color: colors.textMuted },
   seasonRow: { flexDirection: "row", alignItems: "center", paddingVertical: 14 },
