@@ -125,10 +125,18 @@ export default function MoviesScreen() {
   // moment either one actually paints, never just on focus/mount.
   const hasLoadedOnce = useRef(false);
   const lastLoadedAt = useRef(0);
+  // Bumped at the start of every reload() and by handleUnwatched/
+  // handleRewatched below — a reload already in flight (e.g. from a focus
+  // just before the user unwatches/rewatches a card) could otherwise resolve
+  // after that mutation's own functional setState and silently revert it
+  // with the pre-mutation list it fetched.
+  const moviesVersionRef = useRef(0);
   const reload = useCallback(() => {
     lastLoadedAt.current = Date.now();
+    const myVersion = ++moviesVersionRef.current;
     Promise.all([fetchUserMovies(), fetchMovieWatchlist()])
       .then(([w, wl]) => {
+        if (moviesVersionRef.current !== myVersion) return;
         setMovies(w);
         setWatchlist(wl);
         hasLoadedOnce.current = true;
@@ -168,9 +176,11 @@ export default function MoviesScreen() {
   // just one is unwatched/rewatched — an inline arrow function recreated on
   // every render would defeat that regardless of memo.
   const handleUnwatched = useCallback((id: string) => {
+    moviesVersionRef.current++;
     setMovies((prev) => prev.filter((m) => m.id !== id));
   }, []);
   const handleRewatched = useCallback((updated: UserMovie) => {
+    moviesVersionRef.current++;
     setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
   }, []);
 

@@ -6,6 +6,8 @@ import { useAuth } from "../../context/AuthContext";
 import { fetchMyProfile, fetchAllProfilesForAdmin, fetchProfiles, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
 import { fetchReports, resolveReport, dismissReport, Report, ReportStatus, ReportTargetType } from "../../lib/reports";
 import { fetchSupportConversationsForAdmin, SupportConversation } from "../../lib/support";
+import { fetchCommentsByIds } from "../../lib/comments";
+import { fetchMovieCommentsByIds } from "../../lib/movieComments";
 import { getShow, getEpisodeWithShow } from "../../lib/tvmaze";
 import { mapWithConcurrency } from "../../lib/concurrency";
 import { useLanguage } from "../../lib/i18n";
@@ -28,6 +30,11 @@ const TARGET_ICON: Record<ReportTargetType, keyof typeof Ionicons.glyphMap> = {
 interface EpisodeInfo {
   name: string;
   showName: string | null;
+}
+
+interface CommentInfo {
+  body: string;
+  authorName: string | null;
 }
 
 const TARGET_COLOR: Record<ReportTargetType, string> = {
@@ -61,6 +68,8 @@ export default function AdminScreen() {
   const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
   const [showNames, setShowNames] = useState<Map<number, string>>(new Map());
   const [episodeInfo, setEpisodeInfo] = useState<Map<number, EpisodeInfo>>(new Map());
+  const [commentInfo, setCommentInfo] = useState<Map<string, CommentInfo>>(new Map());
+  const [movieCommentInfo, setMovieCommentInfo] = useState<Map<string, CommentInfo>>(new Map());
 
   // Gated server-side too (see the "Admins view/update all reports" RLS
   // policies in supabase/schema.sql) — this client-side check is purely so
@@ -132,6 +141,40 @@ export default function AdminScreen() {
         return next;
       });
     });
+
+    const commentIds = Array.from(
+      new Set(
+        data
+          .filter((r) => r.target_type === "comment" && r.target_comment_id)
+          .map((r) => r.target_comment_id as string),
+      ),
+    );
+    fetchCommentsByIds(commentIds)
+      .then((comments) => {
+        setCommentInfo((prev) => {
+          const next = new Map(prev);
+          for (const c of comments) next.set(c.id, { body: c.body, authorName: c.author?.username ?? null });
+          return next;
+        });
+      })
+      .catch(() => {});
+
+    const movieCommentIds = Array.from(
+      new Set(
+        data
+          .filter((r) => r.target_type === "movie_comment" && r.target_movie_comment_id)
+          .map((r) => r.target_movie_comment_id as string),
+      ),
+    );
+    fetchMovieCommentsByIds(movieCommentIds)
+      .then((comments) => {
+        setMovieCommentInfo((prev) => {
+          const next = new Map(prev);
+          for (const c of comments) next.set(c.id, { body: c.body, authorName: c.author?.username ?? null });
+          return next;
+        });
+      })
+      .catch(() => {});
   }
 
   const loadUsers = useCallback((query: string) => {
@@ -238,6 +281,8 @@ export default function AdminScreen() {
                   userNames={userNames}
                   showNames={showNames}
                   episodeInfo={episodeInfo}
+                  commentInfo={commentInfo}
+                  movieCommentInfo={movieCommentInfo}
                 />
               ))}
             </ScrollView>
@@ -304,12 +349,20 @@ export default function AdminScreen() {
   );
 }
 
+function commentSummary(label: string, info: CommentInfo | undefined, fallbackId: string | undefined): string {
+  if (!info) return `${label} · ${fallbackId?.slice(0, 8)}`;
+  const preview = info.body.length > 60 ? `${info.body.slice(0, 60)}…` : info.body;
+  return info.authorName ? `${label} · ${info.authorName}: "${preview}"` : `${label} · "${preview}"`;
+}
+
 function targetSummary(
   t: ReturnType<typeof useLanguage>["t"],
   r: Report,
   userNames: Map<string, string>,
   showNames: Map<number, string>,
   episodeInfo: Map<number, EpisodeInfo>,
+  commentInfo: Map<string, CommentInfo>,
+  movieCommentInfo: Map<string, CommentInfo>,
 ): string {
   switch (r.target_type) {
     case "user": {
@@ -317,9 +370,17 @@ function targetSummary(
       return `${t.admin.targetUser} · ${name ?? r.target_user_id?.slice(0, 8)}`;
     }
     case "comment":
-      return `${t.admin.targetComment} · ${r.target_comment_id?.slice(0, 8)}`;
+      return commentSummary(
+        t.admin.targetComment,
+        r.target_comment_id ? commentInfo.get(r.target_comment_id) : undefined,
+        r.target_comment_id ?? undefined,
+      );
     case "movie_comment":
-      return `${t.admin.targetMovieComment} · ${r.target_movie_comment_id?.slice(0, 8)}`;
+      return commentSummary(
+        t.admin.targetMovieComment,
+        r.target_movie_comment_id ? movieCommentInfo.get(r.target_movie_comment_id) : undefined,
+        r.target_movie_comment_id ?? undefined,
+      );
     case "show": {
       const name = r.target_tvmaze_show_id ? showNames.get(r.target_tvmaze_show_id) : undefined;
       return name ? `${name} (#${r.target_tvmaze_show_id})` : `${t.admin.targetShow} #${r.target_tvmaze_show_id}`;
@@ -340,12 +401,16 @@ function ReportCard({
   userNames,
   showNames,
   episodeInfo,
+  commentInfo,
+  movieCommentInfo,
 }: {
   report: Report;
   onActed: () => void;
   userNames: Map<string, string>;
   showNames: Map<number, string>;
   episodeInfo: Map<number, EpisodeInfo>;
+  commentInfo: Map<string, CommentInfo>;
+  movieCommentInfo: Map<string, CommentInfo>;
 }) {
   const { t } = useLanguage();
   const [note, setNote] = useState("");
@@ -372,7 +437,7 @@ function ReportCard({
           <Ionicons name={TARGET_ICON[report.target_type]} size={15} color={color} />
         </View>
         <Text style={styles.cardTarget} numberOfLines={1}>
-          {targetSummary(t, report, userNames, showNames, episodeInfo)}
+          {targetSummary(t, report, userNames, showNames, episodeInfo, commentInfo, movieCommentInfo)}
         </Text>
         <Text style={styles.cardDate}>{shortDate(report.created_at)}</Text>
       </View>

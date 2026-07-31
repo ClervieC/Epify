@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, PropsWithChildren } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, PropsWithChildren } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "./AuthContext";
 import { fetchLatestFollowingActivityAt } from "../lib/activity";
@@ -39,16 +39,25 @@ export function ActivityProvider({ children }: PropsWithChildren) {
   const { session } = useAuth();
   const [hasUnseen, setHasUnseen] = useState(false);
   const [latestAt, setLatestAt] = useState<string | null>(null);
+  // Bumped by markSeen() — refresh()'s own AsyncStorage read (awaited mid-
+  // chain, so this can genuinely straddle a markSeen() call) could otherwise
+  // land after markSeen's optimistic setHasUnseen(false) and read the
+  // not-yet-committed pre-markSeen value back, flipping the tab bar dot back
+  // on right after the user just cleared it.
+  const versionRef = useRef(0);
 
   const refresh = useCallback(() => {
+    const myVersion = ++versionRef.current;
     fetchLatestFollowingActivityAt()
       .then(async (latest) => {
+        if (versionRef.current !== myVersion) return;
         setLatestAt(latest);
         if (!latest) {
           setHasUnseen(false);
           return;
         }
         const lastSeen = await AsyncStorage.getItem(LAST_SEEN_KEY);
+        if (versionRef.current !== myVersion) return;
         setHasUnseen(!lastSeen || new Date(latest) > new Date(lastSeen));
       })
       .catch(() => {});
@@ -64,6 +73,7 @@ export function ActivityProvider({ children }: PropsWithChildren) {
   }, [session, refresh]);
 
   const markSeen = useCallback((latestKnownAt?: string) => {
+    versionRef.current++;
     setHasUnseen(false);
     const stamp = latestKnownAt ?? latestAt ?? new Date().toISOString();
     AsyncStorage.setItem(LAST_SEEN_KEY, stamp).catch(() => {});

@@ -72,6 +72,14 @@ export async function postMovieComment(tmdbId: number, body: string, parentComme
   if (error) throw error;
 }
 
+// Admin report cards only — see fetchCommentsByIds in lib/comments.ts.
+export async function fetchMovieCommentsByIds(commentIds: string[]): Promise<EnrichedMovieComment[]> {
+  if (commentIds.length === 0) return [];
+  const { data, error } = await supabase.from("movie_comments").select("*").in("id", commentIds);
+  if (error) throw error;
+  return enrichMovieComments(data as MovieComment[]);
+}
+
 export async function deleteMovieComment(commentId: string): Promise<void> {
   const { error } = await supabase.from("movie_comments").delete().eq("id", commentId);
   if (error) throw error;

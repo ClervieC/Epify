@@ -152,8 +152,8 @@ export default function ShowDetailScreen() {
     // used to hold back show/episodes/watched (all already cached, near
     // instant) every time this screen opened. See applyUserShow below.
     const [showData, episodeData, watchedData] = await Promise.all([
-      getCachedShow(showId, () => getShow(showId, "high")),
-      getCachedEpisodes(showId, () => getShowEpisodes(showId, "high")),
+      getCachedShow(showId, () => getShow(showId, "high"), true),
+      getCachedEpisodes(showId, () => getShowEpisodes(showId, "high"), true),
       getCachedWatchedEpisodes(showId, () => fetchWatchedEpisodes(showId)),
     ]);
     setShow(showData);

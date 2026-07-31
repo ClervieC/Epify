@@ -107,6 +107,16 @@ export async function postEpisodeComment(
   if (error) throw error;
 }
 
+// Admin report cards only — resolves reported comment ids straight to their
+// body/author instead of a raw uuid, mirroring the show/episode name
+// resolution already done for other report target types.
+export async function fetchCommentsByIds(commentIds: string[]): Promise<EnrichedComment[]> {
+  if (commentIds.length === 0) return [];
+  const { data, error } = await supabase.from("comments").select("*").in("id", commentIds);
+  if (error) throw error;
+  return enrichComments(data as Comment[]);
+}
+
 export async function deleteComment(commentId: string): Promise<void> {
   const { error } = await supabase.from("comments").delete().eq("id", commentId);
   if (error) throw error;

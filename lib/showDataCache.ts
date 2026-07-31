@@ -26,8 +26,15 @@ function createCache<T>(name: string, ttlMs: number) {
   // "mark watched" mutation could resurrect stale state for the full TTL.
   const invalidatedAt = new Map<number, number>();
   // Dedupes concurrent getOrFetch calls for the same id (e.g. Watch List
-  // and a show's detail screen open at once) onto a single in-flight fetch.
-  const inFlight = new Map<number, Promise<T>>();
+  // and a show's detail screen open at once) onto a single in-flight fetch —
+  // but only when they're the same priority. A background low-priority
+  // fetch (Watch List's tracked-shows prefetch, recap, showStats, ...) that
+  // happens to already be in flight for a show the user then taps into must
+  // not have the tap's fetch silently merged into it: TVmaze's high/low
+  // queue (lib/tvmaze.ts) exists precisely so an interactive open jumps
+  // ahead of queued background work, and reusing the low-priority promise
+  // here would defeat that by inheriting its place in line.
+  const inFlight = new Map<number, { promise: Promise<T>; highPriority: boolean }>();
 
   function storageKey(id: number) {
     return `${STORAGE_PREFIX}${name}:${id}`;
@@ -60,12 +67,12 @@ function createCache<T>(name: string, ttlMs: number) {
     inFlight.clear();
   }
 
-  async function getOrFetch(id: number, fetcher: () => Promise<T>): Promise<T> {
+  async function getOrFetch(id: number, fetcher: () => Promise<T>, highPriority = false): Promise<T> {
     const cached = get(id);
     if (cached) return cached;
 
     const existing = inFlight.get(id);
-    if (existing) return existing;
+    if (existing && (existing.highPriority || !highPriority)) return existing.promise;
 
     const startedAt = Date.now();
     const promise = (async () => {
@@ -112,11 +119,16 @@ function createCache<T>(name: string, ttlMs: number) {
       }
     })();
 
-    inFlight.set(id, promise);
+    const entry = { promise, highPriority };
+    inFlight.set(id, entry);
     try {
       return await promise;
     } finally {
-      inFlight.delete(id);
+      // Only clear if this is still the current entry — a high-priority
+      // call that started after this one (and so replaced it above without
+      // waiting for it) owns the slot now, and this fetch finishing shouldn't
+      // clear that newer entry out from under it.
+      if (inFlight.get(id) === entry) inFlight.delete(id);
     }
   }
 
@@ -138,12 +150,12 @@ const showInfoCache = createCache<TVMazeShow>("show", SHOW_INFO_TTL);
 const episodesCache = createCache<TVMazeEpisode[]>("episodes", EPISODES_TTL);
 const watchedCache = createCache<WatchedEpisode[]>("watched", WATCHED_TTL);
 
-export function getCachedShow(showId: number, fetcher: () => Promise<TVMazeShow>) {
-  return showInfoCache.getOrFetch(showId, fetcher);
+export function getCachedShow(showId: number, fetcher: () => Promise<TVMazeShow>, highPriority = false) {
+  return showInfoCache.getOrFetch(showId, fetcher, highPriority);
 }
 
-export function getCachedEpisodes(showId: number, fetcher: () => Promise<TVMazeEpisode[]>) {
-  return episodesCache.getOrFetch(showId, fetcher);
+export function getCachedEpisodes(showId: number, fetcher: () => Promise<TVMazeEpisode[]>, highPriority = false) {
+  return episodesCache.getOrFetch(showId, fetcher, highPriority);
 }
 
 export function getCachedWatchedEpisodes(showId: number, fetcher: () => Promise<WatchedEpisode[]>) {

@@ -1,6 +1,6 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
-import { invalidateWatchedEpisodes, patchCachedWatchedEpisodes } from "./showDataCache";
+import { patchCachedWatchedEpisodes } from "./showDataCache";
 
 // Persisted fallback for fetchUserShows() below — every show/episode detail
 // screen calls it (alongside the TVmaze data, which is already cached and
@@ -448,19 +448,24 @@ export async function setEpisodesWatched(
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
 
-  const { error } = await supabase.from("watched_episodes").upsert(
-    episodes.map((ep) => ({
-      user_id: userId,
-      tvmaze_show_id: showId,
-      tvmaze_episode_id: ep.id,
-      season: ep.season,
-      number: ep.number,
-      watched: true,
-    })),
-    { onConflict: "user_id,tvmaze_episode_id" }
-  );
+  const { data, error } = await supabase
+    .from("watched_episodes")
+    .upsert(
+      episodes.map((ep) => ({
+        user_id: userId,
+        tvmaze_show_id: showId,
+        tvmaze_episode_id: ep.id,
+        season: ep.season,
+        number: ep.number,
+        watched: true,
+      })),
+      { onConflict: "user_id,tvmaze_episode_id" }
+    )
+    .select();
   if (error) throw error;
-  invalidateWatchedEpisodes(showId);
+  const rows = data as WatchedEpisode[];
+  const newIds = new Set(rows.map((r) => r.tvmaze_episode_id));
+  patchCachedWatchedEpisodes(showId, (prev) => [...prev.filter((w) => !newIds.has(w.tvmaze_episode_id)), ...rows]);
   await resumeIfPausedOrDropped(showId);
 }
 
@@ -475,7 +480,8 @@ export async function setEpisodesUnwatched(showId: number, episodeIds: number[])
     .eq("user_id", userId)
     .in("tvmaze_episode_id", episodeIds);
   if (error) throw error;
-  invalidateWatchedEpisodes(showId);
+  const removed = new Set(episodeIds);
+  patchCachedWatchedEpisodes(showId, (prev) => prev.filter((w) => !removed.has(w.tvmaze_episode_id)));
 }
 
 // Bulk version of incrementRewatch — used to mark a whole season/show as
@@ -502,7 +508,18 @@ export async function bulkIncrementRewatch(
   );
   const failed = results.find((r) => r.error);
   if (failed?.error) throw failed.error;
-  invalidateWatchedEpisodes(showId);
+  // Patched from the already-known new counts rather than re-fetched —
+  // spreading each existing cached row keeps its other fields (rating,
+  // feeling, is_favorite) intact instead of needing a second round trip
+  // just to learn what this call already knows.
+  const newCounts = new Map(episodes.map((e) => [e.episodeId, e.timesWatched + 1]));
+  patchCachedWatchedEpisodes(showId, (prev) =>
+    prev.map((w) =>
+      newCounts.has(w.tvmaze_episode_id)
+        ? { ...w, times_watched: newCounts.get(w.tvmaze_episode_id)!, watched_at: watchedAt }
+        : w
+    )
+  );
 }
 
 // Mirrors bulkIncrementRewatch — "I didn't actually rewatch this whole
@@ -528,7 +545,10 @@ export async function bulkDecrementRewatch(
   );
   const failed = results.find((r) => r.error);
   if (failed?.error) throw failed.error;
-  invalidateWatchedEpisodes(showId);
+  const newCounts = new Map(episodes.map((e) => [e.episodeId, Math.max(1, e.timesWatched - 1)]));
+  patchCachedWatchedEpisodes(showId, (prev) =>
+    prev.map((w) => (newCounts.has(w.tvmaze_episode_id) ? { ...w, times_watched: newCounts.get(w.tvmaze_episode_id)! } : w))
+  );
 }
 
 export async function bulkUpsertWatchedEpisodes(
@@ -540,24 +560,30 @@ export async function bulkUpsertWatchedEpisodes(
   if (!userId) throw new Error("Not authenticated");
 
   const CHUNK_SIZE = 300;
+  const upserted: WatchedEpisode[] = [];
   for (let i = 0; i < records.length; i += CHUNK_SIZE) {
     const chunk = records.slice(i, i + CHUNK_SIZE);
-    const { error } = await supabase.from("watched_episodes").upsert(
-      chunk.map((r) => ({
-        user_id: userId,
-        tvmaze_show_id: showId,
-        tvmaze_episode_id: r.episodeId,
-        season: r.season,
-        number: r.number,
-        watched: true,
-        watched_at: r.watchedAt,
-        times_watched: r.timesWatched,
-      })),
-      { onConflict: "user_id,tvmaze_episode_id" }
-    );
+    const { data, error } = await supabase
+      .from("watched_episodes")
+      .upsert(
+        chunk.map((r) => ({
+          user_id: userId,
+          tvmaze_show_id: showId,
+          tvmaze_episode_id: r.episodeId,
+          season: r.season,
+          number: r.number,
+          watched: true,
+          watched_at: r.watchedAt,
+          times_watched: r.timesWatched,
+        })),
+        { onConflict: "user_id,tvmaze_episode_id" }
+      )
+      .select();
     if (error) throw error;
+    upserted.push(...(data as WatchedEpisode[]));
   }
-  invalidateWatchedEpisodes(showId);
+  const newIds = new Set(upserted.map((r) => r.tvmaze_episode_id));
+  patchCachedWatchedEpisodes(showId, (prev) => [...prev.filter((w) => !newIds.has(w.tvmaze_episode_id)), ...upserted]);
 }
 
 export async function rateEpisode(
@@ -566,24 +592,30 @@ export async function rateEpisode(
   rating: number | null,
   feeling: string | null
 ) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("watched_episodes")
     .update({ rating, feeling })
-    .eq("tvmaze_episode_id", tvmazeEpisodeId);
+    .eq("tvmaze_episode_id", tvmazeEpisodeId)
+    .select()
+    .single();
   if (error) throw error;
-  invalidateWatchedEpisodes(showId);
+  const row = data as WatchedEpisode;
+  patchCachedWatchedEpisodes(showId, (prev) => prev.map((w) => (w.tvmaze_episode_id === tvmazeEpisodeId ? row : w)));
 }
 
 // Only ever called on an episode that's already watched (see the heart
 // toggle in app/episode/[id].tsx, gated the same way rating/feeling are) —
 // a favorite with nothing watched to attach it to has no row to set this on.
 export async function setEpisodeFavorite(showId: number, tvmazeEpisodeId: number, isFavorite: boolean) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("watched_episodes")
     .update({ is_favorite: isFavorite })
-    .eq("tvmaze_episode_id", tvmazeEpisodeId);
+    .eq("tvmaze_episode_id", tvmazeEpisodeId)
+    .select()
+    .single();
   if (error) throw error;
-  invalidateWatchedEpisodes(showId);
+  const row = data as WatchedEpisode;
+  patchCachedWatchedEpisodes(showId, (prev) => prev.map((w) => (w.tvmaze_episode_id === tvmazeEpisodeId ? row : w)));
 }
 
 // For Profile's "Favorite episodes" section — global across every show,
@@ -630,8 +662,9 @@ export async function incrementRewatch(tvmazeEpisodeId: number, currentTimesWatc
     .select()
     .single();
   if (error) throw error;
-  invalidateWatchedEpisodes(data.tvmaze_show_id);
-  return data as WatchedEpisode;
+  const row = data as WatchedEpisode;
+  patchCachedWatchedEpisodes(row.tvmaze_show_id, (prev) => prev.map((w) => (w.tvmaze_episode_id === tvmazeEpisodeId ? row : w)));
+  return row;
 }
 
 // For "I didn't actually watch it again, I misclicked" — removes just the
@@ -647,6 +680,7 @@ export async function decrementRewatch(tvmazeEpisodeId: number, currentTimesWatc
     .select()
     .single();
   if (error) throw error;
-  invalidateWatchedEpisodes(data.tvmaze_show_id);
-  return data as WatchedEpisode;
+  const row = data as WatchedEpisode;
+  patchCachedWatchedEpisodes(row.tvmaze_show_id, (prev) => prev.map((w) => (w.tvmaze_episode_id === tvmazeEpisodeId ? row : w)));
+  return row;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View, StyleSheet } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import {
@@ -64,19 +64,27 @@ export default function MovieDetailScreen() {
   const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
   const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
   const [recommendations, setRecommendations] = useState<TMDBSearchResult[]>([]);
+  // Bumped by every write to `movie` — both this reload and every mutation
+  // handler below (handleRewatch, handleToggleFavorite, ...) — so that a
+  // reload already in flight when a mutation lands (e.g. rating a movie
+  // right after this screen refocuses) can tell its own fetch predates that
+  // mutation and skip applying its now-stale result, instead of silently
+  // reverting it a moment later.
+  const movieVersionRef = useRef(0);
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
       setLoading(true);
       setLoadError(false);
+      const myVersion = ++movieVersionRef.current;
       fetchUserMovie(id)
         .then((data) => {
-          if (!active) return;
+          if (!active || movieVersionRef.current !== myVersion) return;
           if (!data) setLoadError(true);
           else setMovie(data);
         })
-        .catch(() => active && setLoadError(true))
+        .catch(() => active && movieVersionRef.current === myVersion && setLoadError(true))
         .finally(() => active && setLoading(false));
       return () => {
         active = false;
@@ -127,6 +135,12 @@ export default function MovieDetailScreen() {
   const [comments, setComments] = useState<EnrichedMovieComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [feelingCounts, setFeelingCounts] = useState<Record<string, number>>({});
+  // Same idea as movieVersionRef above, scoped to `comments` — posting a
+  // comment ends with its own refetch-then-overwrite (see handlePostComment
+  // below); without this, deleting or reacting to a *different* comment
+  // while that post is still in flight gets silently reverted the moment
+  // the post's refetch (which started before that delete/reaction) lands.
+  const commentsVersionRef = useRef(0);
 
   // Spoiler-sensitive, same as episode detail — comments/feelings-tally load
   // early if spoiler mode is on, not just once the movie is actually watched.
@@ -172,44 +186,58 @@ export default function MovieDetailScreen() {
         movie!.tmdb_id ?? undefined,
         movie!.poster_path ?? tmdb?.poster_path
       );
+      movieVersionRef.current++;
       setMovie(updated);
     }
   }
   async function handleRewatch() {
     const updated = await incrementMovieRewatch(movie!.id, movie!.times_watched);
+    movieVersionRef.current++;
     setMovie(updated);
   }
   async function handleUndoRewatch() {
     const updated = await decrementMovieRewatch(movie!.id, movie!.times_watched);
+    movieVersionRef.current++;
     setMovie(updated);
   }
   async function handleToggleFavorite() {
     const updated = await setMovieFavorite(movie!.id, !movie!.is_favorite);
+    movieVersionRef.current++;
     setMovie(updated);
   }
   async function handleRate(value: number) {
     const next = movie!.rating === value ? null : value;
     const updated = await rateMovie(movie!.id, next, movie!.feeling);
+    movieVersionRef.current++;
     setMovie(updated);
   }
   async function handleFeeling(key: string) {
     const next = movie!.feeling === key ? null : key;
     const updated = await rateMovie(movie!.id, movie!.rating, next);
+    movieVersionRef.current++;
     setMovie(updated);
   }
   async function handlePostComment(body: string, parentId?: string) {
     if (!commentTmdbId) return;
     await postMovieComment(commentTmdbId, body, parentId);
-    setComments(await fetchMovieComments(commentTmdbId));
+    const myVersion = ++commentsVersionRef.current;
+    const fresh = await fetchMovieComments(commentTmdbId);
+    if (commentsVersionRef.current === myVersion) setComments(fresh);
   }
   function refreshComments() {
-    if (commentTmdbId) fetchMovieComments(commentTmdbId).then(setComments);
+    if (!commentTmdbId) return;
+    const myVersion = ++commentsVersionRef.current;
+    fetchMovieComments(commentTmdbId).then((fresh) => {
+      if (commentsVersionRef.current === myVersion) setComments(fresh);
+    });
   }
   function handleDeleteComment(id: string) {
+    commentsVersionRef.current++;
     setComments((prev) => prev.filter((c) => c.id !== id));
     deleteMovieComment(id).catch(refreshComments);
   }
   function handleToggleReaction(id: string, currentlyReacted: boolean) {
+    commentsVersionRef.current++;
     setComments((prev) =>
       prev.map((c) =>
         c.id === id

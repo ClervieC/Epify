@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, PropsWithChildren } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, PropsWithChildren } from "react";
 import { useAuth } from "./AuthContext";
 import { fetchUnreadNotificationCount, markAllNotificationsRead } from "../lib/notifications";
 import { checkStaleWatchlistReminders } from "../lib/staleWatchlist";
@@ -26,10 +26,17 @@ const NotificationsContext = createContext<NotificationsContextValue>({
 export function NotificationsProvider({ children }: PropsWithChildren) {
   const { session } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
+  // Bumped by markAllRead() so a refresh() already in flight when the user
+  // opens Notifications (e.g. app/(tabs)/_layout.tsx's focus-triggered poll,
+  // fired just before markAllRead's own un-awaited write commits) can't
+  // resolve afterward and silently resurrect a nonzero count over the
+  // optimistic 0.
+  const versionRef = useRef(0);
 
   const refresh = useCallback(() => {
+    const myVersion = ++versionRef.current;
     fetchUnreadNotificationCount()
-      .then(setUnreadCount)
+      .then((count) => versionRef.current === myVersion && setUnreadCount(count))
       .catch(() => {});
   }, []);
 
@@ -48,6 +55,7 @@ export function NotificationsProvider({ children }: PropsWithChildren) {
   }, [session, refresh]);
 
   const markAllRead = useCallback(() => {
+    versionRef.current++;
     setUnreadCount(0);
     markAllNotificationsRead().catch(() => {});
   }, []);

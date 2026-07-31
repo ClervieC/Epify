@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View, StyleSheet } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import {
@@ -63,6 +63,12 @@ export default function TmdbMovieDetailScreen() {
   const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
   const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
   const [recommendations, setRecommendations] = useState<TMDBSearchResult[]>([]);
+  // Bumped by every write to `userRow` — this reload and every mutation
+  // handler below (handleRewatch, handleToggleFavorite, ...) — so a reload
+  // already in flight when a mutation lands can tell its own fetch predates
+  // that mutation and skip applying its now-stale result, instead of
+  // silently reverting it a moment later. Same pattern as app/movie/[id].tsx.
+  const userRowVersionRef = useRef(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -71,6 +77,7 @@ export default function TmdbMovieDetailScreen() {
       setTmdbNotFound(false);
       setCast([]);
       setUserRowLoaded(false);
+      const myVersion = ++userRowVersionRef.current;
 
       // Sequenced (not parallel) with the userRow lookup: fetchUserMovieByTmdbId
       // needs this movie's title/year as a fallback for rows that predate
@@ -87,7 +94,7 @@ export default function TmdbMovieDetailScreen() {
         const year = details?.release_date ? new Date(details.release_date).getFullYear() : null;
         try {
           const row = await fetchUserMovieByTmdbId(tmdbId, details?.title, year);
-          if (active) setUserRow(row);
+          if (active && userRowVersionRef.current === myVersion) setUserRow(row);
         } finally {
           if (active) setUserRowLoaded(true);
         }
@@ -116,6 +123,9 @@ export default function TmdbMovieDetailScreen() {
   const [comments, setComments] = useState<EnrichedMovieComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [feelingCounts, setFeelingCounts] = useState<Record<string, number>>({});
+  // Same idea as userRowVersionRef above, scoped to `comments` — see the
+  // matching comment on app/movie/[id].tsx's own commentsVersionRef.
+  const commentsVersionRef = useRef(0);
 
   // Spoiler-sensitive, same as episode detail — comments/feelings-tally load
   // early if spoiler mode is on, not just once the movie is actually watched.
@@ -144,62 +154,78 @@ export default function TmdbMovieDetailScreen() {
 
   async function handleAddToWatchlist() {
     const row = await addMovieToWatchlist(tmdbId, title, year, tmdb?.poster_path);
+    userRowVersionRef.current++;
     setUserRow(row);
   }
   async function handleRemoveFromWatchlist() {
     if (!userRow) return;
     await removeUserMovie(userRow.id);
+    userRowVersionRef.current++;
     setUserRow(null);
   }
   async function handleToggleWatched() {
     if (isWatched) {
       await setMovieWatched(title, year, false);
+      userRowVersionRef.current++;
       setUserRow(null);
       return;
     }
     if (notYetReleased) return;
     const updated = await setMovieWatched(title, year, true, tmdbId, tmdb?.poster_path);
+    userRowVersionRef.current++;
     setUserRow(updated);
   }
   async function handleRewatch() {
     if (!userRow) return;
     const updated = await incrementMovieRewatch(userRow.id, userRow.times_watched);
+    userRowVersionRef.current++;
     setUserRow(updated);
   }
   async function handleUndoRewatch() {
     if (!userRow) return;
     const updated = await decrementMovieRewatch(userRow.id, userRow.times_watched);
+    userRowVersionRef.current++;
     setUserRow(updated);
   }
   async function handleToggleFavorite() {
     const row = userRow ?? (await addMovieToWatchlist(tmdbId, title, year, tmdb?.poster_path));
     const updated = await setMovieFavorite(row.id, !row.is_favorite);
+    userRowVersionRef.current++;
     setUserRow(updated);
   }
   async function handleRate(value: number) {
     if (!userRow) return;
     const next = userRow.rating === value ? null : value;
     const updated = await rateMovie(userRow.id, next, userRow.feeling);
+    userRowVersionRef.current++;
     setUserRow(updated);
   }
   async function handleFeeling(key: string) {
     if (!userRow) return;
     const next = userRow.feeling === key ? null : key;
     const updated = await rateMovie(userRow.id, userRow.rating, next);
+    userRowVersionRef.current++;
     setUserRow(updated);
   }
   async function handlePostComment(body: string, parentId?: string) {
     await postMovieComment(tmdbId, body, parentId);
-    setComments(await fetchMovieComments(tmdbId));
+    const myVersion = ++commentsVersionRef.current;
+    const fresh = await fetchMovieComments(tmdbId);
+    if (commentsVersionRef.current === myVersion) setComments(fresh);
   }
   function refreshComments() {
-    fetchMovieComments(tmdbId).then(setComments);
+    const myVersion = ++commentsVersionRef.current;
+    fetchMovieComments(tmdbId).then((fresh) => {
+      if (commentsVersionRef.current === myVersion) setComments(fresh);
+    });
   }
   function handleDeleteComment(id: string) {
+    commentsVersionRef.current++;
     setComments((prev) => prev.filter((c) => c.id !== id));
     deleteMovieComment(id).catch(refreshComments);
   }
   function handleToggleReaction(id: string, currentlyReacted: boolean) {
+    commentsVersionRef.current++;
     setComments((prev) =>
       prev.map((c) =>
         c.id === id

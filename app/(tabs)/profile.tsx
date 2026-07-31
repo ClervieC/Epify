@@ -155,6 +155,16 @@ export default function ProfileScreen() {
   const { t } = useLanguage();
 
   const lastLoadedAt = useRef(0);
+  // Bumped at the start of every load() run and by every mutation handler
+  // below (list rename/delete, avatar change, movie unwatch/rewatch, ...) —
+  // load()'s own several Supabase round trips can still be in flight when
+  // one of those mutations lands (e.g. right after this tab refocuses), and
+  // without this, load()'s eventual setShows/setLists/setProfile/... would
+  // silently overwrite the mutation with the pre-mutation snapshot it
+  // fetched before the mutation happened. No loadGeneration-style guard
+  // existed here before — app/(tabs)/index.tsx is the only screen that had
+  // one, and this mirrors it.
+  const profileVersionRef = useRef(0);
   const scrollRef = useRef<ScrollView>(null);
   useScrollToTopOnTabPress(() =>
     scrollRef.current?.scrollTo({ y: 0, animated: true }),
@@ -199,6 +209,8 @@ export default function ProfileScreen() {
 
   const load = useCallback(() => {
     lastLoadedAt.current = Date.now();
+    const myVersion = ++profileVersionRef.current;
+    const stillCurrent = () => profileVersionRef.current === myVersion;
     Promise.all([
       fetchUserShows(),
       fetchUserMovies(),
@@ -217,13 +229,10 @@ export default function ProfileScreen() {
         listItems,
         episodeCount,
       ]) => {
-        setShows(shows);
-        setMovies(movies);
-        setFavoriteMovies(favoriteMovies);
-        setFavorites(favorites);
-        setLists(lists);
-        setListItems(listItems);
-        setEpisodeCount(episodeCount);
+        // Snapshotting still happens even if a newer load/mutation has since
+        // landed — it's just disk persistence for next launch's instant
+        // paint, not visible state, so there's no harm writing what was
+        // actually fetched.
         saveProfileSnapshot({
           shows,
           movies,
@@ -233,15 +242,25 @@ export default function ProfileScreen() {
           listItems,
           episodeCount,
         });
+        if (!stillCurrent()) return;
+        setShows(shows);
+        setMovies(movies);
+        setFavoriteMovies(favoriteMovies);
+        setFavorites(favorites);
+        setLists(lists);
+        setListItems(listItems);
+        setEpisodeCount(episodeCount);
       },
     );
     fetchMyProfile().then((p) => {
+      if (!stillCurrent()) return;
       setProfile(p);
-      if (p) fetchFollowCounts(p.user_id).then(setFollowCounts);
+      if (p) fetchFollowCounts(p.user_id).then((c) => stillCurrent() && setFollowCounts(c));
       if (p?.is_admin) {
         Promise.all([fetchOpenReportCount(), fetchSupportNeedsResponseCount()])
-          .then(([reports, support]) =>
-            setHasAdminAlerts(reports + support > 0),
+          .then(
+            ([reports, support]) =>
+              stillCurrent() && setHasAdminAlerts(reports + support > 0),
           )
           .catch(() => {});
       }
@@ -265,6 +284,7 @@ export default function ProfileScreen() {
           });
         }),
       );
+      if (!stillCurrent()) return;
       setFavoriteEpisodes(
         episodes.map((e) => ({
           ...e,
@@ -280,10 +300,10 @@ export default function ProfileScreen() {
     // scan plus several count queries) finished on every single Profile
     // visit.
     loadLocalStreakData().then((local) => {
-      if (local) setStreakData(local);
+      if (local && stillCurrent()) setStreakData(local);
     });
     computeStreakData(announceBadges)
-      .then(setStreakData)
+      .then((d) => stillCurrent() && setStreakData(d))
       .catch(() => {});
   }, [announceBadges]);
 
@@ -291,10 +311,12 @@ export default function ProfileScreen() {
   // cards — a movie can appear in both `movies` and `favoriteMovies`, so both
   // are patched together rather than refetching either collection.
   const handleMovieUnwatched = useCallback((id: string) => {
+    profileVersionRef.current++;
     setMovies((prev) => prev.filter((m) => m.id !== id));
     setFavoriteMovies((prev) => prev.filter((m) => m.id !== id));
   }, []);
   const handleMovieRewatched = useCallback((updated: UserMovie) => {
+    profileVersionRef.current++;
     setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
     setFavoriteMovies((prev) =>
       prev.map((m) => (m.id === updated.id ? updated : m)),
@@ -319,6 +341,7 @@ export default function ProfileScreen() {
     await createList(newListName.trim());
     setNewListName("");
     setCreatingList(false);
+    profileVersionRef.current++;
     fetchLists().then(setLists);
   }
 
@@ -326,6 +349,7 @@ export default function ProfileScreen() {
   // re-fetch if the delete actually failed (offline, etc). Only touches
   // this one list's items, same as app/list/[id].tsx's own removal.
   function handleRemoveFromList(item: ListItem) {
+    profileVersionRef.current++;
     setListItems((prev) => prev.filter((i) => i.id !== item.id));
     removeShowFromList(item.list_id, item.tvmaze_id).catch(() => {
       fetchAllListItems().then(setListItems);
@@ -368,6 +392,7 @@ export default function ProfileScreen() {
           style: "destructive",
           onPress: () =>
             deleteList(list.id).then(() => {
+              profileVersionRef.current++;
               setLists((prev) => prev.filter((l) => l.id !== list.id));
             }),
         },
@@ -384,6 +409,7 @@ export default function ProfileScreen() {
         style: "destructive",
         onPress: () =>
           deleteList(list.id).then(() => {
+            profileVersionRef.current++;
             setLists((prev) => prev.filter((l) => l.id !== list.id));
             setListItems((prev) => prev.filter((i) => i.list_id !== list.id));
           }),
@@ -394,6 +420,7 @@ export default function ProfileScreen() {
   function moveListAndDelete(fromList: ShowList, toListId: string) {
     setListMenuTarget(null);
     moveListItemsAndDeleteList(fromList.id, toListId).then(() => {
+      profileVersionRef.current++;
       setLists((prev) => prev.filter((l) => l.id !== fromList.id));
       fetchAllListItems().then(setListItems);
     });
@@ -412,6 +439,7 @@ export default function ProfileScreen() {
         asset.uri,
         asset.mimeType ?? "image/jpeg",
       );
+      profileVersionRef.current++;
       setProfile((prev) => (prev ? { ...prev, avatar_url: avatarUrl } : prev));
     } catch {
       alert(t.profile.changePhoto, t.profile.changePhotoFailed);

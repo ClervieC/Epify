@@ -156,7 +156,7 @@ export default function EpisodeDetailScreen() {
       // entirely either way.
       Promise.all([
         showIdNum
-          ? getCachedEpisodes(showIdNum, () => getShowEpisodes(showIdNum, "high"))
+          ? getCachedEpisodes(showIdNum, () => getShowEpisodes(showIdNum, "high"), true)
           : Promise.resolve([]),
         showIdNum
           ? getCachedWatchedEpisodes(showIdNum, () =>
@@ -175,7 +175,7 @@ export default function EpisodeDetailScreen() {
       });
 
       if (showIdNum) {
-        getCachedShow(showIdNum, () => getShow(showIdNum, "high")).then(
+        getCachedShow(showIdNum, () => getShow(showIdNum, "high"), true).then(
           (sh) => active && setShow(sh),
         );
         getShowCast(showIdNum, "high")
