@@ -1,6 +1,7 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { lookupShowByTvdbId, TVMazeShow, Priority } from "./tvmaze";
 import { fetchWithTimeout } from "./fetchTimeout";
+import { supabase } from "./supabase";
 
 // See the same comment in lib/tvmaze.ts: the package's default export is a
 // legacy singleton backed by window.localStorage on web (~5-10MB, shared
@@ -80,14 +81,51 @@ export interface TMDBCastMember {
   order: number;
 }
 
+// TMDB's own query params only — the shared-cache path/key (see
+// fetchViaSharedCache below) is built from this same helper *without* the
+// api_key get() adds separately, so the same path is the cache key
+// regardless of which layer serves it.
+function pathWithQuery(path: string, params: Record<string, string> = {}): string {
+  const query = new URLSearchParams(params).toString();
+  return query ? `${path}?${query}` : path;
+}
+
 async function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   if (!API_KEY) throw new Error("EXPO_PUBLIC_TMDB_API_KEY is not set");
-  const query = new URLSearchParams({ api_key: API_KEY, ...params }).toString();
-  const res = await fetchWithTimeout(`${BASE_URL}${path}?${query}`);
+  const res = await fetchWithTimeout(`${BASE_URL}${pathWithQuery(path, { api_key: API_KEY, ...params })}`);
   if (!res.ok) {
     throw new Error(`TMDB request failed (${res.status}): ${path}`);
   }
   return res.json() as Promise<T>;
+}
+
+// The shared cross-user cache (supabase/functions/tmdb-cache, tmdb_api_cache
+// in supabase/schema.sql, keyed by the exact TMDB path + query string) sits
+// *behind* every local withCache below — a hit here means no TMDB call at
+// all, from anyone, ever, until that row's TTL lapses. Unlike TVmaze (rate
+// limited per caller IP), TMDB's key is one app-wide shared budget, so this
+// matters even more at scale. `{ hit: false }` on any failure (network,
+// unauthenticated, function down, whatever) — rather than throwing — means
+// a hiccup in that infrastructure never blocks getting movie/show data; it
+// just falls straight through to fetching TMDB directly, same as before
+// this existed.
+async function fetchViaSharedCache<T>(
+  path: string,
+  ttlMs: number
+): Promise<{ hit: true; payload: T } | { hit: false }> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) return { hit: false };
+    const { data, error } = await supabase.functions.invoke<{ payload: T }>("tmdb-cache", {
+      headers: { Authorization: `Bearer ${token}` },
+      body: { path, ttlMs },
+    });
+    if (error || !data) return { hit: false };
+    return { hit: true, payload: data.payload };
+  } catch {
+    return { hit: false };
+  }
 }
 
 export function posterUrl(path: string | null, size: "w200" | "w342" | "w500" = "w342") {
@@ -114,10 +152,12 @@ export function isMovieReleased(releaseDate: string | null | undefined): boolean
 // looked up again every time its detail page (or another with the same
 // title) is opened.
 export function searchMovie(title: string, year: number | null): Promise<TMDBSearchResult | null> {
+  const params: Record<string, string> = { query: title };
+  if (year) params.year = String(year);
+  const path = pathWithQuery("/search/movie", params);
   return withCache(`search:${title}::${year ?? ""}`, ONE_DAY, async () => {
-    const params: Record<string, string> = { query: title };
-    if (year) params.year = String(year);
-    const data = await get<{ results: TMDBSearchResult[] }>("/search/movie", params);
+    const shared = await fetchViaSharedCache<{ results: TMDBSearchResult[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBSearchResult[] }>("/search/movie", params);
     if (data.results.length === 0) return null;
     // Prefer an exact release-year match when the search returns several
     // (remakes, sequels sharing a title, etc.) — otherwise take the top hit,
@@ -131,15 +171,21 @@ export function searchMovie(title: string, year: number | null): Promise<TMDBSea
 }
 
 export function getMovieDetails(tmdbId: number): Promise<TMDBMovieDetails> {
-  return withCache(`movie:${tmdbId}`, ONE_DAY, () => get<TMDBMovieDetails>(`/movie/${tmdbId}`));
+  const path = `/movie/${tmdbId}`;
+  return withCache(`movie:${tmdbId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<TMDBMovieDetails>(path, ONE_DAY);
+    if (shared.hit) return shared.payload;
+    return get<TMDBMovieDetails>(path);
+  });
 }
 
 export function getMovieCast(tmdbId: number): Promise<TMDBCastMember[]> {
-  return withCache(`credits:${tmdbId}`, ONE_DAY, () =>
-    get<{ cast: TMDBCastMember[] }>(`/movie/${tmdbId}/credits`).then((d) =>
-      [...d.cast].sort((a, b) => a.order - b.order)
-    )
-  );
+  const path = `/movie/${tmdbId}/credits`;
+  return withCache(`credits:${tmdbId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ cast: TMDBCastMember[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ cast: TMDBCastMember[] }>(path);
+    return [...data.cast].sort((a, b) => a.order - b.order);
+  });
 }
 
 export function profileUrl(path: string | null, size: "w185" = "w185") {
@@ -164,15 +210,21 @@ function pickTrailer(videos: TMDBVideo[]): string | null {
 }
 
 export function getMovieTrailerUrl(tmdbId: number): Promise<string | null> {
-  return withCache(`movie-videos:${tmdbId}`, ONE_DAY, () =>
-    get<{ results: TMDBVideo[] }>(`/movie/${tmdbId}/videos`).then((d) => pickTrailer(d.results))
-  );
+  const path = `/movie/${tmdbId}/videos`;
+  return withCache(`movie-videos:${tmdbId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: TMDBVideo[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBVideo[] }>(path);
+    return pickTrailer(data.results);
+  });
 }
 
 export function getTvTrailerUrl(tmdbTvId: number): Promise<string | null> {
-  return withCache(`tv-videos:${tmdbTvId}`, ONE_DAY, () =>
-    get<{ results: TMDBVideo[] }>(`/tv/${tmdbTvId}/videos`).then((d) => pickTrailer(d.results))
-  );
+  const path = `/tv/${tmdbTvId}/videos`;
+  return withCache(`tv-videos:${tmdbTvId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: TMDBVideo[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBVideo[] }>(path);
+    return pickTrailer(data.results);
+  });
 }
 
 export interface WatchProvider {
@@ -213,39 +265,66 @@ function pickRegion(
   };
 }
 
-export function getMovieWatchProviders(tmdbId: number, language: "en" | "fr"): Promise<WatchProviders> {
-  return withCache(`movie-providers:${tmdbId}`, ONE_DAY, () =>
-    get<{ results: Record<string, any> }>(`/movie/${tmdbId}/watch/providers`).then((d) =>
-      pickRegion(d.results, language)
-    )
-  );
+// The raw TMDB response covers every region at once — caching *that*
+// (rather than the single-region result pickRegion below produces) is what
+// lets this be shared across every user regardless of their language, and
+// also means a device switching language mid-TTL re-derives the right
+// region from the same cached payload instead of serving the other
+// region's stale pick until the entry expires.
+function getMovieWatchProvidersRaw(tmdbId: number) {
+  const path = `/movie/${tmdbId}/watch/providers`;
+  return withCache(`movie-providers-raw:${tmdbId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: Record<string, any> }>(path, ONE_DAY);
+    if (shared.hit) return shared.payload.results;
+    return get<{ results: Record<string, any> }>(path).then((d) => d.results);
+  });
 }
 
-export function getTvWatchProviders(tmdbTvId: number, language: "en" | "fr"): Promise<WatchProviders> {
-  return withCache(`tv-providers:${tmdbTvId}`, ONE_DAY, () =>
-    get<{ results: Record<string, any> }>(`/tv/${tmdbTvId}/watch/providers`).then((d) =>
-      pickRegion(d.results, language)
-    )
-  );
+export async function getMovieWatchProviders(tmdbId: number, language: "en" | "fr"): Promise<WatchProviders> {
+  return pickRegion(await getMovieWatchProvidersRaw(tmdbId), language);
+}
+
+function getTvWatchProvidersRaw(tmdbTvId: number) {
+  const path = `/tv/${tmdbTvId}/watch/providers`;
+  return withCache(`tv-providers-raw:${tmdbTvId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: Record<string, any> }>(path, ONE_DAY);
+    if (shared.hit) return shared.payload.results;
+    return get<{ results: Record<string, any> }>(path).then((d) => d.results);
+  });
+}
+
+export async function getTvWatchProviders(tmdbTvId: number, language: "en" | "fr"): Promise<WatchProviders> {
+  return pickRegion(await getTvWatchProvidersRaw(tmdbTvId), language);
 }
 
 export function getMovieRecommendations(tmdbId: number): Promise<TMDBSearchResult[]> {
-  return withCache(`movie-recs:${tmdbId}`, ONE_DAY, () =>
-    get<{ results: TMDBSearchResult[] }>(`/movie/${tmdbId}/recommendations`).then((d) => d.results.slice(0, 12))
-  );
+  const path = `/movie/${tmdbId}/recommendations`;
+  return withCache(`movie-recs:${tmdbId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: TMDBSearchResult[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBSearchResult[] }>(path);
+    return data.results.slice(0, 12);
+  });
 }
 
 // Multi-result search (for the Explore "search everything" box) — distinct
 // from searchMovie above, which picks the single best match for a known
 // watched title. Cached per query since the same text is often retyped.
 export function searchMovies(query: string): Promise<TMDBSearchResult[]> {
-  return withCache(`searchAll:${query}`, ONE_DAY, () =>
-    get<{ results: TMDBSearchResult[] }>("/search/movie", { query }).then((d) => d.results)
-  );
+  const path = pathWithQuery("/search/movie", { query });
+  return withCache(`searchAll:${query}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: TMDBSearchResult[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBSearchResult[] }>("/search/movie", { query });
+    return data.results;
+  });
 }
 
 function cachedMovieList(path: string) {
-  return () => withCache(`list:${path}`, ONE_DAY, () => get<{ results: TMDBSearchResult[] }>(path).then((d) => d.results));
+  return () =>
+    withCache(`list:${path}`, ONE_DAY, async () => {
+      const shared = await fetchViaSharedCache<{ results: TMDBSearchResult[] }>(path, ONE_DAY);
+      const data = shared.hit ? shared.payload : await get<{ results: TMDBSearchResult[] }>(path);
+      return data.results;
+    });
 }
 
 export const getPopularMovies = cachedMovieList("/movie/popular");
@@ -256,15 +335,18 @@ export const getUpcomingMovies = cachedMovieList("/movie/upcoming");
 // "For You" (see lib/forYou.ts) — popularity-sorted discover filtered to the
 // genres the user actually watches most, rather than one more generic
 // popular/top-rated list. Cache key includes the genre list since unlike the
-// four lists above, this varies per user, not just per day.
+// four lists above, this varies per user, not just per day — the shared
+// cache still helps whenever two users' top genres happen to match, not
+// just identical ones.
 export function getForYouMovies(genreIds: number[]): Promise<TMDBSearchResult[]> {
   if (genreIds.length === 0) return Promise.resolve([]);
-  return withCache(`for-you-movies:${genreIds.join(",")}`, ONE_DAY, () =>
-    get<{ results: TMDBSearchResult[] }>("/discover/movie", {
-      with_genres: genreIds.join(","),
-      sort_by: "popularity.desc",
-    }).then((d) => d.results)
-  );
+  const params = { with_genres: genreIds.join(","), sort_by: "popularity.desc" };
+  const path = pathWithQuery("/discover/movie", params);
+  return withCache(`for-you-movies:${genreIds.join(",")}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: TMDBSearchResult[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBSearchResult[] }>("/discover/movie", params);
+    return data.results;
+  });
 }
 
 // TVmaze and TMDB use entirely different internal ids for the same show, but
@@ -281,7 +363,12 @@ interface TMDBTvExternalIds {
 }
 
 function getTvExternalIds(tmdbTvId: number): Promise<TMDBTvExternalIds> {
-  return withCache(`tv-external:${tmdbTvId}`, ONE_DAY, () => get<TMDBTvExternalIds>(`/tv/${tmdbTvId}/external_ids`));
+  const path = `/tv/${tmdbTvId}/external_ids`;
+  return withCache(`tv-external:${tmdbTvId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<TMDBTvExternalIds>(path, ONE_DAY);
+    if (shared.hit) return shared.payload;
+    return get<TMDBTvExternalIds>(path);
+  });
 }
 
 // Defaults to "high" for the interactive case (a direct tap in Explore that
@@ -303,17 +390,22 @@ export async function findTvmazeShowFromTmdbTv(
 // TVmaze itself doesn't have. TMDB's /find endpoint accepts an external id
 // directly — no need to search by title/year the way movies do.
 export function findTmdbTvFromTvdbId(tvdbId: number): Promise<number | null> {
-  return withCache(`find-tvdb:${tvdbId}`, ONE_DAY, () =>
-    get<{ tv_results: { id: number }[] }>(`/find/${tvdbId}`, { external_source: "tvdb_id" }).then(
-      (d) => d.tv_results[0]?.id ?? null
-    )
-  );
+  const params = { external_source: "tvdb_id" };
+  const path = pathWithQuery(`/find/${tvdbId}`, params);
+  return withCache(`find-tvdb:${tvdbId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ tv_results: { id: number }[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ tv_results: { id: number }[] }>(`/find/${tvdbId}`, params);
+    return data.tv_results[0]?.id ?? null;
+  });
 }
 
 export function getTvRecommendations(tmdbTvId: number): Promise<TMDBTvResult[]> {
-  return withCache(`tv-recs:${tmdbTvId}`, ONE_DAY, () =>
-    get<{ results: TMDBTvResult[] }>(`/tv/${tmdbTvId}/recommendations`).then((d) => d.results.slice(0, 12))
-  );
+  const path = `/tv/${tmdbTvId}/recommendations`;
+  return withCache(`tv-recs:${tmdbTvId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: TMDBTvResult[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBTvResult[] }>(path);
+    return data.results.slice(0, 12);
+  });
 }
 
 export interface TMDBTvResult {
@@ -339,21 +431,31 @@ export interface TMDBTvDetails extends TMDBTvResult {
 // findTvmazeShowFromTmdbTv() came back empty; this is what lets that
 // fallback screen show something instead of an error.
 export function getTvDetails(tmdbTvId: number): Promise<TMDBTvDetails> {
-  return withCache(`tv:${tmdbTvId}`, ONE_DAY, () => get<TMDBTvDetails>(`/tv/${tmdbTvId}`));
+  const path = `/tv/${tmdbTvId}`;
+  return withCache(`tv:${tmdbTvId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<TMDBTvDetails>(path, ONE_DAY);
+    if (shared.hit) return shared.payload;
+    return get<TMDBTvDetails>(path);
+  });
 }
 
 export function getTvCast(tmdbTvId: number): Promise<TMDBCastMember[]> {
-  return withCache(`tv-credits:${tmdbTvId}`, ONE_DAY, () =>
-    get<{ cast: TMDBCastMember[] }>(`/tv/${tmdbTvId}/credits`).then((d) => [...d.cast].sort((a, b) => a.order - b.order))
-  );
+  const path = `/tv/${tmdbTvId}/credits`;
+  return withCache(`tv-credits:${tmdbTvId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ cast: TMDBCastMember[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ cast: TMDBCastMember[] }>(path);
+    return [...data.cast].sort((a, b) => a.order - b.order);
+  });
 }
 
-
 function cachedTvList(path: string, params: Record<string, string> = {}) {
+  const fullPath = pathWithQuery(path, params);
   return () =>
-    withCache(`tvlist:${path}:${JSON.stringify(params)}`, ONE_DAY, () =>
-      get<{ results: TMDBTvResult[] }>(path, params).then((d) => d.results)
-    );
+    withCache(`tvlist:${path}:${JSON.stringify(params)}`, ONE_DAY, async () => {
+      const shared = await fetchViaSharedCache<{ results: TMDBTvResult[] }>(fullPath, ONE_DAY);
+      const data = shared.hit ? shared.payload : await get<{ results: TMDBTvResult[] }>(path, params);
+      return data.results;
+    });
 }
 
 // Same 4-category shape as the movie side (Popular/Top Rated/Now

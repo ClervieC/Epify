@@ -1,5 +1,20 @@
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchProfiles, Profile } from "./profiles";
+import { createShortCache } from "./shortCache";
+
+// NotificationsContext's own focus-triggered poll already throttles to once
+// per 10s, but that throttle is per-mount, not shared — every screen the
+// user navigates through re-triggers it independently. This cache collapses
+// those into one real network round trip every 20s regardless of how many
+// times navigation re-fires the poll in that window.
+const unreadCountCache = createShortCache<number>(20_000);
+
+// Called on sign-out (see context/AuthContext.tsx) — this cache isn't
+// scoped by user id, so without clearing it, signing into a different
+// account could briefly show the previous account's unread count.
+export function clearUnreadNotificationCountCache() {
+  unreadCountCache.invalidate();
+}
 
 export interface AppNotification {
   id: string;
@@ -39,16 +54,18 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
 }
 
 export async function fetchUnreadNotificationCount(): Promise<number> {
-  const userId = await getCurrentUserId();
-  if (!userId) return 0;
+  return unreadCountCache.getOrFetch(async () => {
+    const userId = await getCurrentUserId();
+    if (!userId) return 0;
 
-  const { count, error } = await supabase
-    .from("notifications")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("read", false);
-  if (error) throw error;
-  return count ?? 0;
+    const { count, error } = await supabase
+      .from("notifications")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("read", false);
+    if (error) throw error;
+    return count ?? 0;
+  });
 }
 
 export async function markAllNotificationsRead() {
@@ -57,4 +74,5 @@ export async function markAllNotificationsRead() {
 
   const { error } = await supabase.from("notifications").update({ read: true }).eq("user_id", userId).eq("read", false);
   if (error) throw error;
+  unreadCountCache.invalidate();
 }

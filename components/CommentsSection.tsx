@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, type, Colors, dropShadow } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { alert } from "../lib/alert";
+import { enterToSubmit } from "../lib/enterToSubmit";
 import { Profile } from "../lib/profiles";
 import { Avatar } from "./Avatar";
 import { EmptyState } from "./EmptyState";
@@ -133,6 +134,7 @@ export function CommentsSection({
           placeholderTextColor={colors.textFaint}
           value={text}
           onChangeText={setText}
+          onKeyPress={enterToSubmit(handleSubmit)}
           multiline
         />
         <Pressable

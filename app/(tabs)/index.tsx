@@ -3,6 +3,7 @@ import {
   View,
   Text,
   FlatList,
+  ScrollView,
   Pressable,
   Animated,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getShow, getShowEpisodes, TVMazeEpisode } from "../../lib/tvmaze";
 import {
   decrementRewatch,
@@ -53,6 +55,12 @@ import { FeelingSheet } from "../../components/FeelingSheet";
 import { FinaleToast, useFinaleToast } from "../../components/FinaleToast";
 import { Pill } from "../../components/Pill";
 import { EmptyState } from "../../components/EmptyState";
+import {
+  UpcomingCalendar,
+  CalendarGranularityToggle,
+  CalendarItem,
+  Granularity as CalendarGranularity,
+} from "../../components/UpcomingCalendar";
 import { useColors, radius, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { useGrowIn, useFadeIn } from "../../lib/animations";
@@ -509,6 +517,7 @@ export default function ShowsScreen() {
   const [upcomingPastDays, setUpcomingPastDays] = useState(
     UPCOMING_INITIAL_PAST_DAYS,
   );
+  const [upcomingViewMode, setUpcomingViewMode] = useState<"list" | "calendar">("list");
   const [tmdbOnlyShows, setTmdbOnlyShows] = useState<TmdbOnlyShow[]>([]);
   const [currentStreak, setCurrentStreak] = useState(0);
   const [streakAtRisk, setStreakAtRisk] = useState(false);
@@ -1167,6 +1176,88 @@ export default function ShowsScreen() {
     return result;
   }, [tracked, upcomingPastDays]);
 
+  useEffect(() => {
+    AsyncStorage.getItem("shows_upcoming_view_mode").then((value) => {
+      if (value === "list" || value === "calendar") setUpcomingViewMode(value);
+    });
+  }, []);
+
+  function changeUpcomingViewMode(mode: "list" | "calendar") {
+    setUpcomingViewMode(mode);
+    AsyncStorage.setItem("shows_upcoming_view_mode", mode).catch(() => {});
+  }
+
+  // Owned here (rather than inside UpcomingCalendar) so its Month/Week
+  // toggle can render on the same row as upcomingViewMode's own list/calendar
+  // toggle above — see the upcomingViewToggleRow render below.
+  const [calendarGranularity, setCalendarGranularity] = useState<CalendarGranularity>("month");
+  useEffect(() => {
+    AsyncStorage.getItem("calendar_shows_granularity").then((value) => {
+      if (value === "month" || value === "week") setCalendarGranularity(value);
+    });
+  }, []);
+
+  function changeCalendarGranularity(next: CalendarGranularity) {
+    setCalendarGranularity(next);
+    AsyncStorage.setItem("calendar_shows_granularity", next).catch(() => {});
+  }
+
+  // The list view's `upcoming` above starts at a UPCOMING_INITIAL_PAST_DAYS
+  // window and only widens (up to UPCOMING_MAX_PAST_DAYS) as the user
+  // scrolls up — see loadMorePastUpcoming. That cap exists purely to keep
+  // the *list*'s row count sane (hundreds of rows of history is noise to
+  // scroll through) — it's a UI choice, not a data limit: each tracked
+  // show's full episode history is already fetched and cached in full (see
+  // getCachedEpisodes in lib/showDataCache.ts) and held in memory here.
+  // The calendar has no such row-count problem (it's always exactly 42
+  // cells, however much history backs them), so it draws on every episode
+  // of every tracked show ever, with no cutoff — "every series I've ever
+  // watched," entirely from what's already cached, no extra network calls.
+  const upcomingCalendarSource = useMemo<EnrichedEpisode[]>(() => {
+    const result: EnrichedEpisode[] = [];
+    for (const { show, episodes, watchedIds, watchedList } of tracked) {
+      const timesByEpisode = new Map(
+        watchedList.map((w) => [w.tvmaze_episode_id, w.times_watched]),
+      );
+      for (const ep of episodes) {
+        result.push({
+          show,
+          episode: ep,
+          watched: watchedIds.has(ep.id),
+          timesWatched: timesByEpisode.get(ep.id),
+        });
+      }
+    }
+    result.sort(
+      (a, b) => new Date(a.episode.airstamp).getTime() - new Date(b.episode.airstamp).getTime(),
+    );
+    return result;
+  }, [tracked]);
+
+  // Feeds UpcomingCalendar (components/UpcomingCalendar.tsx) — reshapes
+  // upcomingCalendarSource into that component's generic item shape.
+  // localDateKey(airstamp) mirrors the row grouping the list view already
+  // does (see upcomingGroupKey), and the navigation target mirrors
+  // EpisodeRow's own default onPress.
+  const upcomingCalendarItems = useMemo<CalendarItem[]>(
+    () =>
+      upcomingCalendarSource.map((item) => ({
+        id: String(item.episode.id),
+        dateKey: localDateKey(item.episode.airstamp),
+        title: item.episode.name || `S${item.episode.season}E${item.episode.number}`,
+        subtitle: item.show.show_name,
+        imageUrl: item.show.show_image,
+        badge: `S${item.episode.season}E${item.episode.number}`,
+        groupKey: String(item.show.tvmaze_id),
+        onPress: () =>
+          router.push({
+            pathname: "/episode/[id]",
+            params: { id: String(item.episode.id), showId: String(item.show.tvmaze_id) },
+          }),
+      })),
+    [upcomingCalendarSource, router]
+  );
+
   // Stable (empty deps) so that WatchListEpisodeRow's memo() below can
   // actually bail out for unaffected rows — reads item.watched/
   // item.timesWatched (an accurate snapshot as of the row's own render,
@@ -1650,6 +1741,47 @@ export default function ShowsScreen() {
         </Pressable>
       </View>
 
+      {tab === "upcoming" && !loading && tracked.length > 0 && (
+        <View style={styles.upcomingViewToggleRow}>
+          {upcomingViewMode === "calendar" && (
+            <CalendarGranularityToggle
+              style={styles.calendarGranularityToggle}
+              granularity={calendarGranularity}
+              onChange={changeCalendarGranularity}
+              monthLabel={t.calendar.toggleMonth}
+              weekLabel={t.calendar.toggleWeek}
+            />
+          )}
+          <Pressable
+            style={[styles.upcomingViewToggleBtn, upcomingViewMode === "list" && styles.upcomingViewToggleBtnActive]}
+            onPress={() => changeUpcomingViewMode("list")}
+            accessibilityLabel="List view"
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name="list-outline"
+              size={16}
+              color={upcomingViewMode === "list" ? colors.onAccent : colors.textMuted}
+            />
+          </Pressable>
+          <Pressable
+            style={[
+              styles.upcomingViewToggleBtn,
+              upcomingViewMode === "calendar" && styles.upcomingViewToggleBtnActive,
+            ]}
+            onPress={() => changeUpcomingViewMode("calendar")}
+            accessibilityLabel="Calendar view"
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={16}
+              color={upcomingViewMode === "calendar" ? colors.onAccent : colors.textMuted}
+            />
+          </Pressable>
+        </View>
+      )}
+
       {loading ? (
         <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
       ) : tab === "list" ? (
@@ -1723,6 +1855,36 @@ export default function ShowsScreen() {
         <View style={styles.fullEmpty}>
           <EmptyState icon="calendar-outline" title={t.shows.emptyWatchList} />
         </View>
+      ) : upcomingViewMode === "calendar" ? (
+        <Animated.View style={{ flex: 1, opacity: contentFade }}>
+          {calendarGranularity === "month" ? (
+            // No ScrollView here on purpose: the month grid is a fixed 42
+            // cells, never taller than its content, so a plain flex: 1 View
+            // gives it a deterministic exact-viewport height. A ScrollView's
+            // contentContainerStyle flexGrow: 1 doesn't reliably do that on
+            // web, which was leaving the grid short of the screen (rows
+            // clipped/hidden) — see the week branch below, which genuinely
+            // needs to scroll and keeps the ScrollView.
+            <View style={[styles.content, { flex: 1 }]}>
+              <UpcomingCalendar
+                items={upcomingCalendarItems}
+                emptyLabel={t.calendar.noneScheduled}
+                granularity={calendarGranularity}
+                onChangeGranularity={changeCalendarGranularity}
+                style={{ flex: 1 }}
+              />
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+              <UpcomingCalendar
+                items={upcomingCalendarItems}
+                emptyLabel={t.calendar.noneScheduled}
+                granularity={calendarGranularity}
+                onChangeGranularity={changeCalendarGranularity}
+              />
+            </ScrollView>
+          )}
+        </Animated.View>
       ) : (
         <Animated.View style={{ flex: 1, opacity: contentFade }}>
           <FlatList
@@ -1814,6 +1976,26 @@ function createStyles(colors: Colors) {
       width: "60%",
       marginTop: 8,
     },
+    upcomingViewToggleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "flex-end",
+      gap: 6,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+    },
+    // Pushes the list/calendar icon buttons to the row's right edge while
+    // this sits at the left — only rendered in calendar mode (see above).
+    calendarGranularityToggle: { marginRight: "auto" },
+    upcomingViewToggleBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: radius.pill,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.backgroundAlt,
+    },
+    upcomingViewToggleBtnActive: { backgroundColor: colors.accent },
     content: { padding: 16 },
     tmdbOnlySection: {
       paddingHorizontal: 16,

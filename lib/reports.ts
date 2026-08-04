@@ -1,4 +1,15 @@
 import { supabase, getCurrentUserId } from "./supabase";
+import { createShortCache } from "./shortCache";
+
+// Admin badge count, polled on every navigation focus (see
+// app/(tabs)/_layout.tsx) — same reasoning as lib/notifications.ts's
+// unreadCountCache.
+const openReportCountCache = createShortCache<number>(20_000);
+
+// Called on sign-out (see context/AuthContext.tsx) — not scoped by user id.
+export function clearOpenReportCountCache() {
+  openReportCountCache.invalidate();
+}
 
 export type ReportTargetType = "user" | "comment" | "movie_comment" | "show" | "episode" | "movie";
 export type ReportStatus = "open" | "resolved" | "dismissed";
@@ -59,9 +70,11 @@ export async function createReport(params: CreateReportParams): Promise<void> {
 // enforce that server-side too, so a non-admin calling these just gets an
 // empty/rejected result rather than actually seeing anything.
 export async function fetchOpenReportCount(): Promise<number> {
-  const { count, error } = await supabase.from("reports").select("id", { count: "exact", head: true }).eq("status", "open");
-  if (error) throw error;
-  return count ?? 0;
+  return openReportCountCache.getOrFetch(async () => {
+    const { count, error } = await supabase.from("reports").select("id", { count: "exact", head: true }).eq("status", "open");
+    if (error) throw error;
+    return count ?? 0;
+  });
 }
 
 export async function fetchReports(status?: ReportStatus): Promise<Report[]> {
@@ -79,6 +92,7 @@ export async function resolveReport(id: string, note: string | null): Promise<vo
     .update({ status: "resolved", resolution_note: note, resolved_by: adminId, resolved_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  openReportCountCache.invalidate();
 }
 
 export async function dismissReport(id: string, note: string | null): Promise<void> {
@@ -88,4 +102,5 @@ export async function dismissReport(id: string, note: string | null): Promise<vo
     .update({ status: "dismissed", resolution_note: note, resolved_by: adminId, resolved_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  openReportCountCache.invalidate();
 }

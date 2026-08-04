@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -19,11 +19,15 @@ import {
   fetchSupportReplies,
   sendSupportMessage,
   sendSupportReply,
+  subscribeToSupportReplies,
+  mergeReply,
   SupportMessage,
   SupportReply,
 } from "../lib/support";
+import { supabase } from "../lib/supabase";
 import { alert } from "../lib/alert";
 import { useGoBack } from "../lib/useGoBack";
+import { enterToSubmit } from "../lib/enterToSubmit";
 import { EmptyState } from "../components/EmptyState";
 
 // One bubble in the conversation — either the current ticket's own original
@@ -68,6 +72,20 @@ export default function SupportScreen() {
       load();
     }, [load])
   );
+
+  // Live replies from support, without needing to leave/refocus the screen
+  // to see them — mergeReply drops the echo of the device's own just-sent
+  // reply instead of double-adding it.
+  useEffect(() => {
+    if (!ticket) return;
+    const channel = subscribeToSupportReplies(ticket.id, (reply) => {
+      setReplies((prev) => mergeReply(prev, reply));
+      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [ticket?.id]);
 
   async function handleSend() {
     if (!body.trim() || sending) return;
@@ -157,6 +175,7 @@ export default function SupportScreen() {
           placeholderTextColor={colors.textFaint}
           value={body}
           onChangeText={setBody}
+          onKeyPress={enterToSubmit(handleSend)}
           multiline
         />
         <Pressable
@@ -220,7 +239,7 @@ function createStyles(colors: Colors) {
       paddingHorizontal: 12,
       paddingVertical: 10,
       color: colors.text,
-      fontSize: type.body,
+      fontSize: type.input,
       maxHeight: 100,
     },
     sendBtn: {

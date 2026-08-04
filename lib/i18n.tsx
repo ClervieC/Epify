@@ -161,6 +161,13 @@ const en = {
     topGenreLine: (genre: string) => `Favorite genre: ${genre}`,
     notAvailable: "Your recap opens up in the last week of December.",
   },
+  calendar: {
+    toggleMonth: "Month",
+    toggleWeek: "Week",
+    today: "Today",
+    noneScheduled: "Nothing scheduled",
+    releasesCount: (n: number) => `${n} release${n > 1 ? "s" : ""}`,
+  },
   shows: {
     tabList: "My list",
     tabUpcoming: "Upcoming",
@@ -688,6 +695,13 @@ const fr: typeof en = {
     topShowLine: (name: string) => `Plus regardée : ${name}`,
     topGenreLine: (genre: string) => `Genre préféré : ${genre}`,
     notAvailable: "Ton bilan s'ouvre la dernière semaine de décembre.",
+  },
+  calendar: {
+    toggleMonth: "Mois",
+    toggleWeek: "Semaine",
+    today: "Aujourd'hui",
+    noneScheduled: "Rien de prévu",
+    releasesCount: (n: number) => `${n} sortie${n > 1 ? "s" : ""}`,
   },
   shows: {
     tabList: "Ma liste",

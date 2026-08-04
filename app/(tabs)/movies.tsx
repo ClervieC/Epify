@@ -5,6 +5,7 @@ import {
   Pressable,
   Animated,
   FlatList,
+  ScrollView,
   StyleSheet,
   ActivityIndicator,
   useWindowDimensions,
@@ -33,6 +34,12 @@ import { MovieCard } from "../../components/MovieCard";
 import { EmptyState } from "../../components/EmptyState";
 import { Pill } from "../../components/Pill";
 import { WatchedCheck } from "../../components/WatchedCheck";
+import {
+  UpcomingCalendar,
+  CalendarGranularityToggle,
+  CalendarItem,
+  Granularity as CalendarGranularity,
+} from "../../components/UpcomingCalendar";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { useGrowIn, useMountIn, useScalePress } from "../../lib/animations";
@@ -95,6 +102,28 @@ export default function MoviesScreen() {
       AsyncStorage.setItem(SORT_STORAGE_KEY, String(next)).catch(() => {});
       return next;
     });
+  }
+  const [upcomingViewMode, setUpcomingViewMode] = useState<"list" | "calendar">("list");
+  useEffect(() => {
+    AsyncStorage.getItem("movies_upcoming_view_mode").then((value) => {
+      if (value === "list" || value === "calendar") setUpcomingViewMode(value);
+    });
+  }, []);
+  function changeUpcomingViewMode(mode: "list" | "calendar") {
+    setUpcomingViewMode(mode);
+    AsyncStorage.setItem("movies_upcoming_view_mode", mode).catch(() => {});
+  }
+  // Owned here (rather than inside UpcomingCalendar) now that the component
+  // takes it as a controlled prop — see components/UpcomingCalendar.tsx.
+  const [calendarGranularity, setCalendarGranularity] = useState<CalendarGranularity>("month");
+  useEffect(() => {
+    AsyncStorage.getItem("calendar_movies_granularity").then((value) => {
+      if (value === "month" || value === "week") setCalendarGranularity(value);
+    });
+  }, []);
+  function changeCalendarGranularity(next: CalendarGranularity) {
+    setCalendarGranularity(next);
+    AsyncStorage.setItem("calendar_movies_granularity", next).catch(() => {});
   }
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -227,6 +256,33 @@ export default function MoviesScreen() {
     };
   }, [watchlist, tab]);
 
+  // Same TMDB resolution pass as resolvedWatchlist above, but for the
+  // watched list — the Upcoming calendar (see upcomingCalendarItems below)
+  // shows movies from all 3 lists (Ma liste/To Watch/Upcoming), not just
+  // future releases, so a watched movie needs its release date resolved
+  // too to land on the right day.
+  const [resolvedMovies, setResolvedMovies] = useState<UpcomingEntry[] | null>(null);
+  const resolvedForMoviesRef = useRef<UserMovie[] | null>(null);
+  useEffect(() => {
+    if (tab !== "upcoming") return;
+    if (resolvedForMoviesRef.current === movies) return;
+    resolvedForMoviesRef.current = movies;
+    let active = true;
+    mapWithConcurrency(movies, 4, (m) =>
+      m.tmdb_id
+        ? getMovieDetails(m.tmdb_id)
+            .then((tmdb) => ({ movie: m, tmdb }))
+            .catch(() => ({ movie: m, tmdb: null }))
+        : Promise.resolve({ movie: m, tmdb: null }),
+    ).then((results) => {
+      if (!active) return;
+      setResolvedMovies(results);
+    });
+    return () => {
+      active = false;
+    };
+  }, [movies, tab]);
+
   function isFutureRelease(entry: UpcomingEntry) {
     return !isMovieReleased(entry.tmdb?.release_date);
   }
@@ -255,6 +311,42 @@ export default function MoviesScreen() {
       return aTime - bTime;
     });
   }, [resolvedWatchlist]);
+
+  // Feeds UpcomingCalendar (components/UpcomingCalendar.tsx) — every movie
+  // across all 3 lists (Ma liste/To Watch/Upcoming), not just future
+  // releases: resolvedWatchlist already covers both To Watch and Upcoming
+  // unfiltered, and resolvedMovies (above) adds the watched list, so a
+  // movie lands on its actual release date's cell regardless of whether
+  // that date is in the past or future. release_date is a plain YYYY-MM-DD
+  // string with no timezone (unlike TVmaze's airstamp) — used as the
+  // calendar's day-bucket key exactly as-is, never parsed through `new
+  // Date()`, since doing that and then applying any local-time operation
+  // can shift it a day depending on the viewer's timezone. Entries with no
+  // tmdb_id are dropped rather than kept with a no-op tap target, matching
+  // renderUpcomingEntry's own guard below.
+  const upcomingCalendarItems = useMemo<CalendarItem[]>(() => {
+    // watched is hardcoded per source list rather than read off each entry
+    // individually: resolvedMovies only ever holds the watched list, and
+    // resolvedWatchlist only ever holds not-yet-watched titles (To
+    // Watch/Upcoming) — a movie moves between the two lists entirely, it's
+    // never split.
+    function toCalendarItems(entries: UpcomingEntry[], watched: boolean): CalendarItem[] {
+      return entries
+        .filter((entry) => entry.movie.tmdb_id && entry.tmdb?.release_date)
+        .map((entry) => ({
+          id: entry.movie.id,
+          dateKey: entry.tmdb!.release_date,
+          title: entry.movie.title,
+          imageUrl: posterUrl(entry.tmdb!.poster_path, "w200"),
+          watched,
+          onPress: () => router.push(`/movie/tmdb/${entry.movie.tmdb_id}`),
+        }));
+    }
+    return [
+      ...toCalendarItems(resolvedWatchlist ?? [], false),
+      ...toCalendarItems(resolvedMovies ?? [], true),
+    ];
+  }, [resolvedWatchlist, resolvedMovies, router]);
 
   const handleMarkWatched = useCallback(
     async (movie: UserMovie) => {
@@ -395,7 +487,35 @@ export default function MoviesScreen() {
           </View>
         )}
         {tab === "upcoming" && upcomingList && upcomingList.length > 0 && (
-          <Pill tone="accent">{upcomingList.length}</Pill>
+          <View style={styles.headerRightGroup}>
+            <Pressable
+              style={[styles.viewModeBtn, upcomingViewMode === "list" && styles.viewModeBtnActive]}
+              onPress={() => changeUpcomingViewMode("list")}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="List view"
+            >
+              <Ionicons
+                name="list-outline"
+                size={15}
+                color={upcomingViewMode === "list" ? colors.onAccent : colors.textMuted}
+              />
+            </Pressable>
+            <Pressable
+              style={[styles.viewModeBtn, upcomingViewMode === "calendar" && styles.viewModeBtnActive]}
+              onPress={() => changeUpcomingViewMode("calendar")}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Calendar view"
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={15}
+                color={upcomingViewMode === "calendar" ? colors.onAccent : colors.textMuted}
+              />
+            </Pressable>
+            <Pill tone="accent">{upcomingList.length}</Pill>
+          </View>
         )}
       </View>
 
@@ -530,6 +650,39 @@ export default function MoviesScreen() {
               title={t.movies.tabUpcoming}
               subtitle={t.movies.emptyUpcomingReleases}
             />
+          </View>
+        ) : upcomingViewMode === "calendar" ? (
+          <View style={{ flex: 1 }}>
+            <CalendarGranularityToggle
+              granularity={calendarGranularity}
+              onChange={changeCalendarGranularity}
+              monthLabel={t.calendar.toggleMonth}
+              weekLabel={t.calendar.toggleWeek}
+            />
+            {calendarGranularity === "month" ? (
+              // See the equivalent branch in app/(tabs)/index.tsx: a plain
+              // flex: 1 View gives the fixed 42-cell month grid a
+              // deterministic exact-viewport height, which a ScrollView's
+              // contentContainerStyle flexGrow: 1 didn't reliably do on web.
+              <View style={[styles.upcomingList, { flex: 1 }]}>
+                <UpcomingCalendar
+                  items={upcomingCalendarItems}
+                  emptyLabel={t.calendar.noneScheduled}
+                  granularity={calendarGranularity}
+                  onChangeGranularity={changeCalendarGranularity}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            ) : (
+              <ScrollView contentContainerStyle={styles.upcomingList} showsVerticalScrollIndicator={false}>
+                <UpcomingCalendar
+                  items={upcomingCalendarItems}
+                  emptyLabel={t.calendar.noneScheduled}
+                  granularity={calendarGranularity}
+                  onChangeGranularity={changeCalendarGranularity}
+                />
+              </ScrollView>
+            )}
           </View>
         ) : (
           <FlatList
@@ -667,6 +820,15 @@ function createStyles(colors: Colors) {
       fontWeight: "700",
       color: colors.accent,
     },
+    viewModeBtn: {
+      width: 26,
+      height: 26,
+      borderRadius: radius.pill,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.backgroundAlt,
+    },
+    viewModeBtnActive: { backgroundColor: colors.accent },
     tabsRow: {
       flexDirection: "row",
       borderBottomWidth: 1,

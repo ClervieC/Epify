@@ -11,6 +11,11 @@ import { clearLocalShowStats } from "../lib/showStats";
 import { clearProfileSnapshot } from "../lib/profileSnapshot";
 import { clearLocalStreakData } from "../lib/streaks";
 import { clearUserShowsCache } from "../lib/userShows";
+import { clearUnreadNotificationCountCache } from "../lib/notifications";
+import { clearLatestActivityAtCache } from "../lib/activity";
+import { clearMyProfileCache } from "../lib/profiles";
+import { clearOpenReportCountCache } from "../lib/reports";
+import { clearSupportNeedsResponseCountCache } from "../lib/support";
 import { alert } from "../lib/alert";
 import { shouldShowOnboarding } from "../lib/onboarding";
 
@@ -28,6 +33,11 @@ function clearUserScopedCaches() {
   clearProfileSnapshot();
   clearLocalStreakData();
   clearUserShowsCache();
+  clearUnreadNotificationCountCache();
+  clearLatestActivityAtCache();
+  clearMyProfileCache();
+  clearOpenReportCountCache();
+  clearSupportNeedsResponseCountCache();
 }
 
 interface AuthContextValue {

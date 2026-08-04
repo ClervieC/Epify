@@ -1167,3 +1167,131 @@ alter table public.user_shows add column if not exists feeling text;
 -- across every user's row — the existing (user_id, tvmaze_id) unique
 -- constraint doesn't serve that (tvmaze_id isn't its leading column).
 create index if not exists user_shows_tvmaze_idx on public.user_shows (tvmaze_id);
+
+-- ============================================================
+-- Realtime for the support chat (see lib/support.ts's
+-- subscribeToSupportReplies, used by app/support.tsx and
+-- app/admin/support/[userId].tsx) — a new reply appears live on the other
+-- side's screen instead of only after they leave and refocus it.
+--
+-- On Supabase Cloud, adding a table to a project's replication is usually
+-- done from the Dashboard (Database > Replication) and this block is a
+-- no-op if it's already enabled there. On a self-hosted instance there's no
+-- dashboard toggle — the table has to be added to the `supabase_realtime`
+-- publication directly, or postgres_changes subscriptions connect
+-- successfully but silently never deliver anything.
+--
+-- Wrapped in a existence check (unlike a plain `create table if not
+-- exists`, `alter publication ... add table` has no built-in "if not
+-- already a member" form, and errors on a second run otherwise) so this
+-- stays safe to run again against a database that already has it enabled.
+-- ============================================================
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'support_message_replies'
+  ) then
+    alter publication supabase_realtime add table public.support_message_replies;
+  end if;
+end $$;
+
+-- ============================================================
+-- Shared TVmaze/TMDB cache (supabase/functions/tvmaze-cache,
+-- supabase/functions/tmdb-cache) — a read-through cache shared across every
+-- user, instead of every device paying its own slice of TVmaze's ~20
+-- req/10s per-IP rate limit (see lib/tvmaze.ts's RATE_LIMIT_* comments) or
+-- TMDB's single app-wide key budget independently, for data that's
+-- identical for everyone and rarely changes.
+--
+-- Keyed by the exact request path (e.g. "/shows/1/episodes",
+-- "/movie/550/credits") rather than one column/table per endpoint — this is
+-- what lets both Edge Functions be a single generic "cached proxy for any
+-- GET path on this API" instead of one bespoke branch per endpoint, so
+-- adding another cached endpoint later is a client-side change only, no
+-- schema/function change needed. The first request for a given path, from
+-- anyone, populates the row; everyone else (and every fresh install /
+-- cleared local cache) reads it back from here instead of calling the API
+-- again.
+--
+-- Written only by their respective Edge Functions, using the service role
+-- key (which bypasses RLS) — there is deliberately no insert/update policy
+-- for the `authenticated` role below, only select, so a buggy or malicious
+-- client can never write bad data into a table every other user reads from.
+-- Purely additive — safe to run once.
+--
+-- (Supersedes an earlier version of this block that used one table per
+-- endpoint, kind — tvmaze_show_cache/tvmaze_episodes_cache/
+-- tvmaze_cast_cache/tmdb_movie_cache/tmdb_tv_cache — dropped in favor of
+-- this generic pair before real traffic accumulated in them.)
+-- ============================================================
+create table if not exists public.tvmaze_api_cache (
+  path text primary key,
+  payload jsonb,
+  fetched_at timestamptz not null default now()
+);
+
+alter table public.tvmaze_api_cache enable row level security;
+
+create policy "tvmaze_api_cache_select_authenticated"
+  on public.tvmaze_api_cache for select
+  using (auth.role() = 'authenticated');
+
+create table if not exists public.tmdb_api_cache (
+  path text primary key,
+  payload jsonb,
+  fetched_at timestamptz not null default now()
+);
+
+alter table public.tmdb_api_cache enable row level security;
+
+create policy "tmdb_api_cache_select_authenticated"
+  on public.tmdb_api_cache for select
+  using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- Daily proactive refresh of the small, fixed set of TMDB "list" endpoints
+-- (popular/top-rated/now-playing/upcoming, movies and TV) and the TVmaze
+-- daily schedule (supabase/functions/refresh-lists) — everything else in
+-- tvmaze_api_cache/tmdb_api_cache only refreshes *reactively*, whichever
+-- user's request happens to land right after a row's TTL lapses (see
+-- lib/tvmaze.ts / lib/tmdb.ts). This makes refreshing those specific rows a
+-- background job's cost instead of some unlucky user's page load, on a
+-- predictable clock instead of "whenever someone happens to ask right after
+-- it goes stale." Not extended to show/movie details, search, or the
+-- per-user For You feeds — those are keyed by unbounded user input, not
+-- this fixed, enumerable set of paths, so there's nothing to pre-warm.
+--
+-- refresh-lists is deployed with --no-verify-jwt (no real user session is
+-- ever involved) and instead checks an X-Refresh-Secret header against a
+-- secret only this cron job knows — kept in Vault, never in this file, so
+-- run the vault.create_secret call below once yourself with your own
+-- generated value (`openssl rand -hex 32`) rather than pasting one here.
+-- Purely additive — safe to run once (cron.schedule below replaces any
+-- existing job of the same name if re-run, so it's fine to adjust the
+-- schedule and re-run just that call later too).
+-- ============================================================
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- Run once, with your own generated secret (also set as this project's
+-- REFRESH_SECRET Edge Function secret — `npx supabase secrets set
+-- REFRESH_SECRET=<same value>`):
+--   select vault.create_secret('<openssl rand -hex 32>', 'refresh_lists_secret');
+
+select cron.schedule(
+  'refresh-tmdb-tvmaze-lists',
+  '0 4 * * *', -- daily at 04:00 UTC
+  $$
+  select net.http_post(
+    url := 'https://xwfjpdtzqwunftxkkmru.supabase.co/functions/v1/refresh-lists',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'X-Refresh-Secret', (select decrypted_secret from vault.decrypted_secrets where name = 'refresh_lists_secret')
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);

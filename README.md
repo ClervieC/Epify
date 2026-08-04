@@ -18,6 +18,8 @@ App de suivi de séries (remplaçant TVTime) : à voir / en cours / vues / arrê
    > "
    > ```
    > Sans ça, toute table qui fait `references auth.users (id)` échoue avec `42501: permission denied for table users`.
+   >
+   > **Self-hosted aussi** : le chat support (`app/support.tsx`) reçoit les nouveaux messages en direct via Supabase Realtime, ce qui suppose que `support_message_replies` fasse partie de la publication `supabase_realtime` — `schema.sql` s'en charge (bloc en bas du fichier), mais uniquement si le service Realtime tourne déjà sur ton instance. Sur Cloud, c'est activable/vérifiable aussi depuis Database > Replication.
 2. Les clés d'API sont dans `.env` (non versionné). Vérifie qu'elles sont correctes :
    - `EXPO_PUBLIC_SUPABASE_URL`
    - `EXPO_PUBLIC_SUPABASE_ANON_KEY`

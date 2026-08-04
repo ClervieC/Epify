@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -17,11 +17,15 @@ import {
   fetchUserSupportThread,
   markSupportThreadRead,
   sendAdminSupportReply,
+  subscribeToSupportReplies,
+  mergeReply,
   SupportMessage,
   SupportReply,
 } from "../../../lib/support";
+import { supabase } from "../../../lib/supabase";
 import { alert } from "../../../lib/alert";
 import { useGoBack } from "../../../lib/useGoBack";
+import { enterToSubmit } from "../../../lib/enterToSubmit";
 import { C } from "../../../lib/adminTheme";
 
 interface ThreadItem {
@@ -62,6 +66,20 @@ export default function AdminSupportThreadScreen() {
       load();
     }, [load])
   );
+
+  // Live replies from the user, without needing to leave/refocus the screen
+  // to see them — mergeReply drops the echo of the admin's own just-sent
+  // reply instead of double-adding it.
+  useEffect(() => {
+    if (!ticket) return;
+    const channel = subscribeToSupportReplies(ticket.id, (reply) => {
+      setReplies((prev) => mergeReply(prev, reply));
+      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    });
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [ticket?.id]);
 
   async function handleSend() {
     if (!body.trim() || sending || !ticket) return;
@@ -149,6 +167,7 @@ export default function AdminSupportThreadScreen() {
           placeholderTextColor={C.textMuted}
           value={body}
           onChangeText={setBody}
+          onKeyPress={enterToSubmit(handleSend)}
           multiline
           editable={!!ticket}
         />
@@ -220,7 +239,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: C.text,
-    fontSize: 14,
+    // 16, not 14 — anything smaller makes iOS Safari auto-zoom the page on
+    // focus instead of just focusing the input.
+    fontSize: 16,
     maxHeight: 100,
   },
   sendBtn: {

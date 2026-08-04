@@ -4,6 +4,17 @@ import { fetchProfiles, Profile } from "./profiles";
 import { getCachedShow } from "./showDataCache";
 import { getShow } from "./tvmaze";
 import { getMovieDetails } from "./tmdb";
+import { createShortCache } from "./shortCache";
+
+// Same reasoning as lib/notifications.ts's unreadCountCache — the tab bar's
+// red-dot poll re-fires on every navigation focus, throttled per-mount but
+// not shared across screens.
+const latestActivityAtCache = createShortCache<string | null>(20_000);
+
+// Called on sign-out (see context/AuthContext.tsx) — not scoped by user id.
+export function clearLatestActivityAtCache() {
+  latestActivityAtCache.invalidate();
+}
 
 export type ActivityItem =
   | {
@@ -253,6 +264,10 @@ export async function fetchFollowingActivity(before?: string): Promise<{ items: 
 // profile joins), since all this needs is the single most recent timestamp
 // across every table the feed draws from.
 export async function fetchLatestFollowingActivityAt(): Promise<string | null> {
+  return latestActivityAtCache.getOrFetch(() => fetchLatestFollowingActivityAtLive());
+}
+
+async function fetchLatestFollowingActivityAtLive(): Promise<string | null> {
   const myId = await getCurrentUserId();
   if (!myId) return null;
 

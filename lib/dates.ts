@@ -44,14 +44,19 @@ export function diffDaysFromToday(airstamp: string) {
   return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+// Local calendar-day key (YYYY-MM-DD) for an arbitrary Date — e.g. a
+// calendar grid's own generated day cells (see components/UpcomingCalendar.tsx).
+export function dateKeyFromDate(d: Date): string {
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
 // The local calendar-day key for an airstamp — use this (not the raw
 // airstamp, which includes a time-of-day, and not airdate, which is in the
 // wrong timezone) whenever episodes need to be grouped or matched by day.
 export function localDateKey(airstamp: string) {
-  const d = new Date(airstamp);
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${month}-${day}`;
+  return dateKeyFromDate(new Date(airstamp));
 }
 
 export function todayFullLabel(language: Language = "en") {

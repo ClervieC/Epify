@@ -1,4 +1,5 @@
 import { supabase, getCurrentUserId } from "./supabase";
+import { createShortCache } from "./shortCache";
 
 export interface Profile {
   user_id: string;
@@ -8,13 +9,27 @@ export interface Profile {
   avatar_url: string | null;
 }
 
-export async function fetchMyProfile(): Promise<Profile | null> {
-  const userId = await getCurrentUserId();
-  if (!userId) return null;
+// Called from AuthContext, the tab layout's admin gate, the Profile tab,
+// Settings, and the admin screen — same "own profile" value fetched fresh
+// independently by each. Rarely changes (only uploadAvatar mutates it, which
+// invalidates below), so this can safely be a bit longer-lived than the
+// pure poll caches above.
+const myProfileCache = createShortCache<Profile | null>(30_000);
 
-  const { data, error } = await supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle();
-  if (error) throw error;
-  return data;
+// Called on sign-out (see context/AuthContext.tsx) — not scoped by user id.
+export function clearMyProfileCache() {
+  myProfileCache.invalidate();
+}
+
+export async function fetchMyProfile(): Promise<Profile | null> {
+  return myProfileCache.getOrFetch(async () => {
+    const userId = await getCurrentUserId();
+    if (!userId) return null;
+
+    const { data, error } = await supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle();
+    if (error) throw error;
+    return data;
+  });
 }
 
 export async function createProfile(username: string): Promise<Profile> {
@@ -113,6 +128,7 @@ export async function uploadAvatar(uri: string, mimeType: string): Promise<strin
 
   const { error: updateError } = await supabase.from("profiles").update({ avatar_url: avatarUrl }).eq("user_id", userId);
   if (updateError) throw updateError;
+  myProfileCache.invalidate();
 
   return avatarUrl;
 }

@@ -1,4 +1,18 @@
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase, getCurrentUserId } from "./supabase";
+import { createShortCache } from "./shortCache";
+
+// Admin badge count, polled on every navigation focus (see
+// app/(tabs)/_layout.tsx) — same reasoning as lib/notifications.ts's
+// unreadCountCache. fetchSupportNeedsResponseCount() itself calls
+// fetchSupportConversationsForAdmin() (3 queries), so caching just the
+// count still collapses that whole chain, not only the final filter.
+const needsResponseCountCache = createShortCache<number>(20_000);
+
+// Called on sign-out (see context/AuthContext.tsx) — not scoped by user id.
+export function clearSupportNeedsResponseCountCache() {
+  needsResponseCountCache.invalidate();
+}
 
 export type SupportStatus = "open" | "resolved";
 
@@ -92,6 +106,43 @@ export async function sendSupportReply(messageId: string, body: string): Promise
   return data as SupportReply;
 }
 
+// Live updates for one ticket's thread (app/support.tsx and
+// app/admin/support/[userId].tsx both use this) — a channel per messageId,
+// filtered server-side so only inserts for this specific ticket are
+// delivered, instead of every reply in the whole support_message_replies
+// table. The caller is responsible for deduping against its own optimistic
+// insert (see mergeReply below) — this fires for every insert including the
+// one the current device itself just made.
+//
+// Requires support_message_replies to be added to the `supabase_realtime`
+// publication (see supabase/schema.sql) — unlike some Supabase Cloud
+// defaults, a self-hosted instance has Realtime opt-in per table, so without
+// that migration this subscribes successfully but silently never receives
+// anything.
+export function subscribeToSupportReplies(
+  messageId: string,
+  onInsert: (reply: SupportReply) => void
+): RealtimeChannel {
+  return supabase
+    .channel(`support_replies:${messageId}`)
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "support_message_replies", filter: `message_id=eq.${messageId}` },
+      (payload) => onInsert(payload.new as SupportReply)
+    )
+    .subscribe();
+}
+
+// Appends a reply arriving over realtime unless it's already present — the
+// sender's own device already added it optimistically (see handleSend in
+// both screens), and Realtime broadcasts every insert including the
+// current device's own, so without this every message you send yourself
+// would immediately double up as soon as the echo arrives.
+export function mergeReply(prev: SupportReply[], incoming: SupportReply): SupportReply[] {
+  if (prev.some((r) => r.id === incoming.id)) return prev;
+  return [...prev, incoming];
+}
+
 // Everything below is admin-only in practice (see the RLS policies in
 // supabase/schema.sql) — mirrors lib/reports.ts's own split.
 
@@ -181,8 +232,10 @@ export async function fetchSupportConversationsForAdmin(): Promise<SupportConver
 // admin-menu alert dot (see app/(tabs)/profile.tsx), replacing the old
 // status='open' count now that resolve/reopen no longer exists as a concept.
 export async function fetchSupportNeedsResponseCount(): Promise<number> {
-  const conversations = await fetchSupportConversationsForAdmin();
-  return conversations.filter((c) => c.needsResponse).length;
+  return needsResponseCountCache.getOrFetch(async () => {
+    const conversations = await fetchSupportConversationsForAdmin();
+    return conversations.filter((c) => c.needsResponse).length;
+  });
 }
 
 // The one user's latest ticket + its full thread — app/admin/support/[userId].tsx's
@@ -233,4 +286,5 @@ export async function markSupportThreadRead(messageId: string): Promise<void> {
     .update({ admin_read_at: new Date().toISOString() })
     .eq("id", messageId);
   if (error) throw error;
+  needsResponseCountCache.invalidate();
 }
