@@ -47,6 +47,7 @@ export interface UserShow {
   status: ShowStatus;
   is_favorite: boolean;
   rating: number | null;
+  feeling: string | null;
   current_season: number | null;
   current_episode: number | null;
   notes: string | null;
@@ -168,6 +169,36 @@ export async function setShowFavorite(tvmazeId: number, isFavorite: boolean) {
     .single();
   if (error) throw error;
   return data as UserShow;
+}
+
+export async function rateShow(tvmazeId: number, rating: number | null, feeling: string | null) {
+  const { data, error } = await supabase
+    .from("user_shows")
+    .update({ rating, feeling })
+    .eq("tvmaze_id", tvmazeId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as UserShow;
+}
+
+// Aggregate, anonymous count of how everyone tracking this show felt about
+// it overall — only the `feeling` column is selected, never the full row,
+// same spirit as fetchEpisodeFeelingCounts below.
+export async function fetchShowFeelingCounts(tvmazeId: number): Promise<Record<string, number>> {
+  const { data, error } = await supabase
+    .from("user_shows")
+    .select("feeling")
+    .eq("tvmaze_id", tvmazeId)
+    .not("feeling", "is", null);
+  if (error) throw error;
+
+  const counts: Record<string, number> = {};
+  for (const row of data as { feeling: string | null }[]) {
+    if (!row.feeling) continue;
+    counts[row.feeling] = (counts[row.feeling] ?? 0) + 1;
+  }
+  return counts;
 }
 
 export async function fetchFavorites(userId?: string) {

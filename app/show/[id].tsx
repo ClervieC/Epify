@@ -46,6 +46,8 @@ import {
   setEpisodesWatched,
   setShowFavorite,
   setShowStatus,
+  rateShow,
+  fetchShowFeelingCounts,
   upsertUserShow,
   ShowList,
   UserShow,
@@ -65,6 +67,7 @@ import { useRewatchPrompt } from "../../context/RewatchPromptContext";
 import { useAddToListPrompt } from "../../context/AddToListPromptContext";
 import { getCurrentUserId } from "../../lib/supabase";
 import { useGoBack } from "../../lib/useGoBack";
+import { FEELING_EMOJIS } from "../../lib/feelings";
 import {
   deleteComment,
   fetchShowComments,
@@ -107,6 +110,11 @@ export default function ShowDetailScreen() {
   const [showComments, setShowComments] = useState<EnrichedComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [myUserId, setMyUserId] = useState<string | null>(null);
+  const [showFeelingCounts, setShowFeelingCounts] = useState<Record<string, number>>({});
+  // Diffed against on every userShow.feeling change so the one-time sync
+  // from fetchShowFeelingCounts below isn't double-counted as a toggle — same
+  // pattern as app/episode/[id].tsx's lastCountedFeeling.
+  const lastCountedShowFeeling = useRef<string | null>(null);
   // Only the very first load should pick the default tab based on
   // list-membership — otherwise switching to Episodes and then coming back
   // to this screen (e.g. after adding the show) would keep bouncing the
@@ -278,6 +286,51 @@ export default function ShowDetailScreen() {
       active = false;
     };
   }, [tab, showId]);
+
+  // Same "only fetch once the Info tab is actually visible" gating as
+  // comments above.
+  useEffect(() => {
+    if (tab !== "about" || !showId) return;
+    let active = true;
+    fetchShowFeelingCounts(showId).then((counts) => {
+      if (!active) return;
+      lastCountedShowFeeling.current = userShow?.feeling ?? null;
+      setShowFeelingCounts(counts);
+    });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, showId]);
+
+  // Reflects the user's own feeling toggle in "How others felt" immediately
+  // instead of waiting for the next full page load.
+  useEffect(() => {
+    const next = userShow?.feeling ?? null;
+    const prev = lastCountedShowFeeling.current;
+    if (prev === next) return;
+    lastCountedShowFeeling.current = next;
+    setShowFeelingCounts((counts) => {
+      const updated = { ...counts };
+      if (prev) updated[prev] = Math.max(0, (updated[prev] ?? 0) - 1);
+      if (next) updated[next] = (updated[next] ?? 0) + 1;
+      return updated;
+    });
+  }, [userShow?.feeling]);
+
+  async function handleRateShow(value: number) {
+    if (!userShow || !show) return;
+    const next = userShow.rating === value ? null : value;
+    const result = await rateShow(show.id, next, userShow.feeling);
+    setUserShow(result);
+  }
+
+  async function handleFeelingShow(key: string) {
+    if (!userShow || !show) return;
+    const next = userShow.feeling === key ? null : key;
+    const result = await rateShow(show.id, userShow.rating, next);
+    setUserShow(result);
+  }
 
   async function handlePostShowComment(body: string, parentId?: string) {
     await postShowComment(showId, body, parentId);
@@ -718,6 +771,60 @@ export default function ShowDetailScreen() {
                 <WatchInfo trailerUrl={trailerUrl} providers={watchProviders} />
 
                 <View style={styles.divider} />
+                {userShow ? (
+                  <>
+                    <Text style={styles.sectionLabel}>{t.episodeDetail.yourRating}</Text>
+                    <View style={styles.starsRow}>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <RatingStar
+                          key={n}
+                          index={n}
+                          filled={!!(userShow.rating && userShow.rating >= n)}
+                          onPress={() => handleRateShow(n)}
+                          colors={colors}
+                          styles={styles}
+                        />
+                      ))}
+                    </View>
+
+                    <Text style={styles.sectionLabel}>{t.episodeDetail.howDidYouFeel}</Text>
+                    <View style={styles.feelingsRow}>
+                      {FEELING_EMOJIS.map((f) => (
+                        <FeelingChip
+                          key={f.key}
+                          emoji={f.emoji}
+                          label={t.feelings[f.key]}
+                          active={userShow.feeling === f.key}
+                          onPress={() => handleFeelingShow(f.key)}
+                          colors={colors}
+                          styles={styles}
+                        />
+                      ))}
+                    </View>
+                  </>
+                ) : (
+                  <View style={styles.unwatchedPrompt}>
+                    <Ionicons name="lock-closed-outline" size={20} color={colors.textFaint} />
+                    <Text style={styles.unwatchedPromptText}>{t.showDetail.unwatchedPrompt}</Text>
+                  </View>
+                )}
+
+                {Object.keys(showFeelingCounts).length > 0 && (
+                  <>
+                    <View style={styles.divider} />
+                    <Text style={styles.sectionLabel}>{t.episodeDetail.othersFelt}</Text>
+                    <View style={styles.feelingsRow}>
+                      {FEELING_EMOJIS.filter((f) => showFeelingCounts[f.key] > 0).map((f) => (
+                        <View key={f.key} style={styles.feelingTally}>
+                          <Text style={styles.feelingEmoji}>{f.emoji}</Text>
+                          <Text style={styles.feelingTallyCount}>{showFeelingCounts[f.key]}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </>
+                )}
+
+                <View style={styles.divider} />
                 <Text style={styles.sectionHeader}>{t.showDetail.comments}</Text>
                 <CommentsSection
                   comments={showComments}
@@ -985,6 +1092,64 @@ function TrackCard({
   );
 }
 
+function RatingStar({
+  index,
+  filled,
+  onPress,
+  colors,
+  styles,
+}: {
+  index: number;
+  filled: boolean;
+  onPress: () => void;
+  colors: Colors;
+  styles: ShowStyles;
+}) {
+  const { scale, onPressIn, onPressOut } = useScalePress(0.75);
+
+  return (
+    <Pressable
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      onPress={onPress}
+      style={styles.starCol}
+      accessibilityRole="button"
+      accessibilityLabel={`Rate ${index} star${index > 1 ? "s" : ""}`}
+    >
+      <Animated.View style={{ transform: [{ scale }] }}>
+        <Ionicons name={filled ? "star" : "star-outline"} size={28} color={filled ? colors.starOn : colors.starOff} />
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+function FeelingChip({
+  emoji,
+  label,
+  active,
+  onPress,
+  colors,
+  styles,
+}: {
+  emoji: string;
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  colors: Colors;
+  styles: ShowStyles;
+}) {
+  const { scale, onPressIn, onPressOut } = useScalePress(0.88);
+
+  return (
+    <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={onPress}>
+      <Animated.View style={[styles.feelingChip, active && styles.feelingChipActive, { transform: [{ scale }] }]}>
+        <Text style={styles.feelingEmoji}>{emoji}</Text>
+        <Text style={[styles.feelingLabel, active && { color: colors.accent }]}>{label}</Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
 function SeasonSection({
   seasonNum,
   eps,
@@ -1156,6 +1321,32 @@ function createStyles(colors: Colors) {
   divider: { height: 1, backgroundColor: colors.border, marginVertical: 20 },
   summary: { color: colors.text, fontSize: 14, lineHeight: 21, marginBottom: 12 },
   meta: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
+  sectionLabel: {
+    textAlign: "center",
+    fontWeight: "800",
+    fontSize: 12,
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  unwatchedPrompt: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: colors.backgroundAlt,
+    borderRadius: radius.md,
+    padding: 16,
+  },
+  unwatchedPromptText: { flex: 1, color: colors.textFaint, fontSize: 13, lineHeight: 18 },
+  starsRow: { flexDirection: "row", justifyContent: "center", gap: 12, marginBottom: 20 },
+  starCol: { alignItems: "center" },
+  feelingsRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 4 },
+  feelingChip: { alignItems: "center", gap: 4, padding: 8, borderRadius: radius.sm },
+  feelingChipActive: { backgroundColor: colors.accentSoft },
+  feelingEmoji: { fontSize: 26 },
+  feelingLabel: { fontSize: type.micro, fontWeight: "700", color: colors.textMuted },
+  feelingTally: { alignItems: "center", gap: 4, padding: 8 },
+  feelingTallyCount: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
   castCard: { width: 84, marginRight: 12 },
   castImage: {
     width: 84,

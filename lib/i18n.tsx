@@ -432,6 +432,7 @@ const en = {
     seasonInProgressSubtitle: "What do you want to do?",
     seasonUnwatch: "Unwatch this season",
     seasonFinish: "Mark the rest as watched",
+    unwatchedPrompt: "Add this show to your list to rate it and react.",
   },
   episodeDetail: {
     notWatched: "Not watched yet",
@@ -962,6 +963,7 @@ const fr: typeof en = {
     seasonInProgressSubtitle: "Qu'est-ce que tu veux faire ?",
     seasonUnwatch: "Ne plus marquer cette saison comme vue",
     seasonFinish: "Marquer le reste comme vu",
+    unwatchedPrompt: "Ajoute cette série à ta liste pour la noter et réagir.",
   },
   episodeDetail: {
     notWatched: "Pas encore vu",

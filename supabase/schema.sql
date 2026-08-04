@@ -25,7 +25,8 @@ create table if not exists public.user_shows (
   show_image text,
   status show_status not null default 'want_to_watch',
   is_favorite boolean not null default false,
-  rating smallint check (rating between 1 and 10),
+  rating smallint check (rating between 1 and 5),
+  feeling text,
   current_season integer,
   current_episode integer,
   notes text,
@@ -1149,3 +1150,20 @@ alter table public.movie_comments
 create index if not exists movie_comments_parent_idx
   on public.movie_comments (parent_comment_id)
   where parent_comment_id is not null;
+
+-- ============================================================
+-- Show-level reaction (rating + feeling), same shape as the existing
+-- per-episode and per-movie ones. user_shows already had a `rating` column
+-- from an earlier, never-shipped feature (no app code read or wrote it) —
+-- reused here rather than adding a second one, with its check constraint
+-- narrowed from the old 1-10 scale to the 1-5 scale rating/feeling already
+-- use everywhere else (watched_episodes, user_movies).
+-- ============================================================
+alter table public.user_shows drop constraint if exists user_shows_rating_check;
+alter table public.user_shows add constraint user_shows_rating_check check (rating between 1 and 5);
+alter table public.user_shows add column if not exists feeling text;
+
+-- fetchShowFeelingCounts (lib/userShows.ts) filters on tvmaze_id alone,
+-- across every user's row — the existing (user_id, tvmaze_id) unique
+-- constraint doesn't serve that (tvmaze_id isn't its leading column).
+create index if not exists user_shows_tvmaze_idx on public.user_shows (tvmaze_id);
