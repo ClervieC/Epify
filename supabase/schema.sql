@@ -1199,46 +1199,39 @@ begin
 end $$;
 
 -- ============================================================
--- Shared TVmaze/TMDB cache (supabase/functions/tvmaze-cache,
--- supabase/functions/tmdb-cache) — a read-through cache shared across every
--- user, instead of every device paying its own slice of TVmaze's ~20
--- req/10s per-IP rate limit (see lib/tvmaze.ts's RATE_LIMIT_* comments) or
--- TMDB's single app-wide key budget independently, for data that's
--- identical for everyone and rarely changes.
+-- Shared TMDB cache (supabase/functions/tmdb-cache) — a read-through cache
+-- shared across every user, instead of every device spending more of TMDB's
+-- single app-wide API key budget independently, for data that's identical
+-- for everyone and rarely changes.
 --
--- Keyed by the exact request path (e.g. "/shows/1/episodes",
--- "/movie/550/credits") rather than one column/table per endpoint — this is
--- what lets both Edge Functions be a single generic "cached proxy for any
--- GET path on this API" instead of one bespoke branch per endpoint, so
--- adding another cached endpoint later is a client-side change only, no
--- schema/function change needed. The first request for a given path, from
--- anyone, populates the row; everyone else (and every fresh install /
--- cleared local cache) reads it back from here instead of calling the API
--- again.
+-- Keyed by the exact request path (e.g. "/movie/550/credits") rather than
+-- one column/table per endpoint — this is what lets the Edge Function be a
+-- single generic "cached proxy for any GET path on this API" instead of one
+-- bespoke branch per endpoint, so adding another cached endpoint later is a
+-- client-side change only, no schema/function change needed. The first
+-- request for a given path, from anyone, populates the row; everyone else
+-- (and every fresh install / cleared local cache) reads it back from here
+-- instead of calling TMDB again.
 --
--- Written only by their respective Edge Functions, using the service role
--- key (which bypasses RLS) — there is deliberately no insert/update policy
--- for the `authenticated` role below, only select, so a buggy or malicious
--- client can never write bad data into a table every other user reads from.
+-- Written only by the Edge Function, using the service role key (which
+-- bypasses RLS) — there is deliberately no insert/update policy for the
+-- `authenticated` role below, only select, so a buggy or malicious client
+-- can never write bad data into a table every other user reads from.
 -- Purely additive — safe to run once.
 --
 -- (Supersedes an earlier version of this block that used one table per
 -- endpoint, kind — tvmaze_show_cache/tvmaze_episodes_cache/
--- tvmaze_cast_cache/tmdb_movie_cache/tmdb_tv_cache — dropped in favor of
--- this generic pair before real traffic accumulated in them.)
+-- tvmaze_cast_cache/tmdb_movie_cache/tmdb_tv_cache — and, briefly, a
+-- tvmaze_api_cache generic table mirroring this one: a load test found the
+-- TVmaze Edge Function path serializing badly under concurrency —
+-- multi-second latency past ~20 simultaneous requests despite near-idle
+-- CPU — so lib/tvmaze.ts went back to calling TVmaze directly, same as
+-- before any of this existed. TMDB kept this treatment since its rate limit
+-- is one shared app-wide budget, unlike TVmaze's per-IP one, so caching it
+-- across users matters regardless of the Edge Function's own concurrency
+-- ceiling. Run `drop table if exists public.tvmaze_api_cache;` if that
+-- table was created on this database by the earlier version of this file.)
 -- ============================================================
-create table if not exists public.tvmaze_api_cache (
-  path text primary key,
-  payload jsonb,
-  fetched_at timestamptz not null default now()
-);
-
-alter table public.tvmaze_api_cache enable row level security;
-
-create policy "tvmaze_api_cache_select_authenticated"
-  on public.tvmaze_api_cache for select
-  using (auth.role() = 'authenticated');
-
 create table if not exists public.tmdb_api_cache (
   path text primary key,
   payload jsonb,
@@ -1253,16 +1246,15 @@ create policy "tmdb_api_cache_select_authenticated"
 
 -- ============================================================
 -- Daily proactive refresh of the small, fixed set of TMDB "list" endpoints
--- (popular/top-rated/now-playing/upcoming, movies and TV) and the TVmaze
--- daily schedule (supabase/functions/refresh-lists) — everything else in
--- tvmaze_api_cache/tmdb_api_cache only refreshes *reactively*, whichever
--- user's request happens to land right after a row's TTL lapses (see
--- lib/tvmaze.ts / lib/tmdb.ts). This makes refreshing those specific rows a
--- background job's cost instead of some unlucky user's page load, on a
--- predictable clock instead of "whenever someone happens to ask right after
--- it goes stale." Not extended to show/movie details, search, or the
--- per-user For You feeds — those are keyed by unbounded user input, not
--- this fixed, enumerable set of paths, so there's nothing to pre-warm.
+-- (popular/top-rated/now-playing/upcoming, movies and TV) via
+-- supabase/functions/refresh-lists — everything else in tmdb_api_cache only
+-- refreshes *reactively*, whichever user's request happens to land right
+-- after a row's TTL lapses (see lib/tmdb.ts). This makes refreshing those
+-- specific rows a background job's cost instead of some unlucky user's page
+-- load, on a predictable clock instead of "whenever someone happens to ask
+-- right after it goes stale." Not extended to movie/show details, search,
+-- or the per-user For You feeds — those are keyed by unbounded user input,
+-- not this fixed, enumerable set of paths, so there's nothing to pre-warm.
 --
 -- refresh-lists is deployed with --no-verify-jwt (no real user session is
 -- ever involved) and instead checks an X-Refresh-Secret header against a
@@ -1281,12 +1273,19 @@ create extension if not exists pg_net;
 -- REFRESH_SECRET=<same value>`):
 --   select vault.create_secret('<openssl rand -hex 32>', 'refresh_lists_secret');
 
+-- `url` below is a placeholder — replace it with this project's own
+-- functions endpoint before running: the internal Kong URL
+-- (`http://kong:8000/functions/v1/refresh-lists`) for a self-hosted
+-- instance, since pg_net's net.http_post runs from inside the Postgres
+-- container on the same docker network; the public project URL
+-- (`https://<project-ref>.supabase.co/functions/v1/refresh-lists`) for
+-- Supabase Cloud.
 select cron.schedule(
-  'refresh-tmdb-tvmaze-lists',
+  'refresh-tmdb-lists',
   '0 4 * * *', -- daily at 04:00 UTC
   $$
   select net.http_post(
-    url := 'https://xwfjpdtzqwunftxkkmru.supabase.co/functions/v1/refresh-lists',
+    url := 'REPLACE_WITH_YOUR_FUNCTIONS_URL/functions/v1/refresh-lists',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'X-Refresh-Secret', (select decrypted_secret from vault.decrypted_secrets where name = 'refresh_lists_secret')

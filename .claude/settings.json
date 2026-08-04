@@ -285,7 +285,21 @@
       "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 'docker logs -t supabase_edge_runtime_Epify --tail 6 *)",
       "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 'curl -s -X POST http://127.0.0.1:55321/functions/v1/refresh-lists -H \"X-Refresh-Secret: __CMDSUB_OUTPUT__\" -H '\\\\''Content-Type: application/json'\\\\'' -d '\\\\''{}'\\\\''')",
       "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"sudo docker exec -i supabase_db_Epify psql -U supabase_admin -d postgres -c \\\\\"select count\\(*\\) from tvmaze_api_cache;\\\\\" -c \\\\\"select count\\(*\\) from tmdb_api_cache;\\\\\" -c \\\\\"select jobname, schedule, active from cron.job;\\\\\"\")",
-      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"rm -f /tmp/full-migration.sql\")"
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"rm -f /tmp/full-migration.sql\")",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"cd ~/Epify && git status\")",
+      "Bash(git check-ignore *)",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"cat /home/ubuntu/Epify/supabase/functions/delete-account/index.ts\")",
+      "Bash(echo \"diff exit: $?\")",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"cd ~/Epify && git pull 2>&1\")",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"cd ~/Epify && git checkout -- supabase/functions/delete-account/index.ts && rm -rf supabase/functions/_shared supabase/functions/refresh-lists supabase/functions/tmdb-cache supabase/functions/tvmaze-cache && git pull 2>&1\")",
+      "Bash(grep -v \"^+++\\\\|^+--\\\\|^+$\")",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"sudo docker exec -i supabase_db_Epify psql -U supabase_admin -d postgres -c \\\\\"select tablename, policyname from pg_policies where tablename in \\('support_messages','support_message_replies','user_shows','tvmaze_api_cache','tmdb_api_cache'\\) order by tablename, policyname;\\\\\" -c \\\\\"\\\\\\\\d public.user_shows\\\\\" | grep -E 'rating|feeling|Check'\")",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"sudo docker exec -i supabase_db_Epify psql -U supabase_admin -d postgres -c \\\\\"select tablename, policyname from pg_policies where tablename in \\('support_messages','support_message_replies'\\) order by tablename, policyname;\\\\\"\")",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"ls /tmp/*.js 2>&1\")",
+      "Bash(scp -o BatchMode=yes /Users/clervie/Desktop/Projects/Epify/supabase/functions/refresh-lists/index.ts ubuntu@54.37.9.86:/home/ubuntu/Epify/supabase/functions/refresh-lists/index.ts)",
+      "Bash(scp -o BatchMode=yes /tmp/revert-tvmaze-cache.sql ubuntu@54.37.9.86:/tmp/revert-tvmaze-cache.sql)",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"sudo docker exec -i supabase_db_Epify psql -U supabase_admin -d postgres < /tmp/revert-tvmaze-cache.sql\")",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"rm -f /tmp/revert-tvmaze-cache.sql\")"
     ],
     "additionalDirectories": [
       "/private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad",

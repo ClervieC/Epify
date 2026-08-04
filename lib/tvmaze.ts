@@ -1,7 +1,6 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { mapWithConcurrency } from "./concurrency";
 import { fetchWithTimeout } from "./fetchTimeout";
-import { supabase } from "./supabase";
 
 // The package's default export is a legacy singleton backed by
 // window.localStorage on web (~5-10MB quota, shared with everything else
@@ -233,47 +232,13 @@ async function get<T>(path: string, priority: Priority = "low"): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// The shared cross-user cache (supabase/functions/tvmaze-cache,
-// tvmaze_api_cache in supabase/schema.sql, keyed by the exact TVmaze path)
-// sits *behind* every local withCache below — a hit here means no TVmaze
-// call at all, from anyone, ever, until that row's TTL lapses. `{ hit:
-// false }` on any failure (network, unauthenticated, function down,
-// whatever) — rather than throwing, or returning a bare `T | null` — is
-// what lets a caller tell "shared cache unavailable, fetch directly" apart
-// from "shared cache confirms this genuinely has no data" (see
-// lookupShowByTvdbId's 404-is-a-valid-answer case below); a hiccup in this
-// infrastructure never blocks getting show data either way, it just falls
-// straight through to fetching TVmaze directly, same as before this
-// existed.
-async function fetchViaSharedCache<T>(
-  path: string,
-  ttlMs: number
-): Promise<{ hit: true; payload: T } | { hit: false }> {
-  try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token) return { hit: false };
-    const { data, error } = await supabase.functions.invoke<{ payload: T }>("tvmaze-cache", {
-      headers: { Authorization: `Bearer ${token}` },
-      body: { path, ttlMs },
-    });
-    if (error || !data) return { hit: false };
-    return { hit: true, payload: data.payload };
-  } catch {
-    return { hit: false };
-  }
-}
-
 // High priority: typed interactively into Explore's search box, so it should
 // jump ahead of whatever background bulk fetches (Watch List, genre-bias
 // pass) are already queued rather than wait behind them.
 export function searchShows(query: string) {
-  const path = `/search/shows?q=${encodeURIComponent(query)}`;
-  return withCache(`search:${query.toLowerCase()}`, ONE_HOUR, async () => {
-    const shared = await fetchViaSharedCache<{ score: number; show: TVMazeShow }[]>(path, ONE_HOUR);
-    if (shared.hit) return shared.payload;
-    return get<{ score: number; show: TVMazeShow }[]>(path, "high");
-  });
+  return withCache(`search:${query.toLowerCase()}`, ONE_HOUR, () =>
+    get<{ score: number; show: TVMazeShow }[]>(`/search/shows?q=${encodeURIComponent(query)}`, "high")
+  );
 }
 
 // Defaults to "low" for the many bulk/background callers (Watch List
@@ -283,49 +248,26 @@ export function searchShows(query: string) {
 // whatever background batch happened to be mid-flight (see
 // app/show/[id].tsx and app/episode/[id].tsx, which pass "high").
 export function getShow(id: number, priority: Priority = "low") {
-  const path = `/shows/${id}`;
-  return withCache(`show:${id}`, ONE_DAY, async () => {
-    const shared = await fetchViaSharedCache<TVMazeShow>(path, ONE_DAY);
-    if (shared.hit) return shared.payload;
-    return get<TVMazeShow>(path, priority);
-  });
+  return withCache(`show:${id}`, ONE_DAY, () => get<TVMazeShow>(`/shows/${id}`, priority));
 }
 
 export function getShowEpisodes(id: number, priority: Priority = "low") {
-  const path = `/shows/${id}/episodes`;
-  return withCache(`episodes:${id}`, SIX_HOURS, async () => {
-    const shared = await fetchViaSharedCache<TVMazeEpisode[]>(path, SIX_HOURS);
-    if (shared.hit) return shared.payload;
-    return get<TVMazeEpisode[]>(path, priority);
-  });
+  return withCache(`episodes:${id}`, SIX_HOURS, () => get<TVMazeEpisode[]>(`/shows/${id}/episodes`, priority));
 }
 
 export function getShowCast(id: number, priority: Priority = "low") {
-  const path = `/shows/${id}/cast`;
-  return withCache(`cast:${id}`, ONE_DAY, async () => {
-    const shared = await fetchViaSharedCache<CastMember[]>(path, ONE_DAY);
-    if (shared.hit) return shared.payload;
-    return get<CastMember[]>(path, priority);
-  });
+  return withCache(`cast:${id}`, ONE_DAY, () => get<CastMember[]>(`/shows/${id}/cast`, priority));
 }
 
 export function getTodaySchedule(countryCode = "US", date?: string) {
   const dateParam = date ? `&date=${date}` : "";
-  const path = `/schedule?country=${countryCode}${dateParam}`;
-  return withCache(`schedule:${countryCode}:${date ?? "today"}`, ONE_HOUR, async () => {
-    const shared = await fetchViaSharedCache<ScheduleEntry[]>(path, ONE_HOUR);
-    if (shared.hit) return shared.payload;
-    return get<ScheduleEntry[]>(path);
-  });
+  return withCache(`schedule:${countryCode}:${date ?? "today"}`, ONE_HOUR, () =>
+    get<ScheduleEntry[]>(`/schedule?country=${countryCode}${dateParam}`)
+  );
 }
 
 export function getShowsIndex(page = 0) {
-  const path = `/shows?page=${page}`;
-  return withCache(`index:${page}`, ONE_DAY, async () => {
-    const shared = await fetchViaSharedCache<TVMazeShow[]>(path, ONE_DAY);
-    if (shared.hit) return shared.payload;
-    return get<TVMazeShow[]>(path);
-  });
+  return withCache(`index:${page}`, ONE_DAY, () => get<TVMazeShow[]>(`/shows?page=${page}`));
 }
 
 // TVmaze's /shows index is ordered by internal ID, which roughly tracks when
@@ -339,8 +281,8 @@ async function findLastShowsPageIndex(): Promise<number> {
     async function pageLength(page: number) {
       try {
         // Routed through getShowsIndex (rather than a raw get() here) so
-        // these probe requests hit the same local + shared cache as every
-        // other caller asking about the same page, instead of a second,
+        // these probe requests hit the same local cache as every other
+        // caller asking about the same page, instead of a second,
         // differently-keyed fetch of the exact same resource.
         return (await getShowsIndex(page)).length;
       } catch {
@@ -388,12 +330,9 @@ export async function getShowsPool(pageCount: number) {
 // which needs a show name/number to display for an episode-type report
 // (the report itself only stores the episode's TVmaze id).
 export function getEpisodeWithShow(id: number) {
-  const path = `/episodes/${id}?embed=show`;
-  return withCache(`episode-with-show:${id}`, ONE_DAY, async () => {
-    const shared = await fetchViaSharedCache<TVMazeEpisodeWithShow>(path, ONE_DAY);
-    if (shared.hit) return shared.payload;
-    return get<TVMazeEpisodeWithShow>(path);
-  });
+  return withCache(`episode-with-show:${id}`, ONE_DAY, () =>
+    get<TVMazeEpisodeWithShow>(`/episodes/${id}?embed=show`)
+  );
 }
 
 // Defaults to low priority since the biggest caller (lib/tvtimeImport.ts)
@@ -402,18 +341,11 @@ export function getEpisodeWithShow(id: number) {
 // that path is a direct interactive tap in Explore and should jump ahead of
 // queued background work the same way searchShows already does.
 export function lookupShowByTvdbId(tvdbId: number, priority: Priority = "low"): Promise<TVMazeShow | null> {
-  const path = `/lookup/shows?thetvdb=${tvdbId}`;
   return withCache(`tvdb:${tvdbId}`, SIX_HOURS, async () => {
-    // A confirmed "no such show" (payload: null) is itself a cacheable
-    // answer here — see tvmaze-cache's own 404 handling — so a hit short-
-    // circuits even when its payload is null, unlike every other function
-    // above where a real payload is never legitimately null/falsy.
-    const shared = await fetchViaSharedCache<TVMazeShow | null>(path, SIX_HOURS);
-    if (shared.hit) return shared.payload;
-    const res = await fetchWithRetry(path, priority);
+    const res = await fetchWithRetry(`/lookup/shows?thetvdb=${tvdbId}`, priority);
     if (res.status === 404) return null;
     if (!res.ok) {
-      throw new Error(`TVmaze request failed (${res.status}): ${path}`);
+      throw new Error(`TVmaze request failed (${res.status}): /lookup/shows?thetvdb=${tvdbId}`);
     }
     return res.json() as Promise<TVMazeShow>;
   });
