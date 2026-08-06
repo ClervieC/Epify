@@ -299,7 +299,10 @@
       "Bash(scp -o BatchMode=yes /Users/clervie/Desktop/Projects/Epify/supabase/functions/refresh-lists/index.ts ubuntu@54.37.9.86:/home/ubuntu/Epify/supabase/functions/refresh-lists/index.ts)",
       "Bash(scp -o BatchMode=yes /tmp/revert-tvmaze-cache.sql ubuntu@54.37.9.86:/tmp/revert-tvmaze-cache.sql)",
       "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"sudo docker exec -i supabase_db_Epify psql -U supabase_admin -d postgres < /tmp/revert-tvmaze-cache.sql\")",
-      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"rm -f /tmp/revert-tvmaze-cache.sql\")"
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 \"rm -f /tmp/revert-tvmaze-cache.sql\")",
+      "Bash(scp -o BatchMode=yes /tmp/watching_shows.csv ubuntu@54.37.9.86:/tmp/watching_shows.csv)",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 'sudo docker exec -i supabase_db_Epify psql -U supabase_admin -d postgres -c \" *)",
+      "Bash(ssh -o BatchMode=yes ubuntu@54.37.9.86 'python3 -c \" *)"
     ],
     "additionalDirectories": [
       "/private/tmp/claude-501/-Users-clervie-Desktop-Projects-Epify/87ff86a9-d0cf-48e7-8e31-ab29c2d81d9d/scratchpad",

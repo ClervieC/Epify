@@ -1300,6 +1300,30 @@ export default function ShowsScreen() {
     // sitting in the history list looking watched.
     if (currentlyWatched) {
       setHistoryItems((prev) => prev.filter((h) => h.episode.id !== item.episode.id));
+    } else if (result) {
+      // The reverse gap: marking an episode watched had no corresponding
+      // insert into historyItems at all — the row only ever showed up in
+      // History after a full app restart (loadData() resets historyItems to
+      // [] and repaginates from offset 0, so the freshly-watched episode
+      // naturally comes back as the newest row). Appending it here (History
+      // reads oldest-to-newest, ending right above Watch Next — see
+      // watchListData below) makes it show up immediately, without needing
+      // to ever leave/reopen the app. historyOffset is bumped too so the
+      // next loadMoreHistory() pagination call (position-based, not
+      // cursor-based) doesn't re-fetch this exact row a second time now that
+      // it's shifted the underlying query's positions by one.
+      setHistoryItems((prev) => [
+        ...prev,
+        {
+          show: item.show,
+          episode: item.episode,
+          watched: true,
+          watchedAt: result.watched_at,
+          timesWatched: result.times_watched,
+          isSeriesFinale: item.isSeriesFinale,
+        },
+      ]);
+      setHistoryOffset((prev) => prev + 1);
     }
 
     // Only on the unwatched -> watched transition, never on unwatch or on a

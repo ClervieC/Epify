@@ -1,4 +1,4 @@
-import { fetchUserShows, fetchWatchedEpisodes } from "./userShows";
+import { fetchUserShows, fetchWatchedEpisodes, setShowWatchingIfWatched } from "./userShows";
 import { fetchUserMovieTmdbMap } from "./userMovies";
 import { getShowEpisodes } from "./tvmaze";
 import { getCachedEpisodes, getCachedWatchedEpisodes } from "./showDataCache";
@@ -33,10 +33,24 @@ export async function prefetchLibrary(): Promise<void> {
     const [shows, movieMap] = await Promise.all([fetchUserShows(), fetchUserMovieTmdbMap()]);
 
     await mapWithConcurrency(shows, PREFETCH_CONCURRENCY, async (show) => {
-      await Promise.allSettled([
+      const [episodesResult, watchedResult] = await Promise.allSettled([
         getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id)),
         getCachedWatchedEpisodes(show.tvmaze_id, () => fetchWatchedEpisodes(show.tvmaze_id)),
       ]);
+      // A "watched" show (fully caught up as of the last time anyone
+      // checked) is invisible to Watch Next/Upcoming — those only ever look
+      // at "watching"/"want_to_watch" shows (see app/(tabs)/index.tsx) — so
+      // if TVmaze has since added an episode nobody's marked watched, this
+      // is the one place that can notice and un-stick it, since it's the
+      // only code path that still fetches a "watched" show's episodes at
+      // all. See setShowWatchingIfWatched's own comment for the full story.
+      if (show.status === "watched" && episodesResult.status === "fulfilled" && watchedResult.status === "fulfilled") {
+        const watchedIds = new Set(watchedResult.value.map((w) => w.tvmaze_episode_id));
+        const hasUnwatchedAiredEpisode = episodesResult.value.some(
+          (ep) => new Date(ep.airstamp).getTime() <= Date.now() && !watchedIds.has(ep.id)
+        );
+        if (hasUnwatchedAiredEpisode) await setShowWatchingIfWatched(show.tvmaze_id);
+      }
     });
 
     const movies = Array.from(movieMap.values()).filter((m) => m.tmdb_id != null);

@@ -38,6 +38,32 @@ async function resumeIfPausedOrDropped(tvmazeId: number) {
   }
 }
 
+// Called by lib/backgroundPrefetch.ts once it's confirmed (by comparing a
+// freshly-fetched episode list against watched_episodes) that a "watched"
+// show has a new aired episode nobody's marked watched — i.e. TVmaze added
+// content since the show was last fully caught up. Without this, a show
+// only ever gets marked "watched" (never automatically un-marked), and
+// Watch Next/Upcoming only ever fetch episodes for "watching"/"want_to_watch"
+// shows (see app/(tabs)/index.tsx's `followed` list) — so a show that
+// finishes, gets marked watched, and later gets a new season stays
+// permanently invisible to both screens with no way to notice on its own.
+// Scoped UPDATE (not read-then-write) so it's a no-op if the status already
+// moved on for some other reason between the check and this call.
+export async function setShowWatchingIfWatched(tvmazeId: number): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) return;
+  try {
+    await supabase
+      .from("user_shows")
+      .update({ status: "watching" })
+      .eq("user_id", userId)
+      .eq("tvmaze_id", tvmazeId)
+      .eq("status", "watched");
+  } catch {
+    // Best-effort — see resumeIfPausedOrDropped's comment above.
+  }
+}
+
 export interface UserShow {
   id: string;
   user_id: string;
