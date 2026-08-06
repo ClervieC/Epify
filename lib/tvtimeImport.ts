@@ -59,11 +59,26 @@ function parseTvTimeRows(csvText: string): TvTimeRow[] {
   return rows;
 }
 
+function normalizeTitle(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 async function findBestShowMatch(title: string) {
   const tryQuery = async (query: string) => {
     try {
       const results = await searchShows(query);
-      return results[0]?.show ?? null;
+      if (results.length === 0) return null;
+      // TVmaze's own relevance ranking (results[0]) is scored by popularity,
+      // not title match — for an ambiguous title it can rank a same-named
+      // remake, foreign version, or unrelated show above the actual show the
+      // CSV row means, silently importing the wrong one (different episode
+      // history entirely, so watched status/upcoming episodes come out
+      // wrong with no error at import time). When an exact title match
+      // (case/punctuation-insensitive) exists anywhere in the results,
+      // prefer it over TVmaze's top pick.
+      const normalizedQuery = normalizeTitle(query);
+      const exact = results.find((r) => normalizeTitle(r.show.name) === normalizedQuery);
+      return (exact ?? results[0]).show;
     } catch {
       return null;
     }

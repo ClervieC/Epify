@@ -17,8 +17,18 @@ const STORAGE_PREFIX = "show_data_cache:";
 // that network round-trip, repeated for every followed show, was the main
 // reason those screens were slow to load. Correctness comes from the
 // explicit invalidate() calls on every mutation (see lib/userShows.ts), not
-// from a short TTL, so these can all be long-lived.
-function createCache<T>(name: string, ttlMs: number) {
+// from a short TTL, so these can all be long-lived — for data where that
+// holds. `mustRevalidate` is the escape hatch for data where it doesn't (see
+// watchedCache below): invalidate() is implemented as an in-memory Map
+// (invalidatedAt), which is wiped on every process kill, so it protects
+// nothing that happened before the app's *current* cold start. Without this
+// flag, a disk-persisted entry within ttlMs is trusted and returned as-is —
+// no network call at all — meaning a watched/unwatched mutation from a
+// previous session (this device, hours ago, or any other device) can sit
+// uncorrected in the UI for up to the full TTL after reopening the app, a
+// real bug this flag exists specifically to close.
+function createCache<T>(name: string, ttlMs: number, opts: { mustRevalidate?: boolean } = {}) {
+  const mustRevalidate = opts.mustRevalidate ?? false;
   const map = new Map<number, { data: T; fetchedAt: number }>();
   // Bumped by invalidate() so a fetch already in flight when the
   // invalidation lands doesn't overwrite it with the pre-mutation data it
@@ -81,12 +91,14 @@ function createCache<T>(name: string, ttlMs: number) {
         const stored = await storage.getItem(storageKey(id));
         if (stored) {
           const parsed = JSON.parse(stored) as { data: T; fetchedAt: number };
-          if (Date.now() - parsed.fetchedAt <= ttlMs) {
+          if (!mustRevalidate && Date.now() - parsed.fetchedAt <= ttlMs) {
             map.set(id, parsed);
             return parsed.data;
           }
-          // Expired, but kept around as a last-resort fallback below if the
-          // fetch fails outright.
+          // Either expired, or mustRevalidate always wants a live fetch on
+          // first ask this session regardless of age — either way, kept
+          // around as a last-resort fallback below if that fetch fails
+          // outright.
           stalePersisted = parsed.data;
         }
       } catch {
@@ -139,16 +151,19 @@ function createCache<T>(name: string, ttlMs: number) {
 // lib/tvmaze.ts already persists them independently too — this layer's main
 // job is skipping even that disk read on repeat calls within the same
 // session (show list -> show detail -> episode detail all want the same
-// data). Watched status is Supabase data with no persistence anywhere else,
-// so this is the only cache standing between "open Watch List" and one
-// network round-trip per followed show.
+// data), so trusting a same-device disk copy up to a day/6h old is fine —
+// nothing external mutates this data on a timescale that matters here.
+// Watched status is the opposite: it's mutated by a single tap, from any of
+// the user's devices, and "was this episode watched" is exactly the
+// question a stale answer breaks — so watchedCache opts into mustRevalidate
+// (see createCache above) despite sharing the same nominal TTL as episodes.
 const SHOW_INFO_TTL = 24 * 60 * 60 * 1000;
 const EPISODES_TTL = 6 * 60 * 60 * 1000;
 const WATCHED_TTL = 6 * 60 * 60 * 1000;
 
 const showInfoCache = createCache<TVMazeShow>("show", SHOW_INFO_TTL);
 const episodesCache = createCache<TVMazeEpisode[]>("episodes", EPISODES_TTL);
-const watchedCache = createCache<WatchedEpisode[]>("watched", WATCHED_TTL);
+const watchedCache = createCache<WatchedEpisode[]>("watched", WATCHED_TTL, { mustRevalidate: true });
 
 export function getCachedShow(showId: number, fetcher: () => Promise<TVMazeShow>, highPriority = false) {
   return showInfoCache.getOrFetch(showId, fetcher, highPriority);
