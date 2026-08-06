@@ -44,12 +44,15 @@ export async function prefetchLibrary(): Promise<void> {
       // is the one place that can notice and un-stick it, since it's the
       // only code path that still fetches a "watched" show's episodes at
       // all. See setShowWatchingIfWatched's own comment for the full story.
+      //
+      // Deliberately not restricted to already-*aired* unwatched episodes —
+      // a newly-announced season with a future air date is exactly the case
+      // Upcoming exists to surface, and it should flip the show back to
+      // watching the moment TVmaze lists it, not wait until it airs.
       if (show.status === "watched" && episodesResult.status === "fulfilled" && watchedResult.status === "fulfilled") {
         const watchedIds = new Set(watchedResult.value.map((w) => w.tvmaze_episode_id));
-        const hasUnwatchedAiredEpisode = episodesResult.value.some(
-          (ep) => new Date(ep.airstamp).getTime() <= Date.now() && !watchedIds.has(ep.id)
-        );
-        if (hasUnwatchedAiredEpisode) await setShowWatchingIfWatched(show.tvmaze_id);
+        const hasUnwatchedEpisode = episodesResult.value.some((ep) => !watchedIds.has(ep.id));
+        if (hasUnwatchedEpisode) await setShowWatchingIfWatched(show.tvmaze_id);
       }
     });
 
