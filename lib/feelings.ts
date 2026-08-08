@@ -11,4 +11,5 @@ export const FEELING_EMOJIS = [
   { key: "confused", emoji: "😕" },
   { key: "pleased", emoji: "😊" },
   { key: "butterflies", emoji: "🦋" },
+  { key: "loved", emoji: "❤️" },
 ] as const;

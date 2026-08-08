@@ -487,6 +487,7 @@ const en = {
     confused: "Confused",
     pleased: "Pleased",
     butterflies: "Butterflies",
+    loved: "Loved",
   },
   rewatchPrompt: {
     alreadyWatched: "You've already marked this as watched",
@@ -1026,6 +1027,7 @@ const fr: typeof en = {
     confused: "Perdu",
     pleased: "Content",
     butterflies: "Papillons",
+    loved: "Adoré",
   },
   rewatchPrompt: {
     alreadyWatched: "Tu as déjà marqué ça comme vu",
