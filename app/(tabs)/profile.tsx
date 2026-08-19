@@ -654,48 +654,61 @@ export default function ProfileScreen() {
         )}
 
         <SectionHeader title={t.profile.statistics} styles={styles} />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.statsRow}
-        >
-          <StatCard
-            icon="time-outline"
-            color={colors.blue}
-            label={t.profile.watchTime}
-            value={`${tvTime.months}${t.profile.months[0]} ${tvTime.days}${t.profile.days[0]} ${tvTime.hours}${t.profile.hours[0]}`}
-            colors={colors}
-            styles={styles}
-            onPress={() => router.push("/stats/shows")}
+        {/* The 4 cards below don't fit a narrow phone width, and
+            showsHorizontalScrollIndicator is off (native scrollbars read as
+            visual noise on a stat row) — without this fade, nothing on
+            screen hints there's a 4th card past the edge. */}
+        <View style={{ position: "relative" }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.statsRow}
+          >
+            <StatCard
+              icon="time-outline"
+              color={colors.blue}
+              label={t.profile.watchTime}
+              value={`${tvTime.months}${t.profile.months[0]} ${tvTime.days}${t.profile.days[0]} ${tvTime.hours}${t.profile.hours[0]}`}
+              colors={colors}
+              styles={styles}
+              onPress={() => router.push("/stats/shows")}
+            />
+            <StatCard
+              icon="checkmark-circle-outline"
+              color={colors.green}
+              label={t.profile.episodesWatched}
+              value={episodeCount.toLocaleString()}
+              colors={colors}
+              styles={styles}
+              onPress={() => router.push("/stats/shows")}
+            />
+            <StatCard
+              icon="time-outline"
+              color={colors.red}
+              label={t.profile.movieWatchTime}
+              value={`${movieTime.months}${t.profile.months[0]} ${movieTime.days}${t.profile.days[0]} ${movieTime.hours}${t.profile.hours[0]}`}
+              colors={colors}
+              styles={styles}
+              onPress={() => router.push("/stats/shows?tab=movies")}
+            />
+            <StatCard
+              icon="checkmark-circle-outline"
+              color={colors.yellow}
+              label={t.profile.moviesWatched}
+              value={movies.length.toLocaleString()}
+              colors={colors}
+              styles={styles}
+              onPress={() => router.push("/stats/shows?tab=movies")}
+            />
+          </ScrollView>
+          <LinearGradient
+            colors={["transparent", colors.background]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            pointerEvents="none"
+            style={styles.statsRowFade}
           />
-          <StatCard
-            icon="checkmark-circle-outline"
-            color={colors.green}
-            label={t.profile.episodesWatched}
-            value={episodeCount.toLocaleString()}
-            colors={colors}
-            styles={styles}
-            onPress={() => router.push("/stats/shows")}
-          />
-          <StatCard
-            icon="time-outline"
-            color={colors.red}
-            label={t.profile.movieWatchTime}
-            value={`${movieTime.months}${t.profile.months[0]} ${movieTime.days}${t.profile.days[0]} ${movieTime.hours}${t.profile.hours[0]}`}
-            colors={colors}
-            styles={styles}
-            onPress={() => router.push("/stats/shows?tab=movies")}
-          />
-          <StatCard
-            icon="checkmark-circle-outline"
-            color={colors.yellow}
-            label={t.profile.moviesWatched}
-            value={movies.length.toLocaleString()}
-            colors={colors}
-            styles={styles}
-            onPress={() => router.push("/stats/shows?tab=movies")}
-          />
-        </ScrollView>
+        </View>
 
         <SectionHeader
           title={t.profile.favorites}
@@ -1328,6 +1341,13 @@ function createStyles(colors: Colors, isSmallScreen: boolean) {
     streakBannerIconAtRisk: { backgroundColor: `${colors.red}22` },
     streakBannerSubtitleAtRisk: { color: colors.red, fontWeight: "700" },
     statsRow: { paddingHorizontal: 16, gap: 10 },
+    statsRowFade: {
+      position: "absolute",
+      right: 0,
+      top: 0,
+      bottom: 0,
+      width: 32,
+    },
     statCard: {
       width: 140,
       backgroundColor: colors.surface,

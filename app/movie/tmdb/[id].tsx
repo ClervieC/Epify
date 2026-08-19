@@ -145,7 +145,7 @@ export default function TmdbMovieDetailScreen() {
     };
   }, [unlocked, tmdbId]);
 
-  if (!tmdb && !tmdbNotFound) return <MovieDetailLoading />;
+  if (!tmdb && !tmdbNotFound) return <MovieDetailLoading onBack={goBack} />;
 
   const title = tmdb?.title ?? "";
   const year = tmdb?.release_date ? new Date(tmdb.release_date).getFullYear() : null;

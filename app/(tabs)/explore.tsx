@@ -478,11 +478,11 @@ export default function ExploreScreen() {
       {!isSearching && (
         <View style={styles.tabsRow}>
           <Pressable style={styles.tabBtn} onPress={() => setSubTab("shows")}>
-            <Text style={[styles.tabText, subTab === "shows" && styles.tabTextActive]}>{t.tabs.shows}</Text>
+            <Text style={[styles.tabText, subTab === "shows" && styles.tabTextActive]}>{t.explore.tabTv}</Text>
             {subTab === "shows" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
           </Pressable>
           <Pressable style={styles.tabBtn} onPress={() => setSubTab("movies")}>
-            <Text style={[styles.tabText, subTab === "movies" && styles.tabTextActive]}>{t.tabs.movies}</Text>
+            <Text style={[styles.tabText, subTab === "movies" && styles.tabTextActive]}>{t.explore.tabMovies}</Text>
             {subTab === "movies" && <Animated.View style={[styles.tabUnderline, { transform: [{ scaleX: underlineGrow }] }]} />}
           </Pressable>
         </View>
@@ -716,7 +716,10 @@ function ExploreCard({
             </Pressable>
           </View>
         </View>
-        <Text style={styles.cardTitle} numberOfLines={1}>
+        {/* 2 lines instead of 1 — a mid-word ellipsis ("Spider-Man: Bran…")
+            reads as broken; letting most real titles wrap fully (or at
+            least break at a word boundary) before truncating doesn't. */}
+        <Text style={styles.cardTitle} numberOfLines={2}>
           {show.name}
         </Text>
         <Text style={styles.cardMeta} numberOfLines={1}>
@@ -795,7 +798,10 @@ function ExploreTvCard({
             </Pressable>
           </View>
         </View>
-        <Text style={styles.cardTitle} numberOfLines={1}>
+        {/* 2 lines instead of 1 — a mid-word ellipsis ("Spider-Man: Bran…")
+            reads as broken; letting most real titles wrap fully (or at
+            least break at a word boundary) before truncating doesn't. */}
+        <Text style={styles.cardTitle} numberOfLines={2}>
           {show.name}
         </Text>
         <Text style={styles.cardMeta} numberOfLines={1}>
@@ -870,7 +876,10 @@ function ExploreMovieCard({
             </Pressable>
           </View>
         </View>
-        <Text style={styles.cardTitle} numberOfLines={1}>
+        {/* 2 lines instead of 1 — a mid-word ellipsis ("Spider-Man: Bran…")
+            reads as broken; letting most real titles wrap fully (or at
+            least break at a word boundary) before truncating doesn't. */}
+        <Text style={styles.cardTitle} numberOfLines={2}>
           {movie.title}
         </Text>
         <Text style={styles.cardMeta} numberOfLines={1}>

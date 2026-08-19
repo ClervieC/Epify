@@ -665,6 +665,19 @@ export default function ShowDetailScreen() {
   if (loading || !show) {
     return (
       <View style={styles.center}>
+        {/* Without this, a slow fetch (or one queued behind other TVmaze
+            traffic — see lib/tvmaze.ts's rate-limit queue) left the screen
+            with nothing tappable at all until it resolved. Same position as
+            the real header's back button below, just styled for a plain
+            background instead of sitting over the hero image. */}
+        <Pressable
+          style={styles.loadingBackBtn}
+          onPress={goBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Ionicons name="chevron-down" size={22} color={colors.text} />
+        </Pressable>
         <ActivityIndicator color={colors.black} />
       </View>
     );
@@ -1262,6 +1275,17 @@ function createStyles(colors: Colors) {
   screen: { flex: 1 },
   container: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
+  loadingBackBtn: {
+    position: "absolute",
+    top: 16,
+    left: 16,
+    width: 36,
+    height: 36,
+    borderRadius: radius.pill,
+    backgroundColor: colors.pillBg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   hero: { height: 320, backgroundColor: "#111", position: "relative" },
   heroImage: { width: "100%", height: "100%", position: "absolute" },
   heroGradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: 150 },

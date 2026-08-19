@@ -161,7 +161,7 @@ export default function MovieDetailScreen() {
   }, [unlocked, commentTmdbId]);
 
   if (loadError) return <DetailErrorState onBack={goBack} />;
-  if (loading || !movie) return <MovieDetailLoading />;
+  if (loading || !movie) return <MovieDetailLoading onBack={goBack} />;
 
   const isWatched = movie.status === "watched";
   const notYetReleased = !!tmdb && !isMovieReleased(tmdb.release_date);

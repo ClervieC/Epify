@@ -603,6 +603,8 @@ export default function MoviesScreen() {
               icon="film-outline"
               title={t.movies.title}
               subtitle={t.movies.empty}
+              actionLabel={t.movies.findMovies}
+              onAction={() => router.push("/(tabs)/explore")}
             />
           </View>
         ) : (
@@ -625,6 +627,8 @@ export default function MoviesScreen() {
               icon="bookmark-outline"
               title={t.movies.tabToWatch}
               subtitle={t.movies.emptyUpcoming}
+              actionLabel={t.movies.findMovies}
+              onAction={() => router.push("/(tabs)/explore")}
             />
           </View>
         ) : (

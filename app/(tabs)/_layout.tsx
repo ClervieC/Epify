@@ -55,6 +55,9 @@ function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAd
             <Pressable
               key={route.key}
               style={styles.item}
+              accessibilityRole="tab"
+              accessibilityLabel={labels[route.name]}
+              accessibilityState={{ selected: focused }}
               onPress={() => {
                 const event = navigation.emit({
                   type: "tabPress",

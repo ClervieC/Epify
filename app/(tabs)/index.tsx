@@ -1506,7 +1506,14 @@ export default function ShowsScreen() {
             </View>
           );
         case "watchNextEmpty":
-          return <Text style={styles.empty}>{t.shows.emptyWatchList}</Text>;
+          return (
+            <EmptyState
+              icon="tv-outline"
+              title={t.shows.emptyWatchList}
+              actionLabel={t.shows.findShows}
+              onAction={() => router.push("/(tabs)/explore")}
+            />
+          );
         case "watchNextItem":
           // onRewatch matters here now: while the feeling-prompt sheet is open
           // for this row's show, its item is frozen watched=true (see the
@@ -1838,7 +1845,12 @@ export default function ShowsScreen() {
         </Animated.View>
       ) : tracked.length === 0 ? (
         <View style={styles.fullEmpty}>
-          <EmptyState icon="calendar-outline" title={t.shows.emptyWatchList} />
+          <EmptyState
+            icon="calendar-outline"
+            title={t.shows.emptyWatchList}
+            actionLabel={t.shows.findShows}
+            onAction={() => router.push("/(tabs)/explore")}
+          />
         </View>
       ) : upcomingViewMode === "calendar" ? (
         <Animated.View style={{ flex: 1, opacity: contentFade }}>

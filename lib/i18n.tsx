@@ -68,6 +68,7 @@ const en = {
       "We'll send you a one-time nudge if a show sits in your to-watch list without being started. You can change this later in Settings.",
     reminderSixMonths: "Remind me after 6 months",
     reminderOneYear: "Remind me after 1 year",
+    reminderNotNow: "Not now",
   },
   login: {
     tagline: "Track your shows",
@@ -176,12 +177,14 @@ const en = {
     notStarted: "Not started",
     emptyToday: "Nothing planned today.",
     emptyWatchList: "Add shows to follow to see them here.",
+    findShows: "Explore shows",
     streakDays: (n: number) => `${n} day${n > 1 ? "s" : ""} streak`,
     streakAtRisk: (n: number) => `${n}-day streak ends today!`,
   },
   movies: {
     title: "Movies",
     empty: "No movies yet.",
+    findMovies: "Explore movies",
     watchedOn: (date: string) => `Watched on ${date}`,
     watchCount: (n: number) =>
       n === 1 ? "Watched once" : `Watched ${n} times`,
@@ -205,6 +208,14 @@ const en = {
   },
   explore: {
     title: "Discover",
+    // Deliberately distinct from t.tabs.shows/t.tabs.movies — this toggle
+    // sits on screen at the same time as the bottom tab bar, which already
+    // has items with those exact labels doing a different job (switching
+    // tabs, not filtering content type within this one). Reusing the same
+    // words for two different controls on screen at once was confusing
+    // enough to cause mis-taps during testing.
+    tabTv: "TV",
+    tabMovies: "Movies",
     searchPlaceholder: "Search for a show or movie",
     noResults: (query: string) => `No results for "${query}".`,
     ended: "Ended",
@@ -601,6 +612,7 @@ const fr: typeof en = {
       "On peut te rappeler une seule fois si une série traîne dans ta liste \"à voir\" sans être commencée. Modifiable plus tard dans les réglages.",
     reminderSixMonths: "Me rappeler après 6 mois",
     reminderOneYear: "Me rappeler après 1 an",
+    reminderNotNow: "Pas maintenant",
   },
   login: {
     tagline: "Suis tes séries",
@@ -711,12 +723,14 @@ const fr: typeof en = {
     notStarted: "Pas commencées",
     emptyToday: "Rien de prévu aujourd'hui.",
     emptyWatchList: "Ajoute des séries à suivre pour les voir ici.",
+    findShows: "Découvrir des séries",
     streakDays: (n: number) => `${n} jour${n > 1 ? "s" : ""} de suite`,
     streakAtRisk: (n: number) => `${n} jours de suite — finit aujourd'hui !`,
   },
   movies: {
     title: "Films",
     empty: "Aucun film pour l'instant.",
+    findMovies: "Découvrir des films",
     watchedOn: (date: string) => `Vu le ${date}`,
     watchCount: (n: number) => (n === 1 ? "Vu une fois" : `Vu ${n} fois`),
     overview: "Synopsis",
@@ -739,6 +753,8 @@ const fr: typeof en = {
   },
   explore: {
     title: "Découvrir",
+    tabTv: "TV",
+    tabMovies: "Films",
     searchPlaceholder: "Chercher une série ou un film",
     noResults: (query: string) => `Aucun résultat pour "${query}".`,
     ended: "Terminée",

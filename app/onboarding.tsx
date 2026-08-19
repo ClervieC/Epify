@@ -156,6 +156,13 @@ export default function OnboardingScreen() {
               <Text style={[styles.nextBtnText, { color: colors.text }]}>{t.onboarding.reminderOneYear}</Text>
             </Pressable>
           </View>
+          {/* Both options above commit to a reminder — without a neutral way
+              out, a brand-new user with an empty watchlist has no way to
+              defer this decision. 0 = off (see StaleWatchlistMonths in
+              lib/userSettings.ts), same as picking "Off" in Settings later. */}
+          <Pressable onPress={() => chooseReminder(0)} accessibilityRole="button">
+            <Text style={styles.reminderSkip}>{t.onboarding.reminderNotNow}</Text>
+          </Pressable>
         </View>
       </View>
     );
@@ -455,6 +462,12 @@ function createStyles(colors: Colors) {
       paddingVertical: 17,
       alignItems: "center",
       justifyContent: "center",
+    },
+    reminderSkip: {
+      color: colors.textMuted,
+      fontSize: type.bodySm,
+      marginTop: 20,
+      padding: 8,
     },
   });
 }

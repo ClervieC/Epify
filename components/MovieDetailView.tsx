@@ -208,10 +208,38 @@ export function MovieDetailView({
   );
 }
 
-export function MovieDetailLoading() {
+interface MovieDetailLoadingProps {
+  // Optional since some older/other call sites may not have a back target
+  // handy yet — but every real screen using this should pass one. Without
+  // it, a slow fetch (or one queued behind other TMDB traffic) left the
+  // screen with nothing tappable at all until it resolved.
+  onBack?: () => void;
+}
+
+export function MovieDetailLoading({ onBack }: MovieDetailLoadingProps) {
   const colors = useColors();
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}>
+      {onBack && (
+        <Pressable
+          style={{
+            position: "absolute",
+            top: 16,
+            left: 16,
+            width: 36,
+            height: 36,
+            borderRadius: radius.pill,
+            backgroundColor: colors.pillBg,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Ionicons name="chevron-down" size={22} color={colors.text} />
+        </Pressable>
+      )}
       <ActivityIndicator color={colors.black} />
     </View>
   );

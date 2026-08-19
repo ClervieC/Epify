@@ -31,6 +31,15 @@ export default function SettingsScreen() {
   const goBack = useGoBack("/(tabs)/profile");
   const colors = useColors();
   const styles = createStyles(colors);
+  // react-native-web's <Switch> ignores thumbColor for the "on" state
+  // specifically — inspecting the rendered DOM showed its thumb div hard-
+  // coded to rgb(0, 150, 136) (a fixed teal) regardless of the thumbColor
+  // prop, which only reaches the "off" thumb on web. `activeThumbColor` is
+  // the (RNW-only, not in react-native's core SwitchProps type — hence the
+  // cast) prop that actually controls the "on" thumb there. Every Switch on
+  // this screen was affected, not just one. No-op on native, which already
+  // renders thumbColor correctly for both states.
+  const webSwitchProps = { activeThumbColor: colors.surface } as { activeThumbColor?: string };
   const {
     t,
     language,
@@ -214,6 +223,7 @@ export default function SettingsScreen() {
           onValueChange={setSpoilerMode}
           trackColor={{ true: colors.accent, false: colors.pillBg }}
           thumbColor={colors.surface}
+          {...webSwitchProps}
         />
       </View>
 
@@ -228,6 +238,7 @@ export default function SettingsScreen() {
           onValueChange={setShowFeelingPrompt}
           trackColor={{ true: colors.accent, false: colors.pillBg }}
           thumbColor={colors.surface}
+          {...webSwitchProps}
         />
       </View>
 
