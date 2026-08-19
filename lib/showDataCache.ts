@@ -144,7 +144,68 @@ function createCache<T>(name: string, ttlMs: number, opts: { mustRevalidate?: bo
     }
   }
 
-  return { get, set, invalidate, getOrFetch, clearMemory };
+  // Warms many ids with a single batched network call instead of one
+  // getOrFetch per id — used where a screen is about to fetch the same kind
+  // of data for a whole list of ids at once (e.g. watched episodes for
+  // every tracked show on cold app open, see primeWatchedEpisodes below).
+  // Mirrors getOrFetch's own disk-check and invalidatedAt race-safety per
+  // id, and registers a shared in-flight entry per id so a getOrFetch call
+  // for one of these ids that follows right after (e.g. the per-show loop
+  // that runs after priming) dedupes onto the batch instead of firing its
+  // own request.
+  async function primeMany(ids: number[], batchFetcher: (missingIds: number[]) => Promise<Map<number, T>>): Promise<void> {
+    const toFetch = ids.filter((id) => get(id) === null && !inFlight.has(id));
+    if (toFetch.length === 0) return;
+
+    const startedAt = Date.now();
+    const stillMissing: number[] = [];
+    for (const id of toFetch) {
+      try {
+        const stored = await storage.getItem(storageKey(id));
+        if (stored) {
+          const parsed = JSON.parse(stored) as { data: T; fetchedAt: number };
+          if (!mustRevalidate && Date.now() - parsed.fetchedAt <= ttlMs) {
+            map.set(id, parsed);
+            continue;
+          }
+        }
+      } catch {
+        // Corrupt/unavailable entry — fall through and include it in the batch.
+      }
+      stillMissing.push(id);
+    }
+    if (stillMissing.length === 0) return;
+
+    const batchPromise = (async () => {
+      let fetched: Map<number, T>;
+      try {
+        fetched = await batchFetcher(stillMissing);
+      } catch {
+        // Batch failed outright — leave these ids uncached; individual
+        // getOrFetch calls for them fall back to fetching one at a time.
+        return;
+      }
+      for (const id of stillMissing) {
+        if ((invalidatedAt.get(id) ?? 0) >= startedAt) continue;
+        const data = fetched.get(id);
+        if (data !== undefined) set(id, data);
+      }
+    })();
+
+    const entries = new Map(
+      stillMissing.map((id) => [id, { promise: batchPromise.then(() => get(id) as T), highPriority: false }])
+    );
+    for (const [id, entry] of entries) inFlight.set(id, entry);
+    await batchPromise;
+    // Only clear an id's slot if it's still this batch's entry — a
+    // getOrFetch call for that id that started after the batch (and so
+    // replaced it above without waiting) owns the slot now.
+    for (const [id, entry] of entries) {
+      if (inFlight.get(id) === entry) inFlight.delete(id);
+    }
+  }
+
+  return { get, set, invalidate, getOrFetch, primeMany, clearMemory };
 }
 
 // Show metadata and episode lists are effectively static day-to-day, and
@@ -175,6 +236,20 @@ export function getCachedEpisodes(showId: number, fetcher: () => Promise<TVMazeE
 
 export function getCachedWatchedEpisodes(showId: number, fetcher: () => Promise<WatchedEpisode[]>) {
   return watchedCache.getOrFetch(showId, fetcher);
+}
+
+// Warms watchedCache for a whole list of shows with one batched Supabase
+// call — call this before a mapWithConcurrency loop that's about to call
+// getCachedWatchedEpisodes per show (Watch List's tracked-shows load,
+// backgroundPrefetch's library warm-up), so N round trips become 1. Each
+// getCachedWatchedEpisodes call after this resolves from the now-warm
+// cache; a show that somehow missed the batch just falls back to its own
+// individual fetch, same as before this existed.
+export function primeWatchedEpisodes(
+  showIds: number[],
+  batchFetcher: (missingIds: number[]) => Promise<Map<number, WatchedEpisode[]>>
+) {
+  return watchedCache.primeMany(showIds, batchFetcher);
 }
 
 export function invalidateWatchedEpisodes(showId: number) {

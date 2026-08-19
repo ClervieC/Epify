@@ -55,6 +55,7 @@ import {
 } from "../../lib/userShows";
 import { useColors, radius, type, Colors, dropShadow } from "../../lib/theme";
 import { useLanguage, Translations } from "../../lib/i18n";
+import { alert } from "../../lib/alert";
 import { useGrowIn, useFadeIn, useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { ChoiceDialog } from "../../components/ChoiceDialog";
@@ -229,8 +230,8 @@ export default function ShowDetailScreen() {
   // Resolve-on-tap (not upfront for all ~12 recommendations at once) — same
   // pattern as Explore's own TMDB discover cards (see resolveTvmazeShow in
   // app/(tabs)/explore.tsx). A show with no TVmaze match at all (no tvdb id
-  // on file for that TMDB title) opens the read-only TMDB-only fallback
-  // page (app/show/tmdb/[id].tsx) instead of a dead-end "not found" alert.
+  // on file for that TMDB title) surfaces a "not found" alert — this app
+  // only tracks/shows real TVmaze shows.
   async function openRecommendation(rec: TMDBTvResult) {
     const cached = resolvedRecommendations.current.get(rec.id);
     if (cached) {
@@ -238,12 +239,16 @@ export default function ShowDetailScreen() {
       return;
     }
     if (cached === null) {
-      router.push(`/show/tmdb/${rec.id}`);
+      alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
       return;
     }
     const resolved = await findTvmazeShowFromTmdbTv(rec.id);
     resolvedRecommendations.current.set(rec.id, resolved?.id ?? null);
-    router.push(resolved ? `/show/${resolved.id}` : `/show/tmdb/${rec.id}`);
+    if (resolved) {
+      router.push(`/show/${resolved.id}`);
+    } else {
+      alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
+    }
   }
 
   const recommendationItems: RecommendationItem[] = recommendations.map((r) => ({

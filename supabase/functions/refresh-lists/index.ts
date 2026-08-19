@@ -1,6 +1,7 @@
 // Deploy with: npx supabase functions deploy refresh-lists --no-verify-jwt
-// Requires SUPABASE_SERVICE_ROLE_KEY, TMDB_API_KEY (already set for
-// tmdb-cache) and REFRESH_SECRET as secrets for this project.
+// Requires SUPABASE_SERVICE_ROLE_KEY, TMDB_API_KEY, REDIS_PASSWORD (all
+// already set for tmdb-cache) and REFRESH_SECRET as secrets for this
+// project.
 //
 // Proactively refreshes the small, fixed set of TMDB "list" endpoints
 // (popular/top-rated/now-playing/upcoming, movies and TV) — the paths
@@ -29,7 +30,17 @@
 // here) and gated instead by a shared secret header only the scheduled
 // pg_cron call knows, so an ordinary client can't hit this endpoint to
 // force-refresh (and burn TMDB's shared budget) on demand.
+//
+// Writes go to both Redis and Postgres (see tmdb-cache/index.ts's own
+// header comment for why — Redis is now tmdb-cache's primary read path,
+// dual-written during a bake-in period). This function bypasses
+// tmdb-cache's own request path entirely, so without this it would keep
+// succeeding every night while silently refreshing only the table nobody
+// reads first anymore.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { cacheSet } from "../_shared/redis.ts";
+
+const REDIS_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 
@@ -75,9 +86,11 @@ Deno.serve(async (req: Request) => {
       const res = await fetch(`${TMDB_BASE_URL}${path}${separator}api_key=${tmdbApiKey}`);
       if (!res.ok) throw new Error(`TMDB responded ${res.status}`);
       const payload = await res.json();
+      const fetchedAt = new Date().toISOString();
+      await cacheSet(`tmdb:${path}`, JSON.stringify({ payload, fetched_at: fetchedAt }), REDIS_TTL_SECONDS);
       const { error } = await admin
         .from("tmdb_api_cache")
-        .upsert({ path, payload, fetched_at: new Date().toISOString() });
+        .upsert({ path, payload, fetched_at: fetchedAt });
       if (error) throw error;
       results[path] = "ok";
     } catch (err) {

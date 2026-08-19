@@ -19,6 +19,26 @@ import { ThemeProvider, useThemeMode } from "../lib/theme";
 import { AppSplash } from "../components/AppSplash";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OfflineBanner } from "../components/OfflineBanner";
+import * as Sentry from '@sentry/react-native';
+
+Sentry.init({
+  dsn: 'https://03cff4521aa786cbcb584bdbedcd77f2@o4511932189114368.ingest.de.sentry.io/4511932194488400',
+
+  // Adds more context data to events (IP address, cookies, user, etc.)
+  // For more information, visit: https://docs.sentry.io/platforms/react-native/data-management/data-collected/
+  sendDefaultPii: true,
+
+  // Enable Logs
+  enableLogs: true,
+
+  // Configure Session Replay
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1,
+  integrations: [Sentry.mobileReplayIntegration(), Sentry.feedbackIntegration()],
+
+  // uncomment the line below to enable Spotlight (https://spotlightjs.com)
+  // spotlight: __DEV__,
+});
 
 // Keeps the native splash screen (configured via the expo-splash-screen
 // config plugin in app.json) visible until the JS AppSplash overlay below
@@ -88,7 +108,6 @@ function RootNavigation() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
         <Stack.Screen name="show/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="show/tmdb/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="episode/[id]" options={{ headerShown: false, presentation: "modal" }} />
         <Stack.Screen name="users/search" options={{ headerShown: false }} />
         <Stack.Screen name="users/[id]" options={{ headerShown: false }} />
@@ -117,7 +136,7 @@ function ThemedStatusBar() {
   return <StatusBar style={resolvedScheme === "dark" ? "light" : "dark"} />;
 }
 
-export default function RootLayout() {
+export default Sentry.wrap(function RootLayout() {
   useEffect(() => {
     initAds();
   }, []);
@@ -154,4 +173,4 @@ export default function RootLayout() {
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
-}
+});

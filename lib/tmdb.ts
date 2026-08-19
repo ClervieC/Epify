@@ -109,10 +109,39 @@ async function get<T>(path: string, params: Record<string, string> = {}): Promis
 // a hiccup in that infrastructure never blocks getting movie/show data; it
 // just falls straight through to fetching TMDB directly, same as before
 // this existed.
+//
+// Reads tmdb_api_cache directly via PostgREST FIRST, before ever touching
+// the tmdb-cache Edge Function — a k6 load test at 100 concurrent users
+// found PostgREST holding a ~110ms p95, while routing the exact same
+// cache-hit request through the self-hosted Deno edge-runtime instead cost
+// a ~13.8s p95 (up to 18.6s) purely from the runtime's own request-handling
+// concurrency limits (its `per_worker` policy, see supabase/config.toml —
+// this is the same root cause documented for the reverted tvmaze-cache
+// function, not a data-store latency problem, so making the backing store
+// faster — see redis.ts — never fixed it on its own). tmdb_api_cache's RLS
+// already grants any authenticated user a direct select (supabase/
+// schema.sql), so no server-side change was needed to unlock this path.
+// The Edge Function itself is only reached now on a genuine miss/stale row
+// — far less frequent, and not driven directly by concurrent *user* count
+// the way every cache hit was.
 async function fetchViaSharedCache<T>(
   path: string,
   ttlMs: number
 ): Promise<{ hit: true; payload: T } | { hit: false }> {
+  try {
+    const { data: row } = await supabase
+      .from("tmdb_api_cache")
+      .select("payload, fetched_at")
+      .eq("path", path)
+      .maybeSingle();
+    if (row && Date.now() - new Date(row.fetched_at).getTime() < ttlMs) {
+      return { hit: true, payload: row.payload as T };
+    }
+  } catch {
+    // Direct read unavailable — fall through to the Edge Function below,
+    // which does the same check again (Redis-first) as its own fallback.
+  }
+
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
@@ -416,37 +445,6 @@ export interface TMDBTvResult {
   vote_average: number;
 }
 
-export interface TMDBTvDetails extends TMDBTvResult {
-  overview: string;
-  backdrop_path: string | null;
-  genres: { id: number; name: string }[];
-  number_of_seasons: number;
-  number_of_episodes: number;
-}
-
-// Only reached when a show has no TVmaze match at all (see
-// app/show/tmdb/[id].tsx) — TVmaze is this app's real source for
-// episode-level tracking, but a title genuinely missing from it (new/
-// obscure/region-locked shows) shouldn't be a dead end just because
-// findTvmazeShowFromTmdbTv() came back empty; this is what lets that
-// fallback screen show something instead of an error.
-export function getTvDetails(tmdbTvId: number): Promise<TMDBTvDetails> {
-  const path = `/tv/${tmdbTvId}`;
-  return withCache(`tv:${tmdbTvId}`, ONE_DAY, async () => {
-    const shared = await fetchViaSharedCache<TMDBTvDetails>(path, ONE_DAY);
-    if (shared.hit) return shared.payload;
-    return get<TMDBTvDetails>(path);
-  });
-}
-
-export function getTvCast(tmdbTvId: number): Promise<TMDBCastMember[]> {
-  const path = `/tv/${tmdbTvId}/credits`;
-  return withCache(`tv-credits:${tmdbTvId}`, ONE_DAY, async () => {
-    const shared = await fetchViaSharedCache<{ cast: TMDBCastMember[] }>(path, ONE_DAY);
-    const data = shared.hit ? shared.payload : await get<{ cast: TMDBCastMember[] }>(path);
-    return [...data.cast].sort((a, b) => a.order - b.order);
-  });
-}
 
 function cachedTvList(path: string, params: Record<string, string> = {}) {
   const fullPath = pathWithQuery(path, params);

@@ -1,25 +1,49 @@
 // Deploy with: npx supabase functions deploy tmdb-cache
-// Requires SUPABASE_SERVICE_ROLE_KEY (see delete-account's header comment)
-// and TMDB_API_KEY as secrets for this project — TMDB_API_KEY is the same
-// value as the app's EXPO_PUBLIC_TMDB_API_KEY (public by TMDB's own API-key
-// model, already exposed in the client bundle), just under this function's
-// own env var name since Deno's runtime here doesn't see Expo's env vars.
+// Requires SUPABASE_SERVICE_ROLE_KEY (see delete-account's header comment),
+// TMDB_API_KEY, and REDIS_PASSWORD as secrets for this project (all three
+// declared under [edge_runtime.secrets] in supabase/config.toml) —
+// TMDB_API_KEY is the same value as the app's EXPO_PUBLIC_TMDB_API_KEY
+// (public by TMDB's own API-key model, already exposed in the client
+// bundle), just under this function's own env var name since Deno's
+// runtime here doesn't see Expo's env vars. REDIS_PASSWORD authenticates
+// against the standalone `redis` container on this project's Docker
+// network (see ../_shared/redis.ts and the deployment note below).
 //
 // A shared, cross-user, generic read-through cache for TMDB — every GET
 // path (movie/show details, cast, trailers, watch providers, recommend-
-// ations, the popular/top-rated/upcoming lists, search...) gets cached in
-// tmdb_api_cache (supabase/schema.sql) keyed by its exact path + query
-// string, mirroring however lib/tmdb.ts already keys its own local cache.
-// Unlike TVmaze, which rate-limits per caller IP, TMDB's key is a single
-// app-wide bucket shared by every user — so at scale this one matters even
-// more: the first request for a given path, from anyone, populates the row
-// here, and everyone else reads it back from Postgres instead of spending
-// more of that one shared budget. Writes need the service role key (RLS on
-// tmdb_api_cache only grants `authenticated` select) — this function is the
-// only writer, so a buggy/malicious client can never poison what every
-// other user reads.
+// ations, the popular/top-rated/upcoming lists, search...) gets cached,
+// keyed by its exact path + query string, mirroring however lib/tmdb.ts
+// already keys its own local cache. Unlike TVmaze, which rate-limits per
+// caller IP, TMDB's key is a single app-wide bucket shared by every user —
+// so at scale this one matters even more: the first request for a given
+// path, from anyone, populates the cache, and everyone else reads it back
+// instead of spending more of that one shared budget.
+//
+// Backing store: Redis (see ../_shared/redis.ts), a standalone container on
+// this project's Docker network, resolvable as `redis` — swapped in from
+// the original tmdb_api_cache Postgres table (supabase/schema.sql) because
+// a Redis GET/SETEX is faster than a Postgres round trip and takes cache
+// read/write load off the one shared Postgres instance this VPS also runs
+// every other query against. This is currently in a dual-write bake-in
+// period: every fresh fetch is written to BOTH Redis and Postgres, reads
+// try Redis first and fall back to the Postgres SELECT only on a Redis miss
+// — so a Redis outage degrades to today's exact behavior rather than an
+// error, and the Postgres write can be dropped later once Redis has proven
+// itself, with a trivial one-line rollback in the meantime. Redis's own
+// SETEX TTL is a generous outer bound (7 days), not the real freshness
+// check — that still happens in app code against the caller's own ttlMs,
+// exactly as before, so the existing stale-on-TMDB-error fallback below
+// keeps working past Redis's own expiry too.
+//
+// refresh-lists (../refresh-lists/index.ts) writes directly into this same
+// cache (bypassing this function's request path entirely) for its nightly
+// pre-warm — it was updated alongside this function to also call cacheSet,
+// or its writes would silently stop being read first.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, handleCorsPreflight } from "../_shared/cors.ts";
+import { cacheGet, cacheSet } from "../_shared/redis.ts";
+
+const REDIS_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 // Caller passes its own ttlMs (matching whatever TTL lib/tmdb.ts's local
@@ -82,11 +106,26 @@ Deno.serve(async (req: Request) => {
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
 
-  const { data: cached } = await adminClient
-    .from("tmdb_api_cache")
-    .select("payload, fetched_at")
-    .eq("path", path)
-    .maybeSingle();
+  const redisKey = `tmdb:${path}`;
+  let cached: { payload: unknown; fetched_at: string } | null = null;
+  const redisRaw = await cacheGet(redisKey);
+  if (redisRaw) {
+    try {
+      cached = JSON.parse(redisRaw);
+    } catch {
+      cached = null; // corrupt entry — fall through to Postgres/TMDB
+    }
+  }
+  if (!cached) {
+    // Either a true miss, or Redis is unavailable — the Postgres row (still
+    // dual-written below) covers both identically during the bake-in period.
+    const { data } = await adminClient
+      .from("tmdb_api_cache")
+      .select("payload, fetched_at")
+      .eq("path", path)
+      .maybeSingle();
+    cached = data;
+  }
 
   if (cached && Date.now() - new Date(cached.fetched_at).getTime() < ttl) {
     return new Response(JSON.stringify({ payload: cached.payload, fromCache: true }), {
@@ -115,12 +154,16 @@ Deno.serve(async (req: Request) => {
   }
 
   const payload = await tmdbRes.json();
-  // Upsert failing (e.g. a transient DB hiccup) shouldn't block returning
-  // the freshly-fetched data to the caller — it just means the next request
-  // for this path re-fetches from TMDB too, same as today.
+  const fetchedAt = new Date().toISOString();
+  // A write failing (Redis or Postgres) shouldn't block returning the
+  // freshly-fetched data to the caller — it just means the next request for
+  // this path re-fetches from TMDB too, same as today. Both writes fire
+  // regardless of whether the other succeeded (dual-write bake-in period —
+  // see the file header comment).
+  await cacheSet(redisKey, JSON.stringify({ payload, fetched_at: fetchedAt }), REDIS_TTL_SECONDS);
   const { error: upsertError } = await adminClient
     .from("tmdb_api_cache")
-    .upsert({ path, payload, fetched_at: new Date().toISOString() });
+    .upsert({ path, payload, fetched_at: fetchedAt });
   if (upsertError) console.error(`tmdb-cache upsert failed for ${path}`, upsertError);
 
   return new Response(JSON.stringify({ payload, fromCache: false }), {

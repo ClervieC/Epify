@@ -20,6 +20,7 @@ import {
   decrementRewatch,
   fetchUserShows,
   fetchWatchedEpisodes,
+  fetchWatchedEpisodesForShows,
   fetchWatchedEpisodesPage,
   incrementRewatch,
   rateEpisode,
@@ -31,9 +32,8 @@ import {
   getCachedShow,
   getCachedEpisodes,
   getCachedWatchedEpisodes,
+  primeWatchedEpisodes,
 } from "../../lib/showDataCache";
-import { fetchTmdbOnlyShows, TmdbOnlyShow } from "../../lib/tmdbOnlyShows";
-import { posterUrl } from "../../lib/tmdb";
 import {
   loadWatchingSnapshot,
   saveWatchingSnapshot,
@@ -518,7 +518,6 @@ export default function ShowsScreen() {
     UPCOMING_INITIAL_PAST_DAYS,
   );
   const [upcomingViewMode, setUpcomingViewMode] = useState<"list" | "calendar">("list");
-  const [tmdbOnlyShows, setTmdbOnlyShows] = useState<TmdbOnlyShow[]>([]);
   const [currentStreak, setCurrentStreak] = useState(0);
   const [streakAtRisk, setStreakAtRisk] = useState(false);
   const router = useRouter();
@@ -883,6 +882,12 @@ export default function ShowsScreen() {
       // 200+ re-renders. Seed data for shows still awaiting their fresh
       // fetch stays visible until it's overwritten the moment that fetch
       // lands.
+      // One batched watched_episodes round trip for every followed show
+      // instead of one per show — fetchTrackedShow's own
+      // getCachedWatchedEpisodes call below then resolves from the now-warm
+      // cache for each show instead of firing its own request.
+      await primeWatchedEpisodes(followed.map((s) => s.tvmaze_id), fetchWatchedEpisodesForShows);
+
       await mapWithConcurrency(
         followed,
         TRACKED_SHOW_FETCH_CONCURRENCY,
@@ -903,9 +908,6 @@ export default function ShowsScreen() {
       // instant later, without competing with the fetch that just populated
       // what's visible right now.
       prefetchLibrary();
-      fetchTmdbOnlyShows()
-        .then(setTmdbOnlyShows)
-        .catch(() => {});
     } catch (err) {
       console.warn("loadData failed", err);
     } finally {
@@ -1825,47 +1827,6 @@ export default function ShowsScreen() {
             showsVerticalScrollIndicator={false}
             onScroll={onWatchListScroll}
             scrollEventThrottle={32}
-            ListFooterComponent={
-              tmdbOnlyShows.length > 0 ? (
-                <View style={styles.tmdbOnlySection}>
-                  <Text style={styles.tmdbOnlySectionTitle}>
-                    {t.shows.tmdbOnlyTitle}
-                  </Text>
-                  <View style={styles.tmdbOnlyRow}>
-                    {tmdbOnlyShows.map((s) => (
-                      <Pressable
-                        key={s.id}
-                        style={styles.tmdbOnlyCard}
-                        onPress={() => router.push(`/show/tmdb/${s.tmdb_id}`)}
-                      >
-                        {s.poster_path ? (
-                          <Animated.Image
-                            source={{
-                              uri:
-                                posterUrl(s.poster_path, "w200") ?? undefined,
-                            }}
-                            style={styles.tmdbOnlyPoster}
-                          />
-                        ) : (
-                          <View
-                            style={[
-                              styles.tmdbOnlyPoster,
-                              styles.tmdbOnlyPosterFallback,
-                            ]}
-                          />
-                        )}
-                        <Text
-                          style={styles.tmdbOnlyCardTitle}
-                          numberOfLines={2}
-                        >
-                          {s.title}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                </View>
-              ) : null
-            }
           />
           {loadingHistory && (
             <View
@@ -2021,34 +1982,6 @@ function createStyles(colors: Colors) {
     },
     upcomingViewToggleBtnActive: { backgroundColor: colors.accent },
     content: { padding: 16 },
-    tmdbOnlySection: {
-      paddingHorizontal: 16,
-      paddingTop: 8,
-      paddingBottom: 24,
-    },
-    tmdbOnlySectionTitle: {
-      fontSize: 13,
-      fontWeight: "700",
-      color: colors.textMuted,
-      marginBottom: 12,
-      textTransform: "uppercase",
-      letterSpacing: 0.5,
-    },
-    tmdbOnlyRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-    tmdbOnlyCard: { width: 90 },
-    tmdbOnlyPoster: {
-      width: 90,
-      height: 135,
-      borderRadius: radius.md,
-      backgroundColor: colors.pillBg,
-    },
-    tmdbOnlyPosterFallback: { alignItems: "center", justifyContent: "center" },
-    tmdbOnlyCardTitle: {
-      fontSize: 12,
-      color: colors.text,
-      marginTop: 6,
-      fontWeight: "600",
-    },
     groupHeaderRow: {
       height: HEADER_HEIGHT,
       flexDirection: "row",

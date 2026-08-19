@@ -427,6 +427,32 @@ export async function fetchWatchedEpisodes(showId: number) {
   return data as WatchedEpisode[];
 }
 
+// Batched counterpart to fetchWatchedEpisodes — one round trip for every
+// tracked show instead of one per show, used to prime showDataCache's
+// watchedCache before app/(tabs)/index.tsx's and backgroundPrefetch's
+// per-show mapWithConcurrency loops run (see primeWatchedEpisodes). Every
+// requested id is pre-seeded with [] so a show with zero watched episodes
+// still comes back as "resolved" rather than missing from the map.
+export async function fetchWatchedEpisodesForShows(
+  showIds: number[]
+): Promise<Map<number, WatchedEpisode[]>> {
+  const result = new Map<number, WatchedEpisode[]>(showIds.map((id) => [id, []]));
+  if (showIds.length === 0) return result;
+  const userId = await getCurrentUserId();
+  if (!userId) return result;
+
+  const { data, error } = await supabase
+    .from("watched_episodes")
+    .select("*")
+    .eq("user_id", userId)
+    .in("tvmaze_show_id", showIds);
+  if (error) throw error;
+  for (const row of data as WatchedEpisode[]) {
+    result.get(row.tvmaze_show_id)?.push(row);
+  }
+  return result;
+}
+
 // Global, paginated (across every followed show) history query — used to lazy
 // load "Watched history" a page at a time instead of pulling every episode
 // the user has ever watched into memory up front.

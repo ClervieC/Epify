@@ -1,7 +1,7 @@
-import { fetchUserShows, fetchWatchedEpisodes, setShowWatchingIfWatched } from "./userShows";
+import { fetchUserShows, fetchWatchedEpisodes, fetchWatchedEpisodesForShows, setShowWatchingIfWatched } from "./userShows";
 import { fetchUserMovieTmdbMap } from "./userMovies";
 import { getShowEpisodes } from "./tvmaze";
-import { getCachedEpisodes, getCachedWatchedEpisodes } from "./showDataCache";
+import { getCachedEpisodes, getCachedWatchedEpisodes, primeWatchedEpisodes } from "./showDataCache";
 import { getMovieDetails, getMovieCast } from "./tmdb";
 import { computeShowStats, fetchCachedShowStats, saveShowStats } from "./showStats";
 import { mapWithConcurrency } from "./concurrency";
@@ -31,6 +31,12 @@ export async function prefetchLibrary(): Promise<void> {
 
   try {
     const [shows, movieMap] = await Promise.all([fetchUserShows(), fetchUserMovieTmdbMap()]);
+
+    // One batched watched_episodes round trip for the whole library instead
+    // of one per show — the loop below still calls getCachedWatchedEpisodes
+    // per show, but each resolves from the now-warm cache instead of firing
+    // its own request.
+    await primeWatchedEpisodes(shows.map((s) => s.tvmaze_id), fetchWatchedEpisodesForShows);
 
     await mapWithConcurrency(shows, PREFETCH_CONCURRENCY, async (show) => {
       const [episodesResult, watchedResult] = await Promise.allSettled([

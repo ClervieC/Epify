@@ -433,24 +433,9 @@ export default function ExploreScreen() {
     return resolved;
   }
 
-  // Doesn't go through resolveTvmazeShow (which alerts on failure) — opening
-  // is the one action here that has a working fallback for a show TVmaze
-  // doesn't have at all (see app/show/tmdb/[id].tsx), unlike adding to a
-  // list or favoriting, which genuinely can't do anything without a TVmaze
-  // id to attach that state to.
   async function openTmdbShow(show: TMDBTvResult) {
-    const cached = resolvedTvShows.get(show.id);
-    if (cached) {
-      router.push(`/show/${cached.id}`);
-      return;
-    }
-    const resolved = await findTvmazeShowFromTmdbTv(show.id);
-    if (resolved) {
-      setResolvedTvShows((prev) => new Map(prev).set(show.id, resolved));
-      router.push(`/show/${resolved.id}`);
-    } else {
-      router.push(`/show/tmdb/${show.id}`);
-    }
+    const resolved = await resolveTvmazeShow(show);
+    if (resolved) router.push(`/show/${resolved.id}`);
   }
 
   async function quickAddTmdbShow(show: TMDBTvResult) {

@@ -592,37 +592,6 @@ create index if not exists reports_status_idx on public.reports (status, created
 create index if not exists reports_reporter_idx on public.reports (reporter_id);
 
 -- ============================================================
--- TMDB-only show bookmarks — for shows not yet indexed by TVmaze (this
--- app's real source for episode-level tracking; see comments throughout
--- lib/tvmaze.ts). Deliberately a separate table rather than widening
--- user_shows.tvmaze_id to nullable: nearly the whole app (Watch Next,
--- watched-episode tracking, the offline snapshot, comments/reports, ...)
--- assumes every tracked show has a real TVmaze id, and threading "maybe
--- null" through all of that for a genuinely rare case (a show TVmaze
--- doesn't have yet) would be a much bigger, riskier change than this
--- simple bookmark list — which auto-upgrades to a real tracked user_shows
--- row the moment TVmaze does pick the show up (see the resolve check in
--- app/show/tmdb/[id].tsx). Purely additive — safe to run once.
--- ============================================================
-create table if not exists public.tmdb_only_shows (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users (id) on delete cascade,
-  tmdb_id integer not null,
-  title text not null,
-  poster_path text,
-  created_at timestamptz not null default now(),
-  unique (user_id, tmdb_id)
-);
-
-alter table public.tmdb_only_shows enable row level security;
-
-create policy "Users manage their own tmdb-only show bookmarks"
-  on public.tmdb_only_shows
-  for all
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
--- ============================================================
 -- Show stats cache — the "watch time"/"episodes watched" detail page
 -- (episodes/week, remaining episodes, genre breakdown) needs several TVmaze
 -- calls per tracked show plus a full scan of watched_episodes, too slow to
@@ -1294,3 +1263,33 @@ select cron.schedule(
   );
   $$
 );
+
+-- ============================================================
+-- Purely additive — no index covered user_shows(user_id, status) despite
+-- that being the exact filter the app's hottest query uses (the "followed"
+-- list — status = watching OR want_to_watch — loaded on every cold app
+-- open, see app/(tabs)/index.tsx's fetchUserShows). Only the PK and the
+-- (user_id, tvmaze_id) unique constraint existed, neither of which serve a
+-- user_id + status filter on their own.
+--
+-- Also drops user_shows_tvmaze_id_idx: identical to user_shows_tvmaze_idx
+-- (added earlier in this file for fetchShowFeelingCounts) — the same
+-- column indexed twice under two different names, pure write-time waste.
+--
+-- CONCURRENTLY can't run inside a transaction block — run these two
+-- statements directly via psql (or one at a time), not as part of a
+-- whole-file paste into a SQL editor that wraps multi-statement pastes in
+-- one implicit transaction.
+-- ============================================================
+create index concurrently if not exists user_shows_user_status_idx
+  on public.user_shows (user_id, status);
+
+drop index concurrently if exists public.user_shows_tvmaze_id_idx;
+
+-- ============================================================
+-- The TMDB-only show fallback (app/show/tmdb/[id].tsx, findTvmazeShowFromTmdbTv's
+-- failure path) was removed — a show with no TVmaze match now just surfaces
+-- a "not found" alert instead of a read-only TMDB-only detail page, so
+-- nothing writes to this table anymore. Safe to drop.
+-- ============================================================
+drop table if exists public.tmdb_only_shows;
