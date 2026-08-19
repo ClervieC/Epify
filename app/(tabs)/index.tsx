@@ -1140,6 +1140,13 @@ export default function ShowsScreen() {
     newPilots.sort(
       (a, b) => new Date(b.episode.airstamp).getTime() - new Date(a.episode.airstamp).getTime(),
     );
+    // Most recently added to the list first — created_at is set once on
+    // insert and never touched again (unlike updated_at, which any edit
+    // bumps), so it reliably answers "when was this show added" rather than
+    // "when was this show last touched."
+    stillNotStarted.sort(
+      (a, b) => new Date(b.show.created_at).getTime() - new Date(a.show.created_at).getTime(),
+    );
 
     return { watchNext: [...newPilots, ...started], haventStarted: stillNotStarted };
   }, [tracked, justWatchedItem]);
