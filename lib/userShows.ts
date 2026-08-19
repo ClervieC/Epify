@@ -433,6 +433,8 @@ export async function fetchWatchedEpisodes(showId: number) {
 // per-show mapWithConcurrency loops run (see primeWatchedEpisodes). Every
 // requested id is pre-seeded with [] so a show with zero watched episodes
 // still comes back as "resolved" rather than missing from the map.
+const FETCH_WATCHED_PAGE_SIZE = 1000;
+
 export async function fetchWatchedEpisodesForShows(
   showIds: number[]
 ): Promise<Map<number, WatchedEpisode[]>> {
@@ -441,14 +443,29 @@ export async function fetchWatchedEpisodesForShows(
   const userId = await getCurrentUserId();
   if (!userId) return result;
 
-  const { data, error } = await supabase
-    .from("watched_episodes")
-    .select("*")
-    .eq("user_id", userId)
-    .in("tvmaze_show_id", showIds);
-  if (error) throw error;
-  for (const row of data as WatchedEpisode[]) {
-    result.get(row.tvmaze_show_id)?.push(row);
+  // PostgREST caps a response at 1000 rows by default — a handful of
+  // long-running tracked shows (a soap opera, a decades-old sitcom) easily
+  // clears that on its own. Without paging through it (same pattern as
+  // fetchAllWatchedEpisodes in lib/showStats.ts), whichever rows fell past
+  // row 1000 were silently missing from the result, then cached via
+  // primeWatchedEpisodes as if they were the complete, correct answer —
+  // making already-watched episodes for the affected shows look unwatched
+  // again after the next cold start.
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("watched_episodes")
+      .select("*")
+      .eq("user_id", userId)
+      .in("tvmaze_show_id", showIds)
+      .range(offset, offset + FETCH_WATCHED_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data as WatchedEpisode[]) ?? [];
+    for (const row of page) {
+      result.get(row.tvmaze_show_id)?.push(row);
+    }
+    if (page.length < FETCH_WATCHED_PAGE_SIZE) break;
+    offset += FETCH_WATCHED_PAGE_SIZE;
   }
   return result;
 }
