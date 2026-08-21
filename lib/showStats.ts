@@ -4,7 +4,7 @@ import { fetchUserShows, WatchedEpisode } from "./userShows";
 import { getCachedShow, getCachedEpisodes } from "./showDataCache";
 import { getShow, getShowEpisodes } from "./tvmaze";
 import { mapWithConcurrency } from "./concurrency";
-import { todayISODate } from "./dates";
+import { todayISODate, realBingeCount } from "./dates";
 
 // IndexedDB-backed (see the same comment in lib/showDataCache.ts for why —
 // not the default AsyncStorage export, which is a localStorage-backed
@@ -139,15 +139,21 @@ export async function computeShowStats(): Promise<ShowStats> {
   const monthBucketIndex = new Map(monthBuckets.map((b, i) => [b.monthStart, i]));
 
   const watchedCountByShow = new Map<number, number>();
-  // Show id + calendar day -> episodes watched that day, for the "most
-  // binge-watched" ranking below — a real binge session (a dozen episodes
-  // in one sitting) should outrank a show watched at a slow steady drip for
-  // years just because the lifetime total is higher.
-  const dailyCountByShow = new Map<string, number>();
+  // Show id + calendar day -> that show/day's raw watched_at timestamps, for
+  // the "most binge-watched" ranking below — a real binge session (a dozen
+  // episodes in one sitting) should outrank a show watched at a slow steady
+  // drip for years just because the lifetime total is higher. Collected as
+  // timestamps rather than a running count so realBingeCount (lib/dates.ts)
+  // can filter out same-day rows that are actually one bulk "mark watched"
+  // action (all near-identical timestamps — see setEpisodesWatched in
+  // lib/userShows.ts) rather than a genuine multi-episode sitting.
+  const dailyTimestampsByShow = new Map<string, string[]>();
   for (const ep of watched) {
     watchedCountByShow.set(ep.tvmaze_show_id, (watchedCountByShow.get(ep.tvmaze_show_id) ?? 0) + 1);
     const dayKey = `${ep.tvmaze_show_id}:${ep.watched_at.slice(0, 10)}`;
-    dailyCountByShow.set(dayKey, (dailyCountByShow.get(dayKey) ?? 0) + 1);
+    const list = dailyTimestampsByShow.get(dayKey);
+    if (list) list.push(ep.watched_at);
+    else dailyTimestampsByShow.set(dayKey, [ep.watched_at]);
     const weekKey = weekStartOf(ep.watched_at);
     const weekIdx = bucketIndex.get(weekKey);
     if (weekIdx != null) buckets[weekIdx].count += 1;
@@ -156,8 +162,9 @@ export async function computeShowStats(): Promise<ShowStats> {
     if (monthIdx != null) monthBuckets[monthIdx].count += 1;
   }
   const maxDailyByShow = new Map<number, number>();
-  for (const [key, count] of dailyCountByShow) {
+  for (const [key, timestamps] of dailyTimestampsByShow) {
     const showId = Number(key.split(":")[0]);
+    const count = realBingeCount(timestamps);
     maxDailyByShow.set(showId, Math.max(maxDailyByShow.get(showId) ?? 0, count));
   }
   const averagePerWeek = buckets.reduce((sum, b) => sum + b.count, 0) / WEEK_COUNT;

@@ -56,6 +56,7 @@ import { isRecapAvailable } from "../../lib/recap";
 import {
   computeStreakData,
   loadLocalStreakData,
+  runGenreBadgeBackfillIfNeeded,
   StreakData,
   badgeIcon,
   categoryColor,
@@ -304,8 +305,23 @@ export default function ProfileScreen() {
     loadLocalStreakData().then((local) => {
       if (local && stillCurrent()) setStreakData(local);
     });
-    computeStreakData(announceBadges)
-      .then((d) => stillCurrent() && setStreakData(d))
+    // Genre badges (see lib/streaks.ts) only ever counted titles already
+    // cached on this exact device — for a show/movie watched a while ago
+    // and never reopened since, that undercounts what should already be
+    // unlocked. runGenreBadgeBackfillIfNeeded runs the real, network-aware
+    // scan exactly once per account (an instant no-op flag check every
+    // visit after that), so this only needs to fall through to the normal
+    // cheap computeStreakData call when the backfill didn't already cover
+    // this visit — never both, which would double the network work and
+    // could double-fire announceBadges for the same newly-unlocked badges.
+    runGenreBadgeBackfillIfNeeded(announceBadges)
+      .then((backfilled) => {
+        if (backfilled) {
+          if (stillCurrent()) setStreakData(backfilled);
+          return;
+        }
+        return computeStreakData(announceBadges).then((d) => stillCurrent() && setStreakData(d));
+      })
       .catch(() => {});
   }, [announceBadges]);
 

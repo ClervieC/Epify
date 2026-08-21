@@ -107,3 +107,33 @@ export function upcomingGroupLabel(key: string, airstamp: string, language: Lang
   if (key === "EARLIER") return EARLIER_WORD[language];
   return dateLabel(airstamp, language);
 }
+
+// Minimum realistic gap between two episodes actually being watched
+// back-to-back — below this, two "watched" timestamps are far more likely
+// to be the same bulk action (import, "mark season watched", "mark all
+// previous episodes watched") than two distinct viewings. Used to keep a
+// binge-watching metric from counting a 400-episode bulk mark (all rows
+// sharing one near-identical timestamp — see setEpisodesWatched in
+// lib/userShows.ts) as a 400-episode binge day.
+const BINGE_MIN_GAP_MS = 10 * 60 * 1000;
+
+// Counts how many of the given watched_at timestamps represent genuinely
+// separate viewings of the SAME show, rather than the raw row count for
+// that show/day. The first timestamp always counts (a session has to start
+// somewhere); every timestamp after that only counts if it's at least
+// BINGE_MIN_GAP_MS after the one immediately before it in sorted order — a
+// cluster of near-identical timestamps (a bulk mark) collapses to 1
+// regardless of how many rows it contains, while genuinely time-spaced
+// episodes (a real binge session, or several separate sittings the same
+// day) each count individually. Shared by lib/showStats.ts's "most
+// binge-watched" ranking and lib/streaks.ts's "binge" badge category, so
+// both use the exact same definition of a real binge episode.
+export function realBingeCount(watchedAtTimestamps: string[]): number {
+  if (watchedAtTimestamps.length === 0) return 0;
+  const sorted = [...watchedAtTimestamps].map((s) => new Date(s).getTime()).sort((a, b) => a - b);
+  let count = 1;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] - sorted[i - 1] >= BINGE_MIN_GAP_MS) count++;
+  }
+  return count;
+}

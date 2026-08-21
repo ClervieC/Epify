@@ -261,6 +261,7 @@ const en = {
     badgeCategorySocial: "People followed",
     badgeCategoryRewatch: "Rewatches",
     badgeCategoryGenres: "Genres",
+    badgeCategoryBinge: "Binge days",
     badgeEpisodes: (n: number) => `${n} episodes`,
     badgeMovies: (n: number) => `${n} movies`,
     badgeShows: (n: number) => `${n} show${n > 1 ? "s" : ""} done`,
@@ -269,6 +270,7 @@ const en = {
     badgeReactions: (n: number) => `${n} reaction${n > 1 ? "s" : ""}`,
     badgeSocial: (n: number) => `${n} followed`,
     badgeRewatch: (n: number) => `${n} rewatch${n > 1 ? "es" : ""}`,
+    badgeBinge: (n: number) => `${n} episodes in one day`,
     badgeGenre: (genre: string, n: number) => `${n} ${genre} title${n > 1 ? "s" : ""}`,
     genreNames: {
       comedy: "Comedy",
@@ -286,6 +288,7 @@ const en = {
     badgeEarnedOn: (date: string) => `Earned on ${date}`,
     badgeRemaining: (n: number) => (n === 1 ? "1 more to unlock" : `${n} more to unlock`),
     badgeUnlockedTitle: "Badge unlocked",
+    almostUnlockedTitle: "Almost there!",
     statistics: "Statistics",
     favorites: "Favorites shows",
     favoriteEpisodes: "Favorite episodes",
@@ -821,6 +824,7 @@ const fr: typeof en = {
     badgeCategorySocial: "Personnes suivies",
     badgeCategoryRewatch: "Revisionnages",
     badgeCategoryGenres: "Genres",
+    badgeCategoryBinge: "Journées marathon",
     badgeEpisodes: (n: number) => `${n} épisodes`,
     badgeMovies: (n: number) => `${n} films`,
     badgeShows: (n: number) =>
@@ -830,6 +834,7 @@ const fr: typeof en = {
     badgeReactions: (n: number) => `${n} réaction${n > 1 ? "s" : ""}`,
     badgeSocial: (n: number) => `${n} suivi${n > 1 ? "s" : ""}`,
     badgeRewatch: (n: number) => `${n} revisionnage${n > 1 ? "s" : ""}`,
+    badgeBinge: (n: number) => `${n} épisodes en un jour`,
     badgeGenre: (genre: string, n: number) => `${n} titre${n > 1 ? "s" : ""} ${genre}`,
     genreNames: {
       comedy: "Comédie",
@@ -847,6 +852,7 @@ const fr: typeof en = {
     badgeEarnedOn: (date: string) => `Obtenu le ${date}`,
     badgeRemaining: (n: number) => (n === 1 ? "Encore 1 pour débloquer" : `Encore ${n} pour débloquer`),
     badgeUnlockedTitle: "Badge débloqué",
+    almostUnlockedTitle: "Presque là !",
     statistics: "Statistiques",
     favorites: "Séries favoris",
     favoriteEpisodes: "Épisodes favoris",

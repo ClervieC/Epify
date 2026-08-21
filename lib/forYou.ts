@@ -31,10 +31,7 @@ const TVMAZE_TO_TMDB_TV_GENRE: Record<string, number> = {
 
 const MAX_GENRES = 3;
 
-async function topGenreIds(): Promise<number[]> {
-  const stats = (await loadLocalShowStats()) ?? (await fetchCachedShowStats().catch(() => null));
-  if (!stats) return [];
-
+function genreIdsFrom(stats: { genreBreakdown: { genre: string }[] }): number[] {
   const ids: number[] = [];
   for (const g of stats.genreBreakdown) {
     const id = TVMAZE_TO_TMDB_TV_GENRE[g.genre];
@@ -42,6 +39,23 @@ async function topGenreIds(): Promise<number[]> {
     if (ids.length >= MAX_GENRES) break;
   }
   return ids;
+}
+
+async function topGenreIds(): Promise<number[]> {
+  const local = await loadLocalShowStats();
+  const localIds = local ? genreIdsFrom(local) : [];
+  // A schema-valid local snapshot with zero usable genres isn't necessarily
+  // the truth — it can just be older than the server's copy (computed
+  // before enough watch history existed on this device, or before this
+  // device ever synced show_stats_cache), and loadLocalShowStats() has no
+  // way to tell "genuinely no genres yet" apart from "this snapshot just
+  // predates them." Falling through to the server copy in that case is what
+  // makes Explore's "For You" section come back once real data exists,
+  // instead of a stale local cache silently hiding it forever.
+  if (localIds.length > 0) return localIds;
+
+  const remote = await fetchCachedShowStats().catch(() => null);
+  return remote ? genreIdsFrom(remote) : [];
 }
 
 export interface ForYou {

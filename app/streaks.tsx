@@ -40,7 +40,7 @@ export default function StreaksScreen() {
     }, [])
   );
 
-  const categories: BadgeCategory[] = ["streak", "episodes", "movies", "shows", "ratings", "reactions", "social", "rewatch"];
+  const categories: BadgeCategory[] = ["streak", "episodes", "movies", "shows", "ratings", "reactions", "social", "rewatch", "binge"];
   const categoryLabel: Record<BadgeCategory, string> = {
     episodes: t.profile.badgeCategoryEpisodes,
     movies: t.profile.badgeCategoryMovies,
@@ -51,6 +51,7 @@ export default function StreaksScreen() {
     social: t.profile.badgeCategorySocial,
     rewatch: t.profile.badgeCategoryRewatch,
     genre: t.profile.badgeCategoryGenres,
+    binge: t.profile.badgeCategoryBinge,
   };
   const totalAchieved = data?.badges.filter((b) => b.achieved).length ?? 0;
   const totalBadges = data?.badges.length ?? 0;

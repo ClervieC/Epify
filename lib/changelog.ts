@@ -12,6 +12,24 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings,
   // so keep app.json/package.json "version" in sync with it by hand.
   {
+    version: "5.1.1",
+    date: "2026-08-21",
+    en: [
+      "New: \"binge\" badges — earned for days you really marathon a show (marking a whole season watched at once doesn't count).",
+      "New: a heads-up toast when you're one action away from unlocking a badge.",
+      "Fixed a bug where already-watched episodes on shows with a long viewing history could show up as unwatched again.",
+      "\"For You\" recommendations in Discover now show up reliably.",
+      "Several small fixes and polish across empty states, badges, and loading screens.",
+    ],
+    fr: [
+      "Nouveau : des badges \"marathon\" — obtenus pour les journées où tu enchaînes vraiment les épisodes (marquer une saison entière vue d'un coup ne compte pas).",
+      "Nouveau : un message quand tu es à un pas de débloquer un badge.",
+      "Correction d'un bug où des épisodes déjà vus sur des séries à l'historique long pouvaient réapparaître comme non vus.",
+      "Les recommandations \"Pour toi\" dans Découvrir s'affichent maintenant de façon fiable.",
+      "Plusieurs petites corrections et améliorations sur les listes vides, les badges et les écrans de chargement.",
+    ],
+  },
+  {
     version: "5.1.0",
     date: "2026-08-21",
     en: [

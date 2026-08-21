@@ -1,12 +1,14 @@
-import { createAsyncStorage } from "@react-native-async-storage/async-storage";
+import AsyncStorage, { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchUserShows, UserShow } from "./userShows";
 import { fetchUserMovies, UserMovie } from "./userMovies";
 import { fetchFollowingIds } from "./follows";
 import { getCachedShow } from "./showDataCache";
-import { getCachedMovieGenres } from "./tmdb";
+import { getCachedMovieGenres, getMovieDetails } from "./tmdb";
+import { getShow } from "./tvmaze";
 import { mapWithConcurrency } from "./concurrency";
+import { realBingeCount } from "./dates";
 import type { Colors } from "./theme";
 import type { Translations } from "./i18n";
 
@@ -23,7 +25,7 @@ const GENRE_FETCH_CONCURRENCY = 6;
 // precomputed copy across devices too.
 const localStore = createAsyncStorage("streaks_cache");
 const LOCAL_STORAGE_KEY = "streaks_v1";
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export type BadgeCategory =
   | "episodes"
@@ -34,7 +36,8 @@ export type BadgeCategory =
   | "reactions"
   | "social"
   | "rewatch"
-  | "genre";
+  | "genre"
+  | "binge";
 
 export interface Badge {
   id: string;
@@ -105,6 +108,7 @@ export const BADGE_ICON: Record<BadgeCategory, keyof typeof Ionicons.glyphMap> =
   social: "people-outline",
   rewatch: "repeat-outline",
   genre: "pricetag-outline",
+  binge: "flash-outline",
 };
 
 // Genre badges each have their own icon (see GENRE_DEFS) instead of one
@@ -131,6 +135,7 @@ export function categoryColor(colors: Colors, category: BadgeCategory): string {
     social: colors.green,
     rewatch: colors.blue,
     genre: "#d6336c",
+    binge: "#7048e8",
   };
   return map[category];
 }
@@ -149,6 +154,7 @@ export function badgeLabel(t: Translations, badge: Badge): string {
     reactions: t.profile.badgeReactions,
     social: t.profile.badgeSocial,
     rewatch: t.profile.badgeRewatch,
+    binge: t.profile.badgeBinge,
   };
   return BADGE_LABEL[badge.category](badge.threshold);
 }
@@ -161,26 +167,57 @@ const RATINGS_THRESHOLDS = [5, 25, 100, 250];
 const REACTIONS_THRESHOLDS = [5, 25, 100, 250];
 const SOCIAL_THRESHOLDS = [1, 5, 10, 25];
 const REWATCH_THRESHOLDS = [1, 5, 15, 50];
+// Episodes of one single show watched in one calendar day — 3 is a light
+// binge, 20 is a real marathon. Same "one show, one day" metric as
+// lib/showStats.ts's topShows ranking (see fetchWatchedDays' comment above).
+const BINGE_THRESHOLDS = [3, 5, 10, 20];
 
-async function fetchWatchedDays(): Promise<Set<string>> {
+// Also tallies the single biggest "one show, one day" episode count across
+// the user's whole history (maxDailyShowEpisodes) — the same "binge day"
+// metric lib/showStats.ts's topShows already ranks shows by, just reduced
+// to one number here for the "binge" badge category (see buildBadges). Rides
+// along on this function's existing full watched_episodes scan rather than
+// adding a second one — this already runs on every computeStreakData() call
+// (including the fire-and-forget check after every single watch action, see
+// lib/badgeNotify.ts), so a duplicate scan just for this would double that
+// cost for no reason.
+async function fetchWatchedDays(): Promise<{ days: Set<string>; maxDailyShowEpisodes: number }> {
   const userId = await getCurrentUserId();
   const days = new Set<string>();
-  if (!userId) return days;
+  if (!userId) return { days, maxDailyShowEpisodes: 0 };
 
+  // Timestamps, not a running count — a bulk "mark all previous episodes
+  // watched" (or a season/import bulk-write) puts many rows on the same
+  // calendar day with near-identical watched_at values, which isn't a real
+  // binge session. realBingeCount (lib/dates.ts) collapses a cluster like
+  // that down to 1, only counting timestamps genuinely spaced apart, so
+  // this badge tracks actual sequential viewing, not bulk catch-up marking.
+  const dailyShowTimestamps = new Map<string, string[]>();
   let offset = 0;
   for (;;) {
     const { data, error } = await supabase
       .from("watched_episodes")
-      .select("watched_at")
+      .select("watched_at, tvmaze_show_id")
       .eq("user_id", userId)
       .range(offset, offset + PAGE_SIZE - 1);
     if (error) throw error;
     const page = data ?? [];
     for (const row of page) {
-      if (row.watched_at) days.add(row.watched_at.slice(0, 10));
+      if (!row.watched_at) continue;
+      const dayKey = row.watched_at.slice(0, 10);
+      days.add(dayKey);
+      const showDayKey = `${row.tvmaze_show_id}:${dayKey}`;
+      const list = dailyShowTimestamps.get(showDayKey);
+      if (list) list.push(row.watched_at);
+      else dailyShowTimestamps.set(showDayKey, [row.watched_at]);
     }
     if (page.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
+  }
+  let maxDailyShowEpisodes = 0;
+  for (const timestamps of dailyShowTimestamps.values()) {
+    const count = realBingeCount(timestamps);
+    if (count > maxDailyShowEpisodes) maxDailyShowEpisodes = count;
   }
 
   const { data: movieRows, error: movieError } = await supabase
@@ -193,7 +230,7 @@ async function fetchWatchedDays(): Promise<Set<string>> {
     if (row.watched_at) days.add(row.watched_at.slice(0, 10));
   }
 
-  return days;
+  return { days, maxDailyShowEpisodes };
 }
 
 function toDateKey(d: Date): string {
@@ -248,7 +285,8 @@ function buildBadges(
   reactionsGiven: number,
   followingCount: number,
   rewatchCount: number,
-  genreCounts: Record<string, number>
+  genreCounts: Record<string, number>,
+  maxDailyShowEpisodes: number
 ): Badge[] {
   const badges: Badge[] = [];
   for (const threshold of EPISODE_THRESHOLDS) {
@@ -281,6 +319,9 @@ function buildBadges(
       badges.push({ id: `genre-${key}-${threshold}`, category: "genre", genre: key, threshold, achieved: count >= threshold, earnedAt: null, progress: count });
     }
   }
+  for (const threshold of BINGE_THRESHOLDS) {
+    badges.push({ id: `binge-${threshold}`, category: "binge", threshold, achieved: maxDailyShowEpisodes >= threshold, earnedAt: null, progress: maxDailyShowEpisodes });
+  }
   return badges;
 }
 
@@ -292,17 +333,26 @@ function buildBadges(
 // in-progress state (see lib/userMovies.ts's MovieStatus), so every watched
 // one counts.
 //
-// Deliberately network-free: both getCachedShow and getCachedMovieGenres
-// only ever read what's already on disk (the former via a fetcher that
+// Network-free by default: both getCachedShow and getCachedMovieGenres only
+// ever read what's already on disk (the former via a fetcher that
 // immediately rejects, the latter by construction), so a title only counts
 // if its info was already cached on this device (warmed by
 // lib/backgroundPrefetch.ts, or just from having opened it) — otherwise
 // it's silently skipped. That keeps this safe to run on every
 // computeStreakData() call (including the Shows tab's per-visit streak pill)
-// instead of adding a real network round trip to a hot path; the tradeoff is
-// a genre badge can lag behind reality for a title never cached on this
-// device, catching up the next time it happens to be fetched.
-async function computeGenreCounts(completedShows: UserShow[], watchedMovies: UserMovie[]): Promise<Record<string, number>> {
+// instead of adding a real network round trip to a hot path.
+//
+// useNetwork opts into real TVmaze/TMDB fetches for anything not already
+// cached — used exactly once per account (see runGenreBadgeBackfillIfNeeded
+// below) right after the genre badge category shipped, so existing users'
+// full history gets scanned for real instead of only whatever happened to
+// already be cached on that one device. Every call after that first one
+// goes back to the cheap cache-only path above.
+async function computeGenreCounts(
+  completedShows: UserShow[],
+  watchedMovies: UserMovie[],
+  useNetwork: boolean = false
+): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
 
   function tally(genres: string[]) {
@@ -316,10 +366,14 @@ async function computeGenreCounts(completedShows: UserShow[], watchedMovies: Use
 
   await mapWithConcurrency(completedShows, GENRE_FETCH_CONCURRENCY, async (show) => {
     try {
-      const info = await getCachedShow(show.tvmaze_id, () => Promise.reject(new Error("no-network")));
+      const info = await getCachedShow(
+        show.tvmaze_id,
+        useNetwork ? () => getShow(show.tvmaze_id) : () => Promise.reject(new Error("no-network"))
+      );
       tally(info.genres);
     } catch {
-      // Not cached on this device — skip, see comment above.
+      // Not cached (and not backfilling, or the network fetch itself
+      // failed) — skip, see comment above.
     }
   });
 
@@ -327,12 +381,50 @@ async function computeGenreCounts(completedShows: UserShow[], watchedMovies: Use
     watchedMovies.filter((m) => m.tmdb_id != null),
     GENRE_FETCH_CONCURRENCY,
     async (movie) => {
-      const genres = await getCachedMovieGenres(movie.tmdb_id!);
+      let genres = await getCachedMovieGenres(movie.tmdb_id!);
+      if (!genres && useNetwork) {
+        try {
+          genres = (await getMovieDetails(movie.tmdb_id!)).genres.map((g) => g.name);
+        } catch {
+          // Network fetch failed — leave uncounted, same as a cache miss.
+        }
+      }
       if (genres) tally(genres);
     }
   );
 
   return counts;
+}
+
+// One-time-per-account flag so the heavier, network-aware genre pass above
+// only ever runs once per account (not once per device — a different device
+// signing into the same account still needs its own real pass, since the
+// cache it'd otherwise rely on lives per-device) rather than on every
+// Profile visit. Plain AsyncStorage (not the IndexedDB-backed
+// createAsyncStorage used for localStore above) — same reasoning as
+// lib/onboarding.ts: a single small flag, not a cache worth its own
+// database.
+function genreBackfillKey(userId: string): string {
+  return `genre_badges_backfilled_v1:${userId}`;
+}
+
+// Call once from wherever badges are actually visible (see app/(tabs)/
+// profile.tsx) — runs the real network-aware compute exactly once per
+// account/device pair, then marks it done so every later visit goes back to
+// the normal cheap computeStreakData() call.
+export async function runGenreBadgeBackfillIfNeeded(
+  onNewlyUnlocked?: (badges: Badge[]) => void
+): Promise<StreakData | null> {
+  const userId = await getCurrentUserId();
+  if (!userId) return null;
+  try {
+    if ((await AsyncStorage.getItem(genreBackfillKey(userId))) === "true") return null;
+  } catch {
+    return null; // Can't confirm it's needed — safer to skip than to re-run this on every visit.
+  }
+  const data = await computeStreakData(onNewlyUnlocked, true);
+  await AsyncStorage.setItem(genreBackfillKey(userId), "true").catch(() => {});
+  return data;
 }
 
 async function countRows(table: string, userId: string, extra?: (q: any) => any): Promise<number> {
@@ -393,19 +485,63 @@ async function syncBadgeUnlocks(userId: string, badges: Badge[]): Promise<Badge[
   }
 }
 
+// Device-local (not synced through Supabase, unlike badge_unlocks itself) —
+// "we already told you you're 1 away from this badge" is a nice-to-have
+// nudge, not data worth a table/RLS policy over. Plain AsyncStorage, same
+// convention as the genre backfill flag above: a small JSON array, not a
+// cache. Never cleared once a badge is added, even if progress later dips
+// back below the threshold (e.g. an unwatch) — the point was made once,
+// re-nagging about it later would be annoying rather than motivating.
+function almostUnlockedKey(userId: string): string {
+  return `almost_unlocked_notified_v1:${userId}`;
+}
+
+async function loadAlmostNotifiedIds(userId: string): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(almostUnlockedKey(userId));
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+// Badges exactly one watch/rating/rewatch/follow away from unlocking (see
+// Badge.progress/threshold) that haven't already surfaced the "almost
+// there" toast (see context/BadgeUnlockContext.tsx) on this device. Exactly
+// one, not "close," so this only ever nudges about the single next action
+// that would actually unlock something — thresholds within a category are
+// spread far enough apart (see BadgeCategory's threshold arrays) that at
+// most one badge per category can be exactly 1 away at a time.
+async function getNewlyAlmostUnlocked(userId: string, badges: Badge[]): Promise<Badge[]> {
+  const candidates = badges.filter((b) => !b.achieved && b.threshold - b.progress === 1);
+  if (candidates.length === 0) return [];
+
+  const alreadyNotified = await loadAlmostNotifiedIds(userId);
+  const fresh = candidates.filter((b) => !alreadyNotified.has(b.id));
+  if (fresh.length === 0) return [];
+
+  for (const b of fresh) alreadyNotified.add(b.id);
+  await AsyncStorage.setItem(almostUnlockedKey(userId), JSON.stringify([...alreadyNotified])).catch(() => {});
+  return fresh;
+}
+
 // Not cached server-side the way lib/showStats.ts's heavier stats are — this
 // only needs one lightweight watched_at scan, a handful of counts, and a
 // network-free disk-cache-only genre lookup (see computeGenreCounts), cheap
 // enough to recompute on every visit. Still mirrored into IndexedDB (see
 // loadLocalStreakData/saveLocalStreakData below) purely for an instant first
 // paint / offline read, same pattern as showStats's local cache.
-export async function computeStreakData(onNewlyUnlocked?: (badges: Badge[]) => void): Promise<StreakData> {
+export async function computeStreakData(
+  onNewlyUnlocked?: (badges: Badge[]) => void,
+  useNetworkForGenres: boolean = false,
+  onAlmostUnlocked?: (badges: Badge[]) => void
+): Promise<StreakData> {
   const userId = await getCurrentUserId();
 
   // All independent of each other — running them concurrently instead of
   // one after another is most of the win here (six count queries plus the
   // watched-days scan were previously six-plus sequential round trips).
-  const [days, shows, watchedMovies, followingIds, totalEpisodesWatched, ratedEpisodes, reactedEpisodes, rewatchedEpisodesCount, rewatchedMoviesCount] =
+  const [{ days, maxDailyShowEpisodes }, shows, watchedMovies, followingIds, totalEpisodesWatched, ratedEpisodes, reactedEpisodes, rewatchedEpisodesCount, rewatchedMoviesCount] =
     await Promise.all([
       fetchWatchedDays(),
       fetchUserShows(),
@@ -437,7 +573,11 @@ export async function computeStreakData(onNewlyUnlocked?: (badges: Badge[]) => v
   // `rating`'s not-null count.
   const reactionsGiven = reactedEpisodes + reactedMovies + reactedShows;
   const rewatchCount = rewatchedEpisodesCount + rewatchedMoviesCount;
-  const genreCounts = await computeGenreCounts(shows.filter((s) => s.status === "watched"), watchedMovies);
+  const genreCounts = await computeGenreCounts(
+    shows.filter((s) => s.status === "watched"),
+    watchedMovies,
+    useNetworkForGenres
+  );
 
   const badges = buildBadges(
     totalEpisodesWatched,
@@ -448,11 +588,16 @@ export async function computeStreakData(onNewlyUnlocked?: (badges: Badge[]) => v
     reactionsGiven,
     followingIds.length,
     rewatchCount,
-    genreCounts
+    genreCounts,
+    maxDailyShowEpisodes
   );
   if (userId) {
     const newlyUnlocked = await syncBadgeUnlocks(userId, badges);
     if (newlyUnlocked.length > 0) onNewlyUnlocked?.(newlyUnlocked);
+    if (onAlmostUnlocked) {
+      const almost = await getNewlyAlmostUnlocked(userId, badges);
+      if (almost.length > 0) onAlmostUnlocked(almost);
+    }
   }
 
   const data: StreakData = {

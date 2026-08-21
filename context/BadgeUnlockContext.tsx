@@ -4,10 +4,15 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Badge, badgeIcon, categoryColor, badgeLabel } from "../lib/streaks";
-import { setBadgeUnlockListener } from "../lib/badgeNotify";
+import { setBadgeUnlockListener, setAlmostUnlockedListener } from "../lib/badgeNotify";
 import { useColors, radius, type, dropShadow, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { NATIVE_DRIVER } from "../lib/animations";
+
+interface QueuedBadge {
+  badge: Badge;
+  kind: "unlocked" | "almost";
+}
 
 interface BadgeUnlockContextValue {
   announceBadges: (badges: Badge[]) => void;
@@ -23,12 +28,15 @@ const VISIBLE_MS = 3200;
 // screen is currently active, rather than each call site having to know how
 // to render one. Queues rather than overlapping when several badges unlock
 // in the same compute (e.g. crossing two thresholds in one watch session).
+// Also shows a visually distinct "almost there" toast (see
+// getNewlyAlmostUnlocked in lib/streaks.ts) for a badge exactly one
+// watch/rating/follow away — same queue, same animations, different copy.
 export function BadgeUnlockProvider({ children }: PropsWithChildren) {
   const colors = useColors();
   const styles = useStyles(colors);
   const { t } = useLanguage();
   const router = useRouter();
-  const [queue, setQueue] = useState<Badge[]>([]);
+  const [queue, setQueue] = useState<QueuedBadge[]>([]);
   const current = queue[0] ?? null;
   const translateY = useRef(new Animated.Value(-80)).current;
   const scale = useRef(new Animated.Value(0.7)).current;
@@ -39,19 +47,28 @@ export function BadgeUnlockProvider({ children }: PropsWithChildren) {
 
   const announceBadges = useCallback((badges: Badge[]) => {
     if (badges.length === 0) return;
-    setQueue((prev) => [...prev, ...badges]);
+    setQueue((prev) => [...prev, ...badges.map((badge) => ({ badge, kind: "unlocked" as const }))]);
   }, []);
 
-  // Registers this provider's announceBadges as the target for
+  const announceAlmostBadges = useCallback((badges: Badge[]) => {
+    if (badges.length === 0) return;
+    setQueue((prev) => [...prev, ...badges.map((badge) => ({ badge, kind: "almost" as const }))]);
+  }, []);
+
+  // Registers this provider's announce functions as the targets for
   // lib/badgeNotify.ts's checkBadgesNow() — the trigger fired right after a
   // watch/rate/rewatch mutation (see lib/userShows.ts, lib/userMovies.ts) so
-  // a badge earned from the Movies tab or a show/episode detail screen shows
-  // the same toast immediately, not just next time Shows/Profile/Streaks
-  // happens to recompute.
+  // a badge earned (or almost-earned) from the Movies tab or a show/episode
+  // detail screen shows the same toast immediately, not just next time
+  // Shows/Profile/Streaks happens to recompute.
   useEffect(() => {
     setBadgeUnlockListener(announceBadges);
-    return () => setBadgeUnlockListener(null);
-  }, [announceBadges]);
+    setAlmostUnlockedListener(announceAlmostBadges);
+    return () => {
+      setBadgeUnlockListener(null);
+      setAlmostUnlockedListener(null);
+    };
+  }, [announceBadges, announceAlmostBadges]);
 
   function dismiss() {
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
@@ -96,9 +113,9 @@ export function BadgeUnlockProvider({ children }: PropsWithChildren) {
       pulseLoop.current?.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current?.id]);
+  }, [current?.badge.id]);
 
-  const color = current ? categoryColor(colors, current.category) : colors.accent;
+  const color = current ? categoryColor(colors, current.badge.category) : colors.accent;
   const iconSpin = iconRotate.interpolate({ inputRange: [-1, 0, 1], outputRange: ["-18deg", "0deg", "18deg"] });
 
   return (
@@ -128,12 +145,15 @@ export function BadgeUnlockProvider({ children }: PropsWithChildren) {
                   { backgroundColor: `${color}2a`, transform: [{ rotate: iconSpin }, { scale: iconPulse }] },
                 ]}
               >
-                <Ionicons name={badgeIcon(current)} size={22} color={color} />
+                <Ionicons name={badgeIcon(current.badge)} size={22} color={color} />
               </Animated.View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.title}>🎉 {t.profile.badgeUnlockedTitle}</Text>
+                <Text style={styles.title}>
+                  {current.kind === "unlocked" ? "🎉" : "⏳"}{" "}
+                  {current.kind === "unlocked" ? t.profile.badgeUnlockedTitle : t.profile.almostUnlockedTitle}
+                </Text>
                 <Text style={styles.subtitle} numberOfLines={1}>
-                  {badgeLabel(t, current)}
+                  {badgeLabel(t, current.badge)}
                 </Text>
               </View>
               <Pressable onPress={dismiss} hitSlop={10} accessibilityRole="button" accessibilityLabel={t.common.cancel}>
