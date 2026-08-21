@@ -25,15 +25,37 @@ export function setAlmostUnlockedListener(fn: ((badges: Badge[]) => void) | null
   almostListener = fn;
 }
 
+// Debounced (trailing) rather than firing one computeStreakData() per call —
+// marking a run of episodes watched in quick succession (a binge session, a
+// bulk mark) used to kick off one full recompute PER episode, all running
+// concurrently. Besides being wasteful, that was the actual cause of the
+// almost-unlocked toast spamming in a loop: several of those overlapping
+// computeStreakData() calls could each read lib/streaks.ts's "already
+// notified" AsyncStorage flag before any of them had finished writing it
+// back, so the same near-threshold badge got reported as freshly-almost
+// several times over before the flag ever caught up. Coalescing rapid calls
+// into one, after things settle down, removes the overlap entirely instead
+// of papering over it with a lock.
+const DEBOUNCE_MS = 1200;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function runBadgeCheck() {
+  import("./streaks")
+    .then(({ computeStreakData }) =>
+      computeStreakData((badges) => listener?.(badges), false, (badges) => almostListener?.(badges))
+    )
+    .catch(() => {});
+}
+
 // Fire-and-forget: callers (setEpisodeWatched, setMovieWatched, ...) don't
 // await this, so a badge recompute never adds latency to the tap that
 // triggered it. Best-effort — a failure here (offline, etc.) just means the
 // badge surfaces next time computeStreakData() runs from Shows/Profile/
 // Streaks instead of right away.
 export function checkBadgesNow() {
-  import("./streaks")
-    .then(({ computeStreakData }) =>
-      computeStreakData((badges) => listener?.(badges), false, (badges) => almostListener?.(badges))
-    )
-    .catch(() => {});
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    runBadgeCheck();
+  }, DEBOUNCE_MS);
 }

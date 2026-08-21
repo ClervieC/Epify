@@ -496,13 +496,40 @@ function almostUnlockedKey(userId: string): string {
   return `almost_unlocked_notified_v1:${userId}`;
 }
 
-async function loadAlmostNotifiedIds(userId: string): Promise<Set<string>> {
-  try {
-    const raw = await AsyncStorage.getItem(almostUnlockedKey(userId));
-    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
-  } catch {
-    return new Set();
+// In-memory, keyed by user id — the actual source of truth for "already
+// notified" once loaded, with AsyncStorage as write-through persistence
+// underneath it. computeStreakData can run several times concurrently (a
+// burst of watch actions each triggering lib/badgeNotify.ts's
+// checkBadgesNow — its own debounce cuts this down a lot but doesn't fully
+// serialize it), and two of those calls both doing an independent
+// AsyncStorage.getItem→check→setItem round trip could both read "not yet
+// notified" before either one's write lands, notifying the same badge
+// twice (or more). Loading through a single shared in-flight promise per
+// user (almostNotifiedLoading) means every concurrent caller ends up
+// sharing the exact same Set instance, so the has()/add() checks below are
+// effectively synchronous against each other — this is what actually closes
+// the race, not just the debounce upstream.
+const almostNotifiedCache = new Map<string, Set<string>>();
+const almostNotifiedLoading = new Map<string, Promise<Set<string>>>();
+
+async function getAlmostNotifiedSet(userId: string): Promise<Set<string>> {
+  const cached = almostNotifiedCache.get(userId);
+  if (cached) return cached;
+  let loading = almostNotifiedLoading.get(userId);
+  if (!loading) {
+    loading = (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(almostUnlockedKey(userId));
+        return raw ? new Set(JSON.parse(raw) as string[]) : new Set<string>();
+      } catch {
+        return new Set<string>();
+      }
+    })();
+    almostNotifiedLoading.set(userId, loading);
   }
+  const set = await loading;
+  almostNotifiedCache.set(userId, set);
+  return set;
 }
 
 // Badges exactly one watch/rating/rewatch/follow away from unlocking (see
@@ -516,12 +543,15 @@ async function getNewlyAlmostUnlocked(userId: string, badges: Badge[]): Promise<
   const candidates = badges.filter((b) => !b.achieved && b.threshold - b.progress === 1);
   if (candidates.length === 0) return [];
 
-  const alreadyNotified = await loadAlmostNotifiedIds(userId);
+  const alreadyNotified = await getAlmostNotifiedSet(userId);
+  // Synchronous from here on — no more awaits before the has()/add() pair
+  // below — so two calls that both awaited the same shared set above can't
+  // still both see a badge as "not yet notified" once we're at this point.
   const fresh = candidates.filter((b) => !alreadyNotified.has(b.id));
   if (fresh.length === 0) return [];
 
   for (const b of fresh) alreadyNotified.add(b.id);
-  await AsyncStorage.setItem(almostUnlockedKey(userId), JSON.stringify([...alreadyNotified])).catch(() => {});
+  AsyncStorage.setItem(almostUnlockedKey(userId), JSON.stringify([...alreadyNotified])).catch(() => {});
   return fresh;
 }
 
