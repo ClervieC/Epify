@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Pr
 import { Animated, View, Text, Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Badge, BADGE_ICON, categoryColor, badgeLabel } from "../lib/streaks";
+import { LinearGradient } from "expo-linear-gradient";
+import { Badge, badgeIcon, categoryColor, badgeLabel } from "../lib/streaks";
+import { setBadgeUnlockListener } from "../lib/badgeNotify";
 import { useColors, radius, type, dropShadow, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { NATIVE_DRIVER } from "../lib/animations";
@@ -29,16 +31,35 @@ export function BadgeUnlockProvider({ children }: PropsWithChildren) {
   const [queue, setQueue] = useState<Badge[]>([]);
   const current = queue[0] ?? null;
   const translateY = useRef(new Animated.Value(-80)).current;
+  const scale = useRef(new Animated.Value(0.7)).current;
+  const iconRotate = useRef(new Animated.Value(0)).current;
+  const iconPulse = useRef(new Animated.Value(1)).current;
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   const announceBadges = useCallback((badges: Badge[]) => {
     if (badges.length === 0) return;
     setQueue((prev) => [...prev, ...badges]);
   }, []);
 
+  // Registers this provider's announceBadges as the target for
+  // lib/badgeNotify.ts's checkBadgesNow() — the trigger fired right after a
+  // watch/rate/rewatch mutation (see lib/userShows.ts, lib/userMovies.ts) so
+  // a badge earned from the Movies tab or a show/episode detail screen shows
+  // the same toast immediately, not just next time Shows/Profile/Streaks
+  // happens to recompute.
+  useEffect(() => {
+    setBadgeUnlockListener(announceBadges);
+    return () => setBadgeUnlockListener(null);
+  }, [announceBadges]);
+
   function dismiss() {
     if (dismissTimer.current) clearTimeout(dismissTimer.current);
-    Animated.timing(translateY, { toValue: -80, duration: 220, useNativeDriver: NATIVE_DRIVER }).start(() => {
+    pulseLoop.current?.stop();
+    Animated.parallel([
+      Animated.timing(translateY, { toValue: -80, duration: 220, useNativeDriver: NATIVE_DRIVER }),
+      Animated.timing(scale, { toValue: 0.85, duration: 220, useNativeDriver: NATIVE_DRIVER }),
+    ]).start(() => {
       setQueue((prev) => prev.slice(1));
     });
   }
@@ -46,40 +67,79 @@ export function BadgeUnlockProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!current) return;
     translateY.setValue(-80);
-    Animated.spring(translateY, { toValue: 0, useNativeDriver: NATIVE_DRIVER, speed: 14, bounciness: 8 }).start();
+    scale.setValue(0.7);
+    iconRotate.setValue(0);
+    // A snappier, more overshoot-y pop than a plain slide-down — this is
+    // meant to feel like a real reward moment, not just another banner.
+    Animated.parallel([
+      Animated.spring(translateY, { toValue: 0, useNativeDriver: NATIVE_DRIVER, speed: 14, bounciness: 10 }),
+      Animated.spring(scale, { toValue: 1, useNativeDriver: NATIVE_DRIVER, speed: 14, bounciness: 18 }),
+    ]).start(() => {
+      // One-shot icon wiggle once the card has landed, then a slow breathing
+      // pulse for as long as the toast stays up.
+      Animated.sequence([
+        Animated.timing(iconRotate, { toValue: 1, duration: 110, useNativeDriver: NATIVE_DRIVER }),
+        Animated.timing(iconRotate, { toValue: -1, duration: 160, useNativeDriver: NATIVE_DRIVER }),
+        Animated.timing(iconRotate, { toValue: 0, duration: 110, useNativeDriver: NATIVE_DRIVER }),
+      ]).start();
+      pulseLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(iconPulse, { toValue: 1.12, duration: 420, useNativeDriver: NATIVE_DRIVER }),
+          Animated.timing(iconPulse, { toValue: 1, duration: 420, useNativeDriver: NATIVE_DRIVER }),
+        ])
+      );
+      pulseLoop.current.start();
+    });
     dismissTimer.current = setTimeout(dismiss, VISIBLE_MS);
     return () => {
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
+      pulseLoop.current?.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id]);
 
   const color = current ? categoryColor(colors, current.category) : colors.accent;
+  const iconSpin = iconRotate.interpolate({ inputRange: [-1, 0, 1], outputRange: ["-18deg", "0deg", "18deg"] });
 
   return (
     <BadgeUnlockContext.Provider value={{ announceBadges }}>
       {children}
       {current && (
-        <Animated.View style={[styles.banner, { transform: [{ translateY }] }]} pointerEvents="box-none">
+        <Animated.View
+          style={[styles.banner, { transform: [{ translateY }, { scale }] }]}
+          pointerEvents="box-none"
+        >
           <Pressable
-            style={[styles.card, { borderColor: `${color}55` }]}
             onPress={() => {
               dismiss();
               router.push("/streaks");
             }}
+            style={[styles.cardBase, { backgroundColor: colors.surface }]}
           >
-            <View style={[styles.iconWrap, { backgroundColor: `${color}22` }]}>
-              <Ionicons name={BADGE_ICON[current.category]} size={20} color={color} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title}>{t.profile.badgeUnlockedTitle}</Text>
-              <Text style={styles.subtitle} numberOfLines={1}>
-                {badgeLabel(t, current)}
-              </Text>
-            </View>
-            <Pressable onPress={dismiss} hitSlop={10} accessibilityRole="button" accessibilityLabel={t.common.cancel}>
-              <Ionicons name="close" size={18} color={colors.textFaint} />
-            </Pressable>
+            <LinearGradient
+              colors={[`${color}59`, `${color}22`]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={[styles.card, { borderColor: `${color}88` }]}
+            >
+              <Animated.View
+                style={[
+                  styles.iconWrap,
+                  { backgroundColor: `${color}2a`, transform: [{ rotate: iconSpin }, { scale: iconPulse }] },
+                ]}
+              >
+                <Ionicons name={badgeIcon(current)} size={22} color={color} />
+              </Animated.View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.title}>🎉 {t.profile.badgeUnlockedTitle}</Text>
+                <Text style={styles.subtitle} numberOfLines={1}>
+                  {badgeLabel(t, current)}
+                </Text>
+              </View>
+              <Pressable onPress={dismiss} hitSlop={10} accessibilityRole="button" accessibilityLabel={t.common.cancel}>
+                <Ionicons name="close" size={18} color={colors.textFaint} />
+              </Pressable>
+            </LinearGradient>
           </Pressable>
         </Animated.View>
       )}
@@ -104,15 +164,17 @@ function useStyles(colors: Colors) {
       paddingHorizontal: 16,
       zIndex: 1000,
     },
+    cardBase: {
+      borderRadius: radius.lg,
+      ...dropShadow({ opacity: 0.25, radius: 18, offsetY: 6, elevation: 8 }),
+    },
     card: {
       flexDirection: "row",
       alignItems: "center",
       gap: 12,
-      backgroundColor: colors.surface,
       borderWidth: 1,
       borderRadius: radius.lg,
       padding: 12,
-      ...dropShadow({ opacity: 0.2, radius: 16, offsetY: 6, elevation: 8 }),
     },
     iconWrap: {
       width: 40,

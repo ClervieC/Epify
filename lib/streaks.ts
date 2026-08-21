@@ -1,12 +1,17 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase, getCurrentUserId } from "./supabase";
-import { fetchUserShows } from "./userShows";
+import { fetchUserShows, UserShow } from "./userShows";
+import { fetchUserMovies, UserMovie } from "./userMovies";
 import { fetchFollowingIds } from "./follows";
+import { getCachedShow } from "./showDataCache";
+import { getCachedMovieGenres } from "./tmdb";
+import { mapWithConcurrency } from "./concurrency";
 import type { Colors } from "./theme";
 import type { Translations } from "./i18n";
 
 const PAGE_SIZE = 1000;
+const GENRE_FETCH_CONCURRENCY = 6;
 
 // IndexedDB-backed local mirror (see the same comment in lib/showStats.ts)
 // — paints app/streaks.tsx and the Shows tab's streak pill instantly from
@@ -18,9 +23,18 @@ const PAGE_SIZE = 1000;
 // precomputed copy across devices too.
 const localStore = createAsyncStorage("streaks_cache");
 const LOCAL_STORAGE_KEY = "streaks_v1";
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 7;
 
-export type BadgeCategory = "episodes" | "movies" | "shows" | "streak" | "ratings" | "social" | "rewatch";
+export type BadgeCategory =
+  | "episodes"
+  | "movies"
+  | "shows"
+  | "streak"
+  | "ratings"
+  | "reactions"
+  | "social"
+  | "rewatch"
+  | "genre";
 
 export interface Badge {
   id: string;
@@ -36,7 +50,30 @@ export interface Badge {
   // repeated per-badge so app/streaks.tsx can render a "12/50" progress bar
   // on the next locked badge without needing the category totals separately.
   progress: number;
+  // Only set for category "genre" — which curated genre (see GENRE_DEFS)
+  // this particular badge tracks. badgeLabel/badgeIcon below key off this
+  // instead of the shared per-category label/icon every other category uses.
+  genre?: string;
 }
+
+// Curated rather than derived from whatever raw genre strings TVmaze/TMDB
+// happen to return (which don't even agree with each other — TVmaze says
+// "Science-Fiction", TMDB's TV genre is "Sci-Fi & Fantasy") — `match` is the
+// set of raw strings (checked case-insensitively, substring) that count
+// toward this genre's badge. Order here is display order in the "Genres"
+// category.
+export const GENRE_DEFS: { key: string; match: string[]; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: "comedy", match: ["comedy"], icon: "happy-outline" },
+  { key: "drama", match: ["drama"], icon: "sad-outline" },
+  { key: "romance", match: ["romance"], icon: "heart-outline" },
+  { key: "action", match: ["action"], icon: "flash-outline" },
+  { key: "scifi", match: ["science-fiction", "science fiction", "sci-fi"], icon: "planet-outline" },
+  { key: "fantasy", match: ["fantasy"], icon: "sparkles-outline" },
+  { key: "crime", match: ["crime"], icon: "shield-outline" },
+  { key: "horror", match: ["horror"], icon: "skull-outline" },
+  { key: "animation", match: ["animation", "anime"], icon: "color-palette-outline" },
+];
+const GENRE_THRESHOLDS = [1, 5, 15];
 
 export interface StreakData {
   schemaVersion: number;
@@ -64,13 +101,25 @@ export const BADGE_ICON: Record<BadgeCategory, keyof typeof Ionicons.glyphMap> =
   shows: "ribbon-outline",
   streak: "flame-outline",
   ratings: "star-outline",
+  reactions: "thumbs-up-outline",
   social: "people-outline",
   rewatch: "repeat-outline",
+  genre: "pricetag-outline",
 };
 
+// Genre badges each have their own icon (see GENRE_DEFS) instead of one
+// shared per-category glyph — use this instead of indexing BADGE_ICON
+// directly so callers don't have to special-case category "genre".
+export function badgeIcon(badge: Badge): keyof typeof Ionicons.glyphMap {
+  if (badge.category === "genre") {
+    return GENRE_DEFS.find((g) => g.key === badge.genre)?.icon ?? BADGE_ICON.genre;
+  }
+  return BADGE_ICON[badge.category];
+}
+
 // One accent color per category so the badge grid (and the unlock toast)
-// read as seven distinct collections rather than one undifferentiated wall
-// of purple.
+// read as distinct collections rather than one undifferentiated wall of
+// purple.
 export function categoryColor(colors: Colors, category: BadgeCategory): string {
   const map: Record<BadgeCategory, string> = {
     episodes: colors.blue,
@@ -78,19 +127,26 @@ export function categoryColor(colors: Colors, category: BadgeCategory): string {
     shows: colors.yellow,
     streak: "#ff9f43",
     ratings: colors.accent,
+    reactions: "#0ca678",
     social: colors.green,
     rewatch: colors.blue,
+    genre: "#d6336c",
   };
   return map[category];
 }
 
 export function badgeLabel(t: Translations, badge: Badge): string {
-  const BADGE_LABEL: Record<BadgeCategory, (n: number) => string> = {
+  if (badge.category === "genre") {
+    const genreName = t.profile.genreNames[badge.genre as keyof Translations["profile"]["genreNames"]];
+    return t.profile.badgeGenre(genreName, badge.threshold);
+  }
+  const BADGE_LABEL: Record<Exclude<BadgeCategory, "genre">, (n: number) => string> = {
     episodes: t.profile.badgeEpisodes,
     movies: t.profile.badgeMovies,
     shows: t.profile.badgeShows,
     streak: t.profile.badgeStreak,
     ratings: t.profile.badgeRatings,
+    reactions: t.profile.badgeReactions,
     social: t.profile.badgeSocial,
     rewatch: t.profile.badgeRewatch,
   };
@@ -102,6 +158,7 @@ const MOVIE_THRESHOLDS = [5, 25, 50, 100];
 const SHOW_THRESHOLDS = [1, 5, 10, 25];
 const STREAK_THRESHOLDS = [3, 7, 30, 100];
 const RATINGS_THRESHOLDS = [5, 25, 100, 250];
+const REACTIONS_THRESHOLDS = [5, 25, 100, 250];
 const SOCIAL_THRESHOLDS = [1, 5, 10, 25];
 const REWATCH_THRESHOLDS = [1, 5, 15, 50];
 
@@ -188,8 +245,10 @@ function buildBadges(
   showsCompleted: number,
   longestStreak: number,
   ratingsGiven: number,
+  reactionsGiven: number,
   followingCount: number,
-  rewatchCount: number
+  rewatchCount: number,
+  genreCounts: Record<string, number>
 ): Badge[] {
   const badges: Badge[] = [];
   for (const threshold of EPISODE_THRESHOLDS) {
@@ -207,13 +266,73 @@ function buildBadges(
   for (const threshold of RATINGS_THRESHOLDS) {
     badges.push({ id: `ratings-${threshold}`, category: "ratings", threshold, achieved: ratingsGiven >= threshold, earnedAt: null, progress: ratingsGiven });
   }
+  for (const threshold of REACTIONS_THRESHOLDS) {
+    badges.push({ id: `reactions-${threshold}`, category: "reactions", threshold, achieved: reactionsGiven >= threshold, earnedAt: null, progress: reactionsGiven });
+  }
   for (const threshold of SOCIAL_THRESHOLDS) {
     badges.push({ id: `social-${threshold}`, category: "social", threshold, achieved: followingCount >= threshold, earnedAt: null, progress: followingCount });
   }
   for (const threshold of REWATCH_THRESHOLDS) {
     badges.push({ id: `rewatch-${threshold}`, category: "rewatch", threshold, achieved: rewatchCount >= threshold, earnedAt: null, progress: rewatchCount });
   }
+  for (const { key } of GENRE_DEFS) {
+    const count = genreCounts[key] ?? 0;
+    for (const threshold of GENRE_THRESHOLDS) {
+      badges.push({ id: `genre-${key}-${threshold}`, category: "genre", genre: key, threshold, achieved: count >= threshold, earnedAt: null, progress: count });
+    }
+  }
   return badges;
+}
+
+// Tallies completed shows (status "watched") and watched movies per curated
+// genre — the same "counted per title, not per episode" rule
+// lib/showStats.ts's genreBreakdown uses for shows, restricted to shows
+// actually finished rather than merely started, to mirror the existing
+// "shows" badge category's own definition of done. Movies have no
+// in-progress state (see lib/userMovies.ts's MovieStatus), so every watched
+// one counts.
+//
+// Deliberately network-free: both getCachedShow and getCachedMovieGenres
+// only ever read what's already on disk (the former via a fetcher that
+// immediately rejects, the latter by construction), so a title only counts
+// if its info was already cached on this device (warmed by
+// lib/backgroundPrefetch.ts, or just from having opened it) — otherwise
+// it's silently skipped. That keeps this safe to run on every
+// computeStreakData() call (including the Shows tab's per-visit streak pill)
+// instead of adding a real network round trip to a hot path; the tradeoff is
+// a genre badge can lag behind reality for a title never cached on this
+// device, catching up the next time it happens to be fetched.
+async function computeGenreCounts(completedShows: UserShow[], watchedMovies: UserMovie[]): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+
+  function tally(genres: string[]) {
+    const lower = genres.map((g) => g.toLowerCase());
+    for (const { key, match } of GENRE_DEFS) {
+      if (lower.some((g) => match.some((m) => g.includes(m)))) {
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
+    }
+  }
+
+  await mapWithConcurrency(completedShows, GENRE_FETCH_CONCURRENCY, async (show) => {
+    try {
+      const info = await getCachedShow(show.tvmaze_id, () => Promise.reject(new Error("no-network")));
+      tally(info.genres);
+    } catch {
+      // Not cached on this device — skip, see comment above.
+    }
+  });
+
+  await mapWithConcurrency(
+    watchedMovies.filter((m) => m.tmdb_id != null),
+    GENRE_FETCH_CONCURRENCY,
+    async (movie) => {
+      const genres = await getCachedMovieGenres(movie.tmdb_id!);
+      if (genres) tally(genres);
+    }
+  );
+
+  return counts;
 }
 
 async function countRows(table: string, userId: string, extra?: (q: any) => any): Promise<number> {
@@ -275,36 +394,62 @@ async function syncBadgeUnlocks(userId: string, badges: Badge[]): Promise<Badge[
 }
 
 // Not cached server-side the way lib/showStats.ts's heavier stats are — this
-// only needs one lightweight watched_at scan plus a handful of counts (no
-// per-show TVmaze calls), cheap enough to recompute on every visit. Still
-// mirrored into IndexedDB (see loadLocalStreakData/saveLocalStreakData
-// below) purely for an instant first paint / offline read, same pattern as
-// showStats's local cache.
+// only needs one lightweight watched_at scan, a handful of counts, and a
+// network-free disk-cache-only genre lookup (see computeGenreCounts), cheap
+// enough to recompute on every visit. Still mirrored into IndexedDB (see
+// loadLocalStreakData/saveLocalStreakData below) purely for an instant first
+// paint / offline read, same pattern as showStats's local cache.
 export async function computeStreakData(onNewlyUnlocked?: (badges: Badge[]) => void): Promise<StreakData> {
   const userId = await getCurrentUserId();
 
   // All independent of each other — running them concurrently instead of
   // one after another is most of the win here (six count queries plus the
   // watched-days scan were previously six-plus sequential round trips).
-  const [days, shows, followingIds, totalEpisodesWatched, ratedEpisodes, rewatchedEpisodesCount, totalMoviesWatched, ratedMovies, rewatchedMoviesCount] =
+  const [days, shows, watchedMovies, followingIds, totalEpisodesWatched, ratedEpisodes, reactedEpisodes, rewatchedEpisodesCount, rewatchedMoviesCount] =
     await Promise.all([
       fetchWatchedDays(),
       fetchUserShows(),
+      fetchUserMovies(),
       userId ? fetchFollowingIds(userId) : Promise.resolve([]),
       userId ? countRows("watched_episodes", userId) : Promise.resolve(0),
       userId ? countRows("watched_episodes", userId, (q) => q.not("rating", "is", null)) : Promise.resolve(0),
+      userId ? countRows("watched_episodes", userId, (q) => q.not("feeling", "is", null)) : Promise.resolve(0),
       userId ? countRows("watched_episodes", userId, (q) => q.gt("times_watched", 1)) : Promise.resolve(0),
-      userId ? countRows("user_movies", userId, (q) => q.eq("status", "watched")) : Promise.resolve(0),
-      userId ? countRows("user_movies", userId, (q) => q.eq("status", "watched").not("rating", "is", null)) : Promise.resolve(0),
       userId ? countRows("user_movies", userId, (q) => q.eq("status", "watched").gt("times_watched", 1)) : Promise.resolve(0),
     ]);
   const { current, longest, atRisk } = computeStreaks(days);
 
   const showsCompleted = shows.filter((s) => s.status === "watched").length;
-  const ratingsGiven = ratedEpisodes + ratedMovies;
+  const totalMoviesWatched = watchedMovies.length;
+  // Rating/reacting to a show overall (user_shows.rating/feeling, set via
+  // rateShow — see app/show/[id].tsx) is a distinct act from rating/reacting
+  // to one of its episodes, so it counts too; `shows`/`watchedMovies` are
+  // already fetched above, no extra round trips needed.
+  const ratedShows = shows.filter((s) => s.rating !== null).length;
+  const reactedShows = shows.filter((s) => s.feeling !== null).length;
+  const ratedMovies = watchedMovies.filter((m) => m.rating !== null).length;
+  const reactedMovies = watchedMovies.filter((m) => m.feeling !== null).length;
+  const ratingsGiven = ratedEpisodes + ratedMovies + ratedShows;
+  // Separate from ratingsGiven above — a "feeling" (the quick emoji reaction
+  // prompt, see components/FeelingSheet.tsx) is a different act from giving a
+  // star rating, and a user can do either without the other, so this badge
+  // category tracks its own `feeling` column instead of piggybacking on
+  // `rating`'s not-null count.
+  const reactionsGiven = reactedEpisodes + reactedMovies + reactedShows;
   const rewatchCount = rewatchedEpisodesCount + rewatchedMoviesCount;
+  const genreCounts = await computeGenreCounts(shows.filter((s) => s.status === "watched"), watchedMovies);
 
-  const badges = buildBadges(totalEpisodesWatched, totalMoviesWatched, showsCompleted, longest, ratingsGiven, followingIds.length, rewatchCount);
+  const badges = buildBadges(
+    totalEpisodesWatched,
+    totalMoviesWatched,
+    showsCompleted,
+    longest,
+    ratingsGiven,
+    reactionsGiven,
+    followingIds.length,
+    rewatchCount,
+    genreCounts
+  );
   if (userId) {
     const newlyUnlocked = await syncBadgeUnlocks(userId, badges);
     if (newlyUnlocked.length > 0) onNewlyUnlocked?.(newlyUnlocked);

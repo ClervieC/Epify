@@ -208,6 +208,29 @@ export function getMovieDetails(tmdbId: number): Promise<TMDBMovieDetails> {
   });
 }
 
+// Network-free variant of getMovieDetails, for lib/streaks.ts's genre badge
+// tally (see computeGenreCounts) — reads the exact same cache entries
+// withCache above would (memory, then disk), but never calls the network
+// fetcher on a miss, so a movie whose details were never fetched on this
+// device is silently skipped instead of triggering a fresh TMDB request from
+// what's meant to stay a cheap, recompute-on-every-visit code path.
+export async function getCachedMovieGenres(tmdbId: number): Promise<string[] | null> {
+  const cacheKey = `movie:${tmdbId}`;
+  const now = Date.now();
+  const cached = memoryCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return (cached.data as TMDBMovieDetails).genres.map((g) => g.name);
+  try {
+    const stored = await storage.getItem(CACHE_PREFIX + cacheKey);
+    if (stored) {
+      const parsed = JSON.parse(stored) as { data: TMDBMovieDetails; expiresAt: number };
+      if (parsed.expiresAt > now) return parsed.data.genres.map((g) => g.name);
+    }
+  } catch {
+    // Corrupt/unavailable cache entry — treat as unknown, same as a miss.
+  }
+  return null;
+}
+
 export function getMovieCast(tmdbId: number): Promise<TMDBCastMember[]> {
   const path = `/movie/${tmdbId}/credits`;
   return withCache(`credits:${tmdbId}`, ONE_DAY, async () => {

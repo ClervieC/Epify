@@ -1,4 +1,5 @@
 import { supabase, getCurrentUserId } from "./supabase";
+import { checkBadgesNow } from "./badgeNotify";
 
 export type MovieStatus = "want_to_watch" | "watched";
 
@@ -241,6 +242,7 @@ export async function rateMovie(id: string, rating: number | null, feeling: stri
     .select()
     .single();
   if (error) throw error;
+  if (rating !== null || feeling !== null) checkBadgesNow();
   return data as UserMovie;
 }
 
@@ -307,6 +309,7 @@ export async function setMovieWatched(
     .select()
     .single();
   if (error) throw error;
+  checkBadgesNow();
   return data as UserMovie;
 }
 
@@ -318,6 +321,7 @@ export async function incrementMovieRewatch(id: string, currentTimesWatched: num
     .select()
     .single();
   if (error) throw error;
+  checkBadgesNow();
   return data as UserMovie;
 }
 

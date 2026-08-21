@@ -57,6 +57,8 @@ import {
   computeStreakData,
   loadLocalStreakData,
   StreakData,
+  badgeIcon,
+  categoryColor,
 } from "../../lib/streaks";
 import { useBadgeUnlockToast } from "../../context/BadgeUnlockContext";
 import {
@@ -644,6 +646,28 @@ export default function ProfileScreen() {
                     ? t.profile.streakBannerActive(streakData.currentStreak)
                     : t.profile.streakBannerInactive}
               </Text>
+              {(() => {
+                const achieved = streakData.badges.filter((b) => b.achieved);
+                if (achieved.length === 0) return null;
+                const recent = [...achieved]
+                  .sort((a, b) => (b.earnedAt ?? "").localeCompare(a.earnedAt ?? ""))
+                  .slice(0, 5);
+                return (
+                  <View style={styles.badgeMiniRow}>
+                    {recent.map((b) => (
+                      <View
+                        key={b.id}
+                        style={[styles.badgeMiniIcon, { backgroundColor: `${categoryColor(colors, b.category)}22` }]}
+                      >
+                        <Ionicons name={badgeIcon(b)} size={12} color={categoryColor(colors, b.category)} />
+                      </View>
+                    ))}
+                    <Text style={styles.badgeMiniCount}>
+                      {t.profile.badgeCollected(achieved.length, streakData.badges.length)}
+                    </Text>
+                  </View>
+                );
+              })()}
             </View>
             <Ionicons
               name="chevron-forward"
@@ -1340,6 +1364,15 @@ function createStyles(colors: Colors, isSmallScreen: boolean) {
     },
     streakBannerIconAtRisk: { backgroundColor: `${colors.red}22` },
     streakBannerSubtitleAtRisk: { color: colors.red, fontWeight: "700" },
+    badgeMiniRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 },
+    badgeMiniIcon: {
+      width: 20,
+      height: 20,
+      borderRadius: radius.pill,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    badgeMiniCount: { fontSize: 11, fontWeight: "700", color: colors.textFaint, marginLeft: 4 },
     statsRow: { paddingHorizontal: 16, gap: 10 },
     statsRowFade: {
       position: "absolute",

@@ -121,6 +121,7 @@ function RootNavigation() {
         <Stack.Screen name="recap" options={{ headerShown: false }} />
         <Stack.Screen name="support" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen name="whatsnew" options={{ headerShown: false }} />
         <Stack.Screen name="streaks" options={{ headerShown: false }} />
       </Stack>
       <AppSplash visible={showSplash} />

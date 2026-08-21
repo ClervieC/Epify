@@ -1,6 +1,7 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
 import { patchCachedWatchedEpisodes } from "./showDataCache";
+import { checkBadgesNow } from "./badgeNotify";
 
 // Persisted fallback for fetchUserShows() below — every show/episode detail
 // screen calls it (alongside the TVmaze data, which is already cached and
@@ -183,6 +184,10 @@ export async function setShowStatus(tvmazeId: number, status: ShowStatus) {
     .select()
     .single();
   if (error) throw error;
+  // Only "watched" (fully completed) moves the "shows"/genre badge counts —
+  // see showsCompleted in lib/streaks.ts — so no point rechecking for any
+  // other status transition.
+  if (status === "watched") checkBadgesNow();
   return data as UserShow;
 }
 
@@ -205,6 +210,11 @@ export async function rateShow(tvmazeId: number, rating: number | null, feeling:
     .select()
     .single();
   if (error) throw error;
+  // Rating/reacting to the show overall (this row) is a distinct act from
+  // rating/reacting to one of its episodes (watched_episodes.rating/feeling,
+  // see rateEpisode above) — lib/streaks.ts's ratings/reactions badges count
+  // both, so either one can push a badge past its threshold.
+  if (rating !== null || feeling !== null) checkBadgesNow();
   return data as UserShow;
 }
 
@@ -537,6 +547,7 @@ export async function setEpisodeWatched(params: {
     row,
   ]);
   await resumeIfPausedOrDropped(params.tvmaze_show_id);
+  checkBadgesNow();
   return row;
 }
 
@@ -567,6 +578,7 @@ export async function setEpisodesWatched(
   const newIds = new Set(rows.map((r) => r.tvmaze_episode_id));
   patchCachedWatchedEpisodes(showId, (prev) => [...prev.filter((w) => !newIds.has(w.tvmaze_episode_id)), ...rows]);
   await resumeIfPausedOrDropped(showId);
+  checkBadgesNow();
 }
 
 export async function setEpisodesUnwatched(showId: number, episodeIds: number[]) {
@@ -620,6 +632,7 @@ export async function bulkIncrementRewatch(
         : w
     )
   );
+  checkBadgesNow();
 }
 
 // Mirrors bulkIncrementRewatch — "I didn't actually rewatch this whole
@@ -701,6 +714,7 @@ export async function rateEpisode(
   if (error) throw error;
   const row = data as WatchedEpisode;
   patchCachedWatchedEpisodes(showId, (prev) => prev.map((w) => (w.tvmaze_episode_id === tvmazeEpisodeId ? row : w)));
+  if (rating !== null || feeling !== null) checkBadgesNow();
 }
 
 // Only ever called on an episode that's already watched (see the heart
@@ -764,6 +778,7 @@ export async function incrementRewatch(tvmazeEpisodeId: number, currentTimesWatc
   if (error) throw error;
   const row = data as WatchedEpisode;
   patchCachedWatchedEpisodes(row.tvmaze_show_id, (prev) => prev.map((w) => (w.tvmaze_episode_id === tvmazeEpisodeId ? row : w)));
+  checkBadgesNow();
   return row;
 }
 

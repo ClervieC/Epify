@@ -3,7 +3,7 @@ import { Animated, View, Text, ScrollView, Pressable, ActivityIndicator, StyleSh
 import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { computeStreakData, loadLocalStreakData, StreakData, Badge, BadgeCategory, BADGE_ICON, categoryColor, badgeLabel } from "../lib/streaks";
+import { computeStreakData, loadLocalStreakData, StreakData, Badge, BadgeCategory, GENRE_DEFS, badgeIcon, categoryColor, badgeLabel } from "../lib/streaks";
 import { useColors, radius, type, dropShadow, Colors } from "../lib/theme";
 import { useLanguage, Translations } from "../lib/i18n";
 import { useGoBack } from "../lib/useGoBack";
@@ -40,15 +40,17 @@ export default function StreaksScreen() {
     }, [])
   );
 
-  const categories: BadgeCategory[] = ["streak", "episodes", "movies", "shows", "ratings", "social", "rewatch"];
+  const categories: BadgeCategory[] = ["streak", "episodes", "movies", "shows", "ratings", "reactions", "social", "rewatch"];
   const categoryLabel: Record<BadgeCategory, string> = {
     episodes: t.profile.badgeCategoryEpisodes,
     movies: t.profile.badgeCategoryMovies,
     shows: t.profile.badgeCategoryShows,
     streak: t.profile.badgeCategoryStreak,
     ratings: t.profile.badgeCategoryRatings,
+    reactions: t.profile.badgeCategoryReactions,
     social: t.profile.badgeCategorySocial,
     rewatch: t.profile.badgeCategoryRewatch,
+    genre: t.profile.badgeCategoryGenres,
   };
   const totalAchieved = data?.badges.filter((b) => b.achieved).length ?? 0;
   const totalBadges = data?.badges.length ?? 0;
@@ -124,6 +126,35 @@ export default function StreaksScreen() {
               </View>
             );
           })}
+
+          {(() => {
+            const genreColor = categoryColor(colors, "genre");
+            return (
+              <View style={styles.categorySection}>
+                <View style={styles.categoryTitleRow}>
+                  <View style={[styles.categoryDot, { backgroundColor: genreColor }]} />
+                  <Text style={styles.categoryTitle}>{t.profile.badgeCategoryGenres}</Text>
+                </View>
+                {GENRE_DEFS.map((g) => {
+                  const badges = data.badges.filter((b) => b.category === "genre" && b.genre === g.key);
+                  const nextBadge = badges.find((b) => !b.achieved);
+                  return (
+                    <View key={g.key} style={styles.genreSubsection}>
+                      <Text style={styles.genreSubtitle}>
+                        {t.profile.genreNames[g.key as keyof typeof t.profile.genreNames]}
+                      </Text>
+                      {nextBadge && <NextBadgeProgress badge={nextBadge} color={genreColor} styles={styles} t={t} />}
+                      <View style={styles.badgeGrid}>
+                        {badges.map((b, i) => (
+                          <BadgeCard key={b.id} badge={b} index={i} color={genreColor} colors={colors} styles={styles} t={t} language={language} />
+                        ))}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })()}
         </ScrollView>
       )}
     </View>
@@ -158,7 +189,7 @@ function NextBadgeProgress({
   return (
     <View style={[styles.nextBadgeCard, { borderColor: `${color}55` }]}>
       <View style={[styles.nextBadgeIconWrap, { backgroundColor: `${color}22` }]}>
-        <Ionicons name={BADGE_ICON[badge.category]} size={16} color={color} />
+        <Ionicons name={badgeIcon(badge)} size={16} color={color} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.nextBadgeLabel}>{t.profile.badgeProgress(badge.progress, badge.threshold)}</Text>
@@ -229,7 +260,7 @@ function BadgeCard({
           ]}
         >
           <View style={[styles.badgeIconWrap, badge.achieved ? { backgroundColor: `${color}22` } : null]}>
-            <Ionicons name={BADGE_ICON[badge.category]} size={22} color={badge.achieved ? color : colors.textFaint} />
+            <Ionicons name={badgeIcon(badge)} size={22} color={badge.achieved ? color : colors.textFaint} />
             {!badge.achieved && (
               <View style={styles.lockBadge}>
                 <Ionicons name="lock-closed" size={10} color={colors.textFaint} />
@@ -299,6 +330,8 @@ function createStyles(colors: Colors) {
     badgeCountRow: { flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center", marginBottom: 8 },
     badgeCountText: { fontSize: type.caption, color: colors.textMuted, fontWeight: "700" },
     categorySection: { marginTop: 14 },
+    genreSubsection: { marginTop: 10 },
+    genreSubtitle: { fontSize: type.bodySm, fontWeight: "800", color: colors.text, marginBottom: 6 },
     categoryTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
     categoryDot: { width: 8, height: 8, borderRadius: 4 },
     categoryTitle: {

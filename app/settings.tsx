@@ -14,6 +14,8 @@ import { fetchMyProfile, Profile } from "../lib/profiles";
 import { changePassword, exportMyData, deleteAccount } from "../lib/account";
 import { fetchOpenReportCount } from "../lib/reports";
 import { fetchSupportNeedsResponseCount } from "../lib/support";
+import { APP_VERSION, CHANGELOG } from "../lib/changelog";
+import { getLastSeenChangelogVersion } from "../lib/lastSeenVersion";
 import { alert } from "../lib/alert";
 import { useGoBack } from "../lib/useGoBack";
 import { Pill } from "../components/Pill";
@@ -63,6 +65,7 @@ export default function SettingsScreen() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [exportingData, setExportingData] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [hasNewChangelog, setHasNewChangelog] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -74,6 +77,7 @@ export default function SettingsScreen() {
             .catch(() => {});
         }
       });
+      getLastSeenChangelogVersion().then((seen) => setHasNewChangelog(seen !== CHANGELOG[0].version));
     }, [])
   );
 
@@ -259,6 +263,25 @@ export default function SettingsScreen() {
         <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.theme}</Text>
         <ThemeSwitch themeMode={themeMode} setThemeMode={setThemeMode} t={t} styles={styles} />
       </View>
+
+      <SectionHeader title={t.profile.about} styles={styles} />
+      <Pressable
+        style={styles.importRow}
+        onPress={() => {
+          setHasNewChangelog(false);
+          router.push("/whatsnew");
+        }}
+      >
+        <View>
+          <Ionicons name="sparkles-outline" size={20} color={colors.text} />
+          {hasNewChangelog && <View style={styles.adminBadge} />}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.importRowTitle}>{t.profile.whatsNew}</Text>
+          <Text style={styles.importRowSubtitle}>{t.profile.whatsNewVersion(APP_VERSION)}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+      </Pressable>
 
       <SectionHeader title={t.profile.legal} styles={styles} />
       <Pressable style={styles.importRow} onPress={() => router.push("/legal/terms")}>

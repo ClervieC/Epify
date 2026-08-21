@@ -53,6 +53,7 @@ import {
 import { EpisodeRow } from "../../components/EpisodeRow";
 import { FeelingSheet } from "../../components/FeelingSheet";
 import { FinaleToast, useFinaleToast } from "../../components/FinaleToast";
+import { NewVersionToast } from "../../components/NewVersionToast";
 import { Pill } from "../../components/Pill";
 import { EmptyState } from "../../components/EmptyState";
 import {
@@ -1938,6 +1939,7 @@ export default function ShowsScreen() {
       {finaleToast.visible && (
         <FinaleToast showName={finaleToast.showName} translateY={finaleToast.translateY} />
       )}
+      <NewVersionToast />
     </View>
   );
 }
