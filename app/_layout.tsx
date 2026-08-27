@@ -4,6 +4,7 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import { initAds } from "../lib/adsInit";
+import { startVersionCheck } from "../lib/versionCheck";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../context/AuthContext";
@@ -140,6 +141,7 @@ function ThemedStatusBar() {
 export default Sentry.wrap(function RootLayout() {
   useEffect(() => {
     initAds();
+    startVersionCheck();
   }, []);
 
   return (

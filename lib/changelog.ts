@@ -1,6 +1,9 @@
 // Maintained by hand at each release — write for the person reading it, not
 // a dump of commit messages. Newest entry first. Keep app.json/package.json
-// "version" in sync with CHANGELOG[0].version when you cut a new release.
+// "version" AND public/version.json in sync with CHANGELOG[0].version when
+// you cut a new release — the last one is what lib/versionCheck.ts polls on
+// web to force-reload a stale open tab/PWA onto the new build; forgetting
+// it there just means that check silently never fires, not a hard error.
 export interface ChangelogEntry {
   version: string;
   date: string; // YYYY-MM-DD
@@ -9,8 +12,20 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
-  // Newest entry first — CHANGELOG[0] drives the version shown in Settings,
-  // so keep app.json/package.json "version" in sync with it by hand.
+  // Newest entry first — CHANGELOG[0] drives the version shown in Settings
+  // (see the file-level comment above for everything else to keep in sync).
+  {
+    version: "5.1.2",
+    date: "2026-08-21",
+    en: [
+      "Fixed the \"almost unlocked\" badge toast sometimes popping up several times in a row.",
+      "The app now updates itself in the background when a new version ships — no more need to manually refresh to get the latest fixes.",
+    ],
+    fr: [
+      "Correction du message \"presque débloqué\" qui pouvait parfois apparaître plusieurs fois d'affilée.",
+      "L'appli se met désormais à jour toute seule en arrière-plan à chaque nouvelle version — plus besoin de rafraîchir manuellement pour profiter des derniers correctifs.",
+    ],
+  },
   {
     version: "5.1.1",
     date: "2026-08-21",
