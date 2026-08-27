@@ -1,7 +1,7 @@
 import { supabase, getCurrentUserId } from "./supabase";
-import { fetchFollowingIds } from "./follows";
+import { fetchFollowingIdsCached } from "./follows";
 import { fetchProfiles, Profile } from "./profiles";
-import { getCachedShow } from "./showDataCache";
+import { getCachedShow, peekCachedShow } from "./showDataCache";
 import { getShow } from "./tvmaze";
 import { getMovieDetails } from "./tmdb";
 import { createShortCache } from "./shortCache";
@@ -20,6 +20,7 @@ export type ActivityItem =
   | {
       kind: "episode_watched";
       id: string;
+      userId: string;
       user: Profile | null;
       createdAt: string;
       showId: number;
@@ -34,6 +35,7 @@ export type ActivityItem =
   | {
       kind: "movie_watched";
       id: string;
+      userId: string;
       user: Profile | null;
       createdAt: string;
       movieTitle: string;
@@ -45,6 +47,7 @@ export type ActivityItem =
   | {
       kind: "show_comment" | "episode_comment";
       id: string;
+      userId: string;
       user: Profile | null;
       createdAt: string;
       showId: number;
@@ -56,6 +59,7 @@ export type ActivityItem =
   | {
       kind: "movie_comment";
       id: string;
+      userId: string;
       user: Profile | null;
       createdAt: string;
       movieTmdbId: number;
@@ -85,12 +89,32 @@ const PAGE_SIZE = 20;
 // last page's oldest item) rather than an offset — an offset would shift
 // under a paginating user as new activity keeps arriving from everyone they
 // follow, silently skipping or repeating rows between pages.
-export async function fetchFollowingActivity(before?: string): Promise<{ items: ActivityItem[]; hasMore: boolean }> {
-  const myId = await getCurrentUserId();
-  if (!myId) return { items: [], hasMore: false };
+//
+// Split into a fast pass (this function) and enrichActivityItems below,
+// instead of one function that only returns once everyone's show names,
+// movie titles, and profiles have all round-tripped — those are 2-3 extra
+// network calls (TVmaze/TMDB for anything not already cached, plus a
+// profiles query) that used to gate the very first paint of the whole
+// screen. This pass only touches the 4 already-indexed, already-fast
+// Supabase queries plus a synchronous in-memory cache peek for show names
+// (see peekCachedShow) — nothing here should ever be the slow part. Pending
+// ids are handed back alongside the items so the caller can enrich them in
+// a second, non-blocking pass (see app/(tabs)/activity.tsx's load()).
+export interface FollowingActivityPage {
+  items: ActivityItem[];
+  hasMore: boolean;
+  pendingShowIds: number[];
+  pendingMovieCommentTmdbIds: number[];
+  pendingUserIds: string[];
+}
 
-  const followingIds = await fetchFollowingIds(myId);
-  if (followingIds.length === 0) return { items: [], hasMore: false };
+export async function fetchFollowingActivity(before?: string): Promise<FollowingActivityPage> {
+  const empty: FollowingActivityPage = { items: [], hasMore: false, pendingShowIds: [], pendingMovieCommentTmdbIds: [], pendingUserIds: [] };
+  const myId = await getCurrentUserId();
+  if (!myId) return empty;
+
+  const followingIds = await fetchFollowingIdsCached(myId);
+  if (followingIds.length === 0) return empty;
 
   let watchedEpisodesQuery = supabase
     .from("watched_episodes")
@@ -135,36 +159,141 @@ export async function fetchFollowingActivity(before?: string): Promise<{ items: 
   if (showComments.error) throw showComments.error;
   if (movieComments.error) throw movieComments.error;
 
-  // watched_episodes/comments only store a tvmaze_show_id, not the show's
-  // name/image (unlike user_shows, which is the *current* user's own row —
-  // not useful here since this is about people you follow) — TVmaze lookups
-  // fill that in, via the same disk cache every other show-detail screen
-  // already warms (see lib/showDataCache.ts), so repeat show ids across
-  // several followed users' activity cost at most one network call each.
-  const showIds = new Set<number>([
-    ...watchedEpisodes.data.map((r: any) => r.tvmaze_show_id),
-    ...showComments.data.map((r: any) => r.tvmaze_show_id),
-  ]);
+  // Whatever's already sitting in memory from earlier this session (the
+  // user's own tracked shows, or a show already scrolled past in this same
+  // feed) shows its real name/image immediately, at zero cost — everything
+  // else falls back to a placeholder until the enrich pass fetches it for
+  // real. See peekCachedShow's own comment for exactly what it does and
+  // doesn't cover.
+  const pendingShowIds = new Set<number>();
+  function peekShow(showId: number): { name: string; image: string | null } | null {
+    const cached = peekCachedShow(showId);
+    if (cached) return { name: cached.name, image: cached.image?.medium ?? null };
+    pendingShowIds.add(showId);
+    return null;
+  }
+
   const userIds = new Set<string>([
     ...watchedEpisodes.data.map((r: any) => r.user_id),
     ...watchedMovies.data.map((r: any) => r.user_id),
     ...showComments.data.map((r: any) => r.user_id),
     ...movieComments.data.map((r: any) => r.user_id),
   ]);
-
-  // movie_comments has no title/poster of its own (unlike user_movies,
-  // which has the *current* user's own row — not useful here), so those
-  // need a TMDB lookup the same way show ids do above.
+  // movie_comments has no title/poster of its own (unlike user_movies, which
+  // has the *current* user's own row — not useful here), and there's no
+  // local cache to peek the way peekCachedShow covers shows, so every one of
+  // these always needs the enrich pass — movie_comment is a small enough
+  // slice of a typical feed that this isn't worth its own cache layer.
   const movieCommentTmdbIds = new Set<number>((movieComments.data as any[]).map((r) => r.tmdb_id));
+
+  const items: ActivityItem[] = [];
+
+  for (const row of watchedEpisodes.data as any[]) {
+    const show = peekShow(row.tvmaze_show_id);
+    items.push({
+      kind: "episode_watched",
+      id: `ew:${row.id}`,
+      userId: row.user_id,
+      user: null,
+      createdAt: row.watched_at,
+      showId: row.tvmaze_show_id,
+      showName: show?.name ?? `#${row.tvmaze_show_id}`,
+      showImage: show?.image ?? null,
+      episodeId: row.tvmaze_episode_id,
+      season: row.season,
+      number: row.number,
+      rating: row.rating,
+      feeling: row.feeling,
+    });
+  }
+  for (const row of watchedMovies.data as any[]) {
+    if (!row.watched_at) continue;
+    items.push({
+      kind: "movie_watched",
+      id: `mw:${row.id}`,
+      userId: row.user_id,
+      user: null,
+      createdAt: row.watched_at,
+      movieTitle: row.title,
+      moviePosterPath: row.poster_path,
+      movieTmdbId: row.tmdb_id,
+      rating: row.rating,
+      feeling: row.feeling,
+    });
+  }
+  for (const row of showComments.data as any[]) {
+    const show = peekShow(row.tvmaze_show_id);
+    items.push({
+      kind: row.target_type === "episode" ? "episode_comment" : "show_comment",
+      id: `c:${row.id}`,
+      userId: row.user_id,
+      user: null,
+      createdAt: row.created_at,
+      showId: row.tvmaze_show_id,
+      showName: show?.name ?? `#${row.tvmaze_show_id}`,
+      showImage: show?.image ?? null,
+      episodeId: row.tvmaze_episode_id,
+      body: row.body,
+    });
+  }
+  for (const row of movieComments.data as any[]) {
+    items.push({
+      kind: "movie_comment",
+      id: `mc:${row.id}`,
+      userId: row.user_id,
+      user: null,
+      createdAt: row.created_at,
+      movieTmdbId: row.tmdb_id,
+      movieTitle: `#${row.tmdb_id}`,
+      moviePosterPath: null,
+      body: row.body,
+    });
+  }
+
+  items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  // A table that came back with a full page of candidates might have more
+  // rows beyond it, even if none of them made this page's final cut (they
+  // could all be older than the other tables' PAGE_SIZE-th item) — checking
+  // the raw per-table results rather than just items.length > PAGE_SIZE
+  // catches that case too.
+  const hasMore =
+    watchedEpisodes.data.length === PAGE_SIZE ||
+    watchedMovies.data.length === PAGE_SIZE ||
+    showComments.data.length === PAGE_SIZE ||
+    movieComments.data.length === PAGE_SIZE;
+  return {
+    items: items.slice(0, PAGE_SIZE),
+    hasMore,
+    pendingShowIds: Array.from(pendingShowIds),
+    pendingMovieCommentTmdbIds: Array.from(movieCommentTmdbIds),
+    pendingUserIds: Array.from(userIds),
+  };
+}
+
+// Second pass: fetches whatever fetchFollowingActivity's fast pass couldn't
+// answer from memory alone (see its pending* return fields) and returns a
+// NEW array with those items patched in place — profiles for every item
+// (there's no local profile cache for other users to peek first), show
+// names/images that weren't already warm, and movie_comment titles/posters.
+// Matches by id, so it's safe to call against a page that's since grown
+// (the user scrolled and loaded more) — anything not in the original
+// pending lists is returned unchanged.
+export async function enrichActivityItems(
+  items: ActivityItem[],
+  pending: { showIds: number[]; movieCommentTmdbIds: number[]; userIds: string[] }
+): Promise<ActivityItem[]> {
+  if (pending.showIds.length === 0 && pending.movieCommentTmdbIds.length === 0 && pending.userIds.length === 0) {
+    return items;
+  }
 
   const [shows, movies, profiles] = await Promise.all([
     Promise.allSettled(
-      Array.from(showIds).map(async (id) => [id, await getCachedShow(id, () => getShow(id))] as const)
+      pending.showIds.map(async (id) => [id, await getCachedShow(id, () => getShow(id))] as const)
     ),
     Promise.allSettled(
-      Array.from(movieCommentTmdbIds).map(async (id) => [id, await getMovieDetails(id)] as const)
+      pending.movieCommentTmdbIds.map(async (id) => [id, await getMovieDetails(id)] as const)
     ),
-    fetchProfiles(Array.from(userIds)),
+    fetchProfiles(pending.userIds),
   ]);
 
   const showById = new Map<number, { name: string; image: string | null }>();
@@ -183,79 +312,23 @@ export async function fetchFollowingActivity(before?: string): Promise<{ items: 
   }
   const profileById = new Map(profiles.map((p) => [p.user_id, p]));
 
-  const items: ActivityItem[] = [];
-
-  for (const row of watchedEpisodes.data as any[]) {
-    const show = showById.get(row.tvmaze_show_id);
-    items.push({
-      kind: "episode_watched",
-      id: `ew:${row.id}`,
-      user: profileById.get(row.user_id) ?? null,
-      createdAt: row.watched_at,
-      showId: row.tvmaze_show_id,
-      showName: show?.name ?? `#${row.tvmaze_show_id}`,
-      showImage: show?.image ?? null,
-      episodeId: row.tvmaze_episode_id,
-      season: row.season,
-      number: row.number,
-      rating: row.rating,
-      feeling: row.feeling,
-    });
-  }
-  for (const row of watchedMovies.data as any[]) {
-    if (!row.watched_at) continue;
-    items.push({
-      kind: "movie_watched",
-      id: `mw:${row.id}`,
-      user: profileById.get(row.user_id) ?? null,
-      createdAt: row.watched_at,
-      movieTitle: row.title,
-      moviePosterPath: row.poster_path,
-      movieTmdbId: row.tmdb_id,
-      rating: row.rating,
-      feeling: row.feeling,
-    });
-  }
-  for (const row of showComments.data as any[]) {
-    const show = showById.get(row.tvmaze_show_id);
-    items.push({
-      kind: row.target_type === "episode" ? "episode_comment" : "show_comment",
-      id: `c:${row.id}`,
-      user: profileById.get(row.user_id) ?? null,
-      createdAt: row.created_at,
-      showId: row.tvmaze_show_id,
-      showName: show?.name ?? `#${row.tvmaze_show_id}`,
-      showImage: show?.image ?? null,
-      episodeId: row.tvmaze_episode_id,
-      body: row.body,
-    });
-  }
-  for (const row of movieComments.data as any[]) {
-    const movie = movieById.get(row.tmdb_id);
-    items.push({
-      kind: "movie_comment",
-      id: `mc:${row.id}`,
-      user: profileById.get(row.user_id) ?? null,
-      createdAt: row.created_at,
-      movieTmdbId: row.tmdb_id,
-      movieTitle: movie?.title ?? `#${row.tmdb_id}`,
-      moviePosterPath: movie?.posterPath ?? null,
-      body: row.body,
-    });
-  }
-
-  items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  // A table that came back with a full page of candidates might have more
-  // rows beyond it, even if none of them made this page's final cut (they
-  // could all be older than the other tables' PAGE_SIZE-th item) — checking
-  // the raw per-table results rather than just items.length > PAGE_SIZE
-  // catches that case too.
-  const hasMore =
-    watchedEpisodes.data.length === PAGE_SIZE ||
-    watchedMovies.data.length === PAGE_SIZE ||
-    showComments.data.length === PAGE_SIZE ||
-    movieComments.data.length === PAGE_SIZE;
-  return { items: items.slice(0, PAGE_SIZE), hasMore };
+  return items.map((item): ActivityItem => {
+    const user = item.user ?? profileById.get(item.userId) ?? null;
+    switch (item.kind) {
+      case "episode_watched":
+      case "show_comment":
+      case "episode_comment": {
+        const show = showById.get(item.showId);
+        return show ? { ...item, user, showName: show.name, showImage: show.image } : { ...item, user };
+      }
+      case "movie_comment": {
+        const movie = movieById.get(item.movieTmdbId);
+        return movie ? { ...item, user, movieTitle: movie.title, moviePosterPath: movie.posterPath } : { ...item, user };
+      }
+      case "movie_watched":
+        return { ...item, user };
+    }
+  });
 }
 
 // Cheap "is there anything new" check for the tab bar's red dot (see
@@ -271,7 +344,7 @@ async function fetchLatestFollowingActivityAtLive(): Promise<string | null> {
   const myId = await getCurrentUserId();
   if (!myId) return null;
 
-  const followingIds = await fetchFollowingIds(myId);
+  const followingIds = await fetchFollowingIdsCached(myId);
   if (followingIds.length === 0) return null;
 
   const [watchedEpisode, watchedMovie, showComment, movieComment] = await Promise.all([

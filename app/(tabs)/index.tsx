@@ -434,6 +434,7 @@ type WatchListRow =
   | { type: "historyItem"; item: EnrichedEpisode }
   | { type: "watchNextHeader" }
   | { type: "watchNextEmpty" }
+  | { type: "watchNextLoading" }
   | { type: "watchNextItem"; item: EnrichedEpisode }
   | { type: "notStartedHeader" }
   | { type: "notStartedItem"; item: EnrichedEpisode };
@@ -497,7 +498,7 @@ function watchListRowHeight(row: WatchListRow) {
   ) {
     return HEADER_HEIGHT;
   }
-  if (row.type === "watchNextEmpty") return EMPTY_ROW_HEIGHT;
+  if (row.type === "watchNextEmpty" || row.type === "watchNextLoading") return EMPTY_ROW_HEIGHT;
   return EPISODE_ROW_HEIGHT;
 }
 
@@ -510,6 +511,17 @@ export default function ShowsScreen() {
   // its old scroll position and being corrected (visibly) afterwards.
   const [loadGeneration, setLoadGeneration] = useState(0);
   const [tracked, setTracked] = useState<TrackedShow[]>([]);
+  // True once every followed show's own fetch has resolved for the current
+  // loadData() run — tracked/watchNext fill in progressively before that
+  // (see loadData's own comment on why: blocking the whole screen on a
+  // spinner until the slowest of a couple hundred shows clears TVmaze's
+  // rate limit would be much worse). While this is false, an empty
+  // watchNext isn't trustworthy yet — it might just mean none of the shows
+  // that happen to be "watching" (i.e. Watch-Next-eligible) have resolved
+  // yet, not that there's genuinely nothing to watch — see watchNextEmpty
+  // below, which uses this to show a loading hint instead of the "add
+  // shows" empty state in that window.
+  const [followedShowsSettled, setFollowedShowsSettled] = useState(true);
   const [historyItems, setHistoryItems] = useState<EnrichedEpisode[]>([]);
   const [historyOffset, setHistoryOffset] = useState(0);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
@@ -872,6 +884,7 @@ export default function ShowsScreen() {
       for (const id of [...byId.keys()]) {
         if (!order.includes(id)) byId.delete(id);
       }
+      if (followed.length > 0) setFollowedShowsSettled(false);
       flush();
 
       // Render shows as their data arrives instead of blocking on the very
@@ -901,6 +914,7 @@ export default function ShowsScreen() {
       // Final flush covers both the trailing rAF-coalesced items and the
       // followed.length === 0 case, where onItemDone never fires at all.
       flush();
+      setFollowedShowsSettled(true);
       persistSnapshot();
       // Fire-and-forget, low priority (see backgroundPrefetch.ts): once the
       // watching/want_to_watch list — the shows actually on screen — is
@@ -914,6 +928,10 @@ export default function ShowsScreen() {
     } finally {
       clearInterval(persistInterval);
       if (!hasLoadedOnce.current) flush();
+      // Whatever happened above (success, an early return, or a caught
+      // error), this run is done — never leave the Watch Next loading hint
+      // stuck on indefinitely because something failed partway through.
+      setFollowedShowsSettled(true);
     }
   }, []);
 
@@ -1448,7 +1466,14 @@ export default function ShowsScreen() {
     }
     rows.push({ type: "watchNextHeader" });
     if (watchNext.length === 0) {
-      rows.push({ type: "watchNextEmpty" });
+      // Not settled yet means some of the followed shows this run is
+      // fetching haven't resolved (see followedShowsSettled's own comment)
+      // — an empty watchNext right now doesn't actually mean "nothing to
+      // watch," it might just mean none of the shows that would populate it
+      // have come back yet. Showing "add shows to follow" in that window
+      // would be actively wrong for anyone who has shows, not just an
+      // unnecessary flash.
+      rows.push({ type: followedShowsSettled ? "watchNextEmpty" : "watchNextLoading" });
     } else {
       for (const item of watchNext) rows.push({ type: "watchNextItem", item });
     }
@@ -1466,7 +1491,7 @@ export default function ShowsScreen() {
     }
 
     return { watchListData: rows, watchListOffsets: offsets };
-  }, [historyItems, watchNext, haventStarted]);
+  }, [historyItems, watchNext, haventStarted, followedShowsSettled]);
 
   function watchListKey(row: WatchListRow, index: number) {
     switch (row.type) {
@@ -1478,6 +1503,8 @@ export default function ShowsScreen() {
         return "watchnext-header";
       case "watchNextEmpty":
         return "watchnext-empty";
+      case "watchNextLoading":
+        return "watchnext-loading";
       case "watchNextItem":
         return `watchnext-${row.item.episode.id}`;
       case "notStartedHeader":
@@ -1521,6 +1548,12 @@ export default function ShowsScreen() {
               actionLabel={t.shows.findShows}
               onAction={() => router.push("/(tabs)/explore")}
             />
+          );
+        case "watchNextLoading":
+          return (
+            <View style={styles.watchNextLoadingRow}>
+              <ActivityIndicator color={colors.textFaint} />
+            </View>
           );
         case "watchNextItem":
           // onRewatch matters here now: while the feeling-prompt sheet is open
@@ -2020,6 +2053,11 @@ function createStyles(colors: Colors) {
       color: colors.textMuted,
       textAlign: "center",
       height: EMPTY_ROW_HEIGHT,
+    },
+    watchNextLoadingRow: {
+      height: EMPTY_ROW_HEIGHT,
+      alignItems: "center",
+      justifyContent: "center",
     },
     watchListRowWrap: { height: EPISODE_ROW_HEIGHT, overflow: "hidden" },
     upcomingRowWrap: { height: EPISODE_ROW_HEIGHT, overflow: "hidden" },

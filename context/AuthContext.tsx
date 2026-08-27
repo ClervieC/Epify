@@ -13,6 +13,7 @@ import { clearLocalStreakData } from "../lib/streaks";
 import { clearUserShowsCache } from "../lib/userShows";
 import { clearUnreadNotificationCountCache } from "../lib/notifications";
 import { clearLatestActivityAtCache } from "../lib/activity";
+import { clearFollowingIdsCache } from "../lib/follows";
 import { clearMyProfileCache } from "../lib/profiles";
 import { clearOpenReportCountCache } from "../lib/reports";
 import { clearSupportNeedsResponseCountCache } from "../lib/support";
@@ -35,6 +36,7 @@ function clearUserScopedCaches() {
   clearUserShowsCache();
   clearUnreadNotificationCountCache();
   clearLatestActivityAtCache();
+  clearFollowingIdsCache();
   clearMyProfileCache();
   clearOpenReportCountCache();
   clearSupportNeedsResponseCountCache();

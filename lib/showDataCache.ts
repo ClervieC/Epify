@@ -230,6 +230,18 @@ export function getCachedShow(showId: number, fetcher: () => Promise<TVMazeShow>
   return showInfoCache.getOrFetch(showId, fetcher, highPriority);
 }
 
+// Synchronous, in-memory-only — no disk read, no network fallback, just
+// "do we already have this in RAM right now." Used by lib/activity.ts's
+// fast first pass at the Social feed to show a real show name/image
+// immediately when it's cheap to (this device already loaded it this
+// session), without making the very first paint wait on a fetch for
+// whatever isn't. A show only cached to disk from an earlier session but
+// not yet touched this one won't be found here — that's fine, it just
+// falls through to the placeholder name until the enrich pass fetches it.
+export function peekCachedShow(showId: number): TVMazeShow | null {
+  return showInfoCache.get(showId);
+}
+
 export function getCachedEpisodes(showId: number, fetcher: () => Promise<TVMazeEpisode[]>, highPriority = false) {
   return episodesCache.getOrFetch(showId, fetcher, highPriority);
 }

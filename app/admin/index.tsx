@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextInput } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextInput, Platform } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
@@ -237,7 +237,18 @@ export default function AdminScreen() {
           <Ionicons name="chevron-back" size={22} color={C.text} />
         </Pressable>
         <Text style={styles.headerTitle}>{t.admin.title}</Text>
-        <View style={{ width: 22 }} />
+        {Platform.OS === "web" ? (
+          <Pressable
+            onPress={() => window.location.reload()}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh"
+          >
+            <Ionicons name="refresh" size={20} color={C.text} />
+          </Pressable>
+        ) : (
+          <View style={{ width: 22 }} />
+        )}
       </View>
 
       <View style={styles.segmented}>

@@ -15,6 +15,18 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.3",
+    date: "2026-08-27",
+    en: [
+      "The Social feed now loads noticeably faster — recent activity shows up almost instantly, with details filling in right after.",
+      "Watch Next now shows a loading indicator instead of a misleading empty message while your shows are still being fetched.",
+    ],
+    fr: [
+      "Le fil Social se charge nettement plus vite — l'activité récente s'affiche presque instantanément, les détails se complètent juste après.",
+      "Watch Next affiche désormais un indicateur de chargement au lieu d'un message vide trompeur pendant que tes séries sont encore en cours de récupération.",
+    ],
+  },
+  {
     version: "5.1.2",
     date: "2026-08-21",
     en: [

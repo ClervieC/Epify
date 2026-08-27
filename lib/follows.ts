@@ -1,4 +1,5 @@
 import { supabase, getCurrentUserId } from "./supabase";
+import { createShortCache } from "./shortCache";
 
 export async function followUser(followedId: string) {
   const userId = await getCurrentUserId();
@@ -6,6 +7,7 @@ export async function followUser(followedId: string) {
 
   const { error } = await supabase.from("follows").insert({ follower_id: userId, followed_id: followedId });
   if (error) throw error;
+  followingIdsCache.invalidate();
 }
 
 export async function unfollowUser(followedId: string) {
@@ -18,6 +20,7 @@ export async function unfollowUser(followedId: string) {
     .eq("follower_id", userId)
     .eq("followed_id", followedId);
   if (error) throw error;
+  followingIdsCache.invalidate();
 }
 
 export async function fetchIsFollowing(followedId: string): Promise<boolean> {
@@ -54,6 +57,26 @@ export async function fetchFollowingIds(userId: string): Promise<string[]> {
   const { data, error } = await supabase.from("follows").select("followed_id").eq("follower_id", userId);
   if (error) throw error;
   return data.map((row) => row.followed_id);
+}
+
+// Rarely changes within a single sitting, but the Activity feed (lib/
+// activity.ts) needs it before it can even issue its main queries, and the
+// screen separately re-fetches it on every focus purely for follow-button
+// state — two round trips to the same table back to back. Cached, not the
+// plain fetchFollowingIds above, so callers that genuinely need this-instant
+// freshness (explore.tsx/search.tsx's own follow buttons, connections/[id].tsx)
+// keep calling the uncached version directly. Invalidated on
+// followUser/unfollowUser above so a just-followed person's activity isn't
+// held back by a stale cache for the rest of the 20s window.
+const followingIdsCache = createShortCache<string[]>(20_000);
+
+export function fetchFollowingIdsCached(userId: string): Promise<string[]> {
+  return followingIdsCache.getOrFetch(() => fetchFollowingIds(userId));
+}
+
+// Called on sign-out (see context/AuthContext.tsx) — not scoped by user id.
+export function clearFollowingIdsCache() {
+  followingIdsCache.invalidate();
 }
 
 export interface SuggestedBuddy {

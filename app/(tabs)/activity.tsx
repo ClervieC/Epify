@@ -4,9 +4,9 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { fetchFollowingActivity, ActivityItem } from "../../lib/activity";
+import { fetchFollowingActivity, enrichActivityItems, ActivityItem } from "../../lib/activity";
 import {
-  fetchFollowingIds,
+  fetchFollowingIdsCached,
   fetchSuggestedBuddies,
   fetchSuggestedMovieBuddies,
   SuggestedBuddy,
@@ -415,12 +415,26 @@ export default function ActivityScreen() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // Bumped on every load()/loadMore() — an enrich pass (see below) that's
+  // still in flight when a newer one starts (fast re-focus, pull-to-refresh
+  // mid-enrich) must not patch stale items over whatever the newer call
+  // already painted.
+  const loadVersionRef = useRef(0);
+
   const load = useCallback(async () => {
+    const myVersion = ++loadVersionRef.current;
     setLoading(true);
     try {
-      const { items: data, hasMore: more } = await fetchFollowingActivity();
-      setItems(data);
-      setHasMore(more);
+      // Fast pass first — the 4 underlying queries plus a synchronous cache
+      // peek for show names, no TVmaze/TMDB/profile round trips (see
+      // fetchFollowingActivity's own comment) — painted immediately so the
+      // feed shows up close to instantly instead of waiting on every show
+      // name and every follower's profile to resolve first.
+      const page = await fetchFollowingActivity();
+      if (loadVersionRef.current !== myVersion) return;
+      setItems(page.items);
+      setHasMore(page.hasMore);
+      setLoading(false);
       // fetchFollowingActivity() returns [] both when you follow nobody and
       // when everyone you follow simply has no activity yet — the empty
       // state should say something different for each (see below), so this
@@ -431,9 +445,21 @@ export default function ActivityScreen() {
       // that one is only refreshed by the Stack-level focus effect, which
       // doesn't fire on a plain tab switch to Activity, so it could still be
       // pointing at an older "latest" than what just loaded here.
-      markSeen(data[0]?.createdAt);
+      markSeen(page.items[0]?.createdAt);
+
+      // Second pass: fills in whatever the fast pass left as a placeholder
+      // (show names not already cached, every profile, movie_comment
+      // titles) — patches the same rows in place rather than blocking the
+      // list that's already on screen.
+      const enriched = await enrichActivityItems(page.items, {
+        showIds: page.pendingShowIds,
+        movieCommentTmdbIds: page.pendingMovieCommentTmdbIds,
+        userIds: page.pendingUserIds,
+      });
+      if (loadVersionRef.current !== myVersion) return;
+      setItems(enriched);
     } finally {
-      setLoading(false);
+      if (loadVersionRef.current === myVersion) setLoading(false);
     }
   }, [markSeen]);
 
@@ -443,14 +469,26 @@ export default function ActivityScreen() {
   // state directly rather than needing it threaded through as a parameter.
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || items.length === 0) return;
+    const myVersion = loadVersionRef.current;
     setLoadingMore(true);
     try {
       const cursor = items[items.length - 1].createdAt;
-      const { items: more, hasMore: nextHasMore } = await fetchFollowingActivity(cursor);
-      setItems((prev) => [...prev, ...more]);
-      setHasMore(nextHasMore);
-    } finally {
+      const page = await fetchFollowingActivity(cursor);
+      if (loadVersionRef.current !== myVersion) return;
+      setItems((prev) => [...prev, ...page.items]);
+      setHasMore(page.hasMore);
       setLoadingMore(false);
+
+      const enriched = await enrichActivityItems(page.items, {
+        showIds: page.pendingShowIds,
+        movieCommentTmdbIds: page.pendingMovieCommentTmdbIds,
+        userIds: page.pendingUserIds,
+      });
+      if (loadVersionRef.current !== myVersion) return;
+      const enrichedById = new Map(enriched.map((item) => [item.id, item]));
+      setItems((prev) => prev.map((item) => enrichedById.get(item.id) ?? item));
+    } finally {
+      if (loadVersionRef.current === myVersion) setLoadingMore(false);
     }
   }, [loadingMore, hasMore, items]);
 
@@ -460,7 +498,7 @@ export default function ActivityScreen() {
       load();
       getCurrentUserId().then(async (myId) => {
         if (!active || !myId) return;
-        const following = await fetchFollowingIds(myId);
+        const following = await fetchFollowingIdsCached(myId);
         if (active) {
           setHasFollows(following.length > 0);
           setFollowingIds(new Set(following));
