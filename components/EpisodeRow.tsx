@@ -159,22 +159,22 @@ export const EpisodeRow = memo(function EpisodeRow({
             <Text style={styles.positionRemaining}>{t.episodeRow.totalEpisodes(totalEpisodes)}</Text>
           )}
           {!dimmed && isPremiere && (
-            <Pill size="sm" uppercase color={colors.badgePremiere} textColor="#fff">
+            <Pill size="sm" uppercase color={colors.badgePremiere} textColor="#fff" style={styles.badgePill}>
               {t.episodeRow.premiere}
             </Pill>
           )}
           {!dimmed && isNew && (
-            <Pill size="sm" uppercase color={colors.badgeNew} textColor={colors.onAccent}>
+            <Pill size="sm" uppercase color={colors.badgeNew} textColor={colors.onAccent} style={styles.badgePill}>
               {t.episodeRow.new}
             </Pill>
           )}
           {!dimmed && hasAired && (
-            <Pill size="sm" uppercase color={colors.badgeAired} textColor="#fff">
+            <Pill size="sm" uppercase color={colors.badgeAired} textColor="#fff" style={styles.badgePill}>
               {t.episodeRow.aired}
             </Pill>
           )}
           {!dimmed && isSeriesFinale && (
-            <Pill size="sm" uppercase color={colors.badgeLast} textColor="#fff">
+            <Pill size="sm" uppercase color={colors.badgeLast} textColor="#fff" style={styles.badgePill}>
               {t.episodeRow.last}
             </Pill>
           )}
@@ -274,9 +274,17 @@ function createStyles(colors: Colors) {
     // narrow screen — wraps to a second line instead. alignItems: "center"
     // rather than "baseline" since the badge Pills are Views, not Text, and
     // have no baseline to align against.
-    positionRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 1 },
+    positionRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4, marginTop: 1 },
     positionCode: { color: colors.accent, fontSize: 13, fontWeight: "800" },
     positionRemaining: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
+    // Tighter than Pill's own "sm" padding — a row can stack up to two of
+    // these next to the code + remaining-count text (e.g. a collapsed
+    // group's PREMIERE badge alongside "N left"), and Pill's default padding
+    // was just wide enough to push that combo onto a second line, which then
+    // got clipped by the row's fixed height (see EPISODE_ROW_HEIGHT in
+    // app/(tabs)/index.tsx) instead of fitting on the one line every other
+    // row gets.
+    badgePill: { paddingHorizontal: 6, paddingVertical: 3 },
     episodeTitle: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
     timeCol: { alignItems: "flex-end", justifyContent: "center", paddingRight: 12 },
     time: { fontWeight: "700", fontSize: 12, color: colors.text },

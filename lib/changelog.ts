@@ -15,6 +15,18 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.4",
+    date: "2026-09-15",
+    en: [
+      "The Social feed no longer briefly shows \"?\" avatars and \"#12345\" show names before they load — each item now appears fully loaded, in small most-recent-first batches.",
+      "Fixed Upcoming cards with several badges (e.g. PREMIERE + episode count) sometimes growing taller than the others and overlapping the card below.",
+    ],
+    fr: [
+      "Le fil Social n'affiche plus brièvement des avatars \"?\" et des noms de séries \"#12345\" avant leur chargement — chaque élément apparaît désormais entièrement chargé, par petits lots du plus récent au plus ancien.",
+      "Correction des cartes de la liste Upcoming avec plusieurs badges (ex. PREMIÈRE + nombre d'épisodes) qui devenaient parfois plus grandes que les autres et chevauchaient la carte du dessous.",
+    ],
+  },
+  {
     version: "5.1.3",
     date: "2026-08-27",
     en: [

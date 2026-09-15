@@ -331,6 +331,65 @@ export async function enrichActivityItems(
   });
 }
 
+// Chunk size for enrichActivityItemsChunked below — small enough that the
+// most recent handful of items (what's actually visible on screen first)
+// resolve and paint almost immediately, without waiting on the whole page's
+// worth of TVmaze/TMDB/profile lookups to land first.
+const ENRICH_CHUNK_SIZE = 6;
+
+function idsNeededFor(item: ActivityItem): { showId?: number; movieTmdbId?: number; userId: string } {
+  switch (item.kind) {
+    case "episode_watched":
+    case "show_comment":
+    case "episode_comment":
+      return { showId: item.showId, userId: item.userId };
+    case "movie_comment":
+      return { movieTmdbId: item.movieTmdbId, userId: item.userId };
+    case "movie_watched":
+      return { userId: item.userId };
+  }
+}
+
+// Same job as enrichActivityItems, but reveals items in small newest-first
+// batches (via onChunk) instead of returning only once every pending id in
+// the whole page has resolved — so a caller that waits to render until a
+// chunk arrives never has to show a raw "#12345" show-id or a "?" avatar for
+// an item that just hasn't been looked up yet. Splitting into per-chunk
+// requests (rather than one shared showById/movieById/profileById map
+// covering the whole page) means an id repeated across chunks is refetched
+// per chunk instead of once — acceptable here since getCachedShow/
+// fetchProfiles are themselves cache-backed, so a repeat is a cheap
+// in-memory hit rather than a second network round trip.
+export async function enrichActivityItemsChunked(
+  items: ActivityItem[],
+  pending: { showIds: number[]; movieCommentTmdbIds: number[]; userIds: string[] },
+  onChunk: (chunk: ActivityItem[]) => void
+): Promise<void> {
+  if (items.length === 0) return;
+  const pendingShowIds = new Set(pending.showIds);
+  const pendingMovieIds = new Set(pending.movieCommentTmdbIds);
+  const pendingUserIds = new Set(pending.userIds);
+
+  for (let i = 0; i < items.length; i += ENRICH_CHUNK_SIZE) {
+    const chunk = items.slice(i, i + ENRICH_CHUNK_SIZE);
+    const showIds = new Set<number>();
+    const movieCommentTmdbIds = new Set<number>();
+    const userIds = new Set<string>();
+    for (const item of chunk) {
+      const needed = idsNeededFor(item);
+      if (needed.showId != null && pendingShowIds.has(needed.showId)) showIds.add(needed.showId);
+      if (needed.movieTmdbId != null && pendingMovieIds.has(needed.movieTmdbId)) movieCommentTmdbIds.add(needed.movieTmdbId);
+      if (pendingUserIds.has(needed.userId)) userIds.add(needed.userId);
+    }
+    const enriched = await enrichActivityItems(chunk, {
+      showIds: Array.from(showIds),
+      movieCommentTmdbIds: Array.from(movieCommentTmdbIds),
+      userIds: Array.from(userIds),
+    });
+    onChunk(enriched);
+  }
+}
+
 // Cheap "is there anything new" check for the tab bar's red dot (see
 // context/ActivityContext.tsx) — four single-row queries instead of
 // fetchFollowingActivity()'s full fetch-and-enrich (show/movie lookups,

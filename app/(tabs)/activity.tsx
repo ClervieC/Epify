@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { fetchFollowingActivity, enrichActivityItems, ActivityItem } from "../../lib/activity";
+import { fetchFollowingActivity, enrichActivityItemsChunked, ActivityItem } from "../../lib/activity";
 import {
   fetchFollowingIdsCached,
   fetchSuggestedBuddies,
@@ -424,17 +424,14 @@ export default function ActivityScreen() {
   const load = useCallback(async () => {
     const myVersion = ++loadVersionRef.current;
     setLoading(true);
+    setItems([]);
     try {
       // Fast pass first — the 4 underlying queries plus a synchronous cache
       // peek for show names, no TVmaze/TMDB/profile round trips (see
-      // fetchFollowingActivity's own comment) — painted immediately so the
-      // feed shows up close to instantly instead of waiting on every show
-      // name and every follower's profile to resolve first.
+      // fetchFollowingActivity's own comment).
       const page = await fetchFollowingActivity();
       if (loadVersionRef.current !== myVersion) return;
-      setItems(page.items);
       setHasMore(page.hasMore);
-      setLoading(false);
       // fetchFollowingActivity() returns [] both when you follow nobody and
       // when everyone you follow simply has no activity yet — the empty
       // state should say something different for each (see below), so this
@@ -447,17 +444,31 @@ export default function ActivityScreen() {
       // pointing at an older "latest" than what just loaded here.
       markSeen(page.items[0]?.createdAt);
 
-      // Second pass: fills in whatever the fast pass left as a placeholder
-      // (show names not already cached, every profile, movie_comment
-      // titles) — patches the same rows in place rather than blocking the
-      // list that's already on screen.
-      const enriched = await enrichActivityItems(page.items, {
-        showIds: page.pendingShowIds,
-        movieCommentTmdbIds: page.pendingMovieCommentTmdbIds,
-        userIds: page.pendingUserIds,
-      });
-      if (loadVersionRef.current !== myVersion) return;
-      setItems(enriched);
+      if (page.items.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      // Reveals items in small newest-first batches once each batch's show
+      // name/profile/movie title has actually resolved, instead of painting
+      // every row immediately with a raw "#12345" show id and a "?" avatar
+      // (there's no local profile cache to peek, so literally every row
+      // needed this) and patching them a moment later — that flash read as
+      // broken, not "fast." The list only ever shows fully-resolved rows;
+      // the spinner just stays up a beat longer for the first handful.
+      let first = true;
+      await enrichActivityItemsChunked(
+        page.items,
+        { showIds: page.pendingShowIds, movieCommentTmdbIds: page.pendingMovieCommentTmdbIds, userIds: page.pendingUserIds },
+        (chunk) => {
+          if (loadVersionRef.current !== myVersion) return;
+          if (first) {
+            setLoading(false);
+            first = false;
+          }
+          setItems((prev) => [...prev, ...chunk]);
+        }
+      );
     } finally {
       if (loadVersionRef.current === myVersion) setLoading(false);
     }
@@ -475,18 +486,26 @@ export default function ActivityScreen() {
       const cursor = items[items.length - 1].createdAt;
       const page = await fetchFollowingActivity(cursor);
       if (loadVersionRef.current !== myVersion) return;
-      setItems((prev) => [...prev, ...page.items]);
       setHasMore(page.hasMore);
-      setLoadingMore(false);
 
-      const enriched = await enrichActivityItems(page.items, {
-        showIds: page.pendingShowIds,
-        movieCommentTmdbIds: page.pendingMovieCommentTmdbIds,
-        userIds: page.pendingUserIds,
-      });
-      if (loadVersionRef.current !== myVersion) return;
-      const enrichedById = new Map(enriched.map((item) => [item.id, item]));
-      setItems((prev) => prev.map((item) => enrichedById.get(item.id) ?? item));
+      if (page.items.length === 0) {
+        setLoadingMore(false);
+        return;
+      }
+
+      let first = true;
+      await enrichActivityItemsChunked(
+        page.items,
+        { showIds: page.pendingShowIds, movieCommentTmdbIds: page.pendingMovieCommentTmdbIds, userIds: page.pendingUserIds },
+        (chunk) => {
+          if (loadVersionRef.current !== myVersion) return;
+          if (first) {
+            setLoadingMore(false);
+            first = false;
+          }
+          setItems((prev) => [...prev, ...chunk]);
+        }
+      );
     } finally {
       if (loadVersionRef.current === myVersion) setLoadingMore(false);
     }
