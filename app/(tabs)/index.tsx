@@ -33,6 +33,7 @@ import {
   getCachedEpisodes,
   getCachedWatchedEpisodes,
   primeWatchedEpisodes,
+  takeRecentlyTouchedShowIds,
 } from "../../lib/showDataCache";
 import {
   loadWatchingSnapshot,
@@ -875,7 +876,24 @@ export default function ShowsScreen() {
       // trail in behind.
       const watching = shows.filter((s) => s.status === "watching");
       const wantToWatch = shows.filter((s) => s.status === "want_to_watch");
-      const followed = [...watching, ...wantToWatch];
+      let followed = [...watching, ...wantToWatch];
+      // A show just mutated elsewhere (marked watched/unwatched from its own
+      // detail screen, then navigated back here) already has a warm,
+      // correctly-patched cache — see patchCachedWatchedEpisodes in
+      // lib/showDataCache.ts — so its refetch below resolves instantly. But
+      // left in its normal list position, it could still sit behind dozens
+      // of other (possibly real, rate-limited) fetches before its turn comes
+      // up, leaving its Watch Next row showing stale pre-mutation data in
+      // the meantime. Bumping it to the front means the correction lands in
+      // the very first flush instead of trailing in "after a while."
+      const touched = takeRecentlyTouchedShowIds();
+      if (touched.length > 0) {
+        const touchedSet = new Set(touched);
+        followed = [
+          ...followed.filter((s) => touchedSet.has(s.tvmaze_id)),
+          ...followed.filter((s) => !touchedSet.has(s.tvmaze_id)),
+        ];
+      }
       // Re-key against the freshly fetched statuses/order — this also drops
       // any seeded show whose status changed away from watching/want_to_watch
       // (or that's no longer followed at all) and adds newly-followed shows,

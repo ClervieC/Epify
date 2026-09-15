@@ -268,6 +268,24 @@ export function invalidateWatchedEpisodes(showId: number) {
   watchedCache.invalidate(showId);
 }
 
+// Show ids with a watched-status mutation since the last time the Shows tab
+// consumed this set (see takeRecentlyTouchedShowIds below). The cache patch
+// itself makes the next read of this show instant (an in-memory hit, no
+// network round trip) — but loadData()'s reconciliation loop still visits
+// every followed show in its normal order, so a show the user *just*
+// mutated on its own detail screen could sit behind dozens of others
+// waiting for their own (possibly real, rate-limited) fetch before this
+// one's turn comes up, leaving its Watch Next row showing stale pre-mutation
+// data in the meantime. Consumed by loadData() to jump that show's already-
+// instant refetch to the front of the queue instead.
+const recentlyTouchedShowIds = new Set<number>();
+
+export function takeRecentlyTouchedShowIds(): number[] {
+  const ids = Array.from(recentlyTouchedShowIds);
+  recentlyTouchedShowIds.clear();
+  return ids;
+}
+
 // Writes a known-correct watched-episodes list straight into the cache
 // instead of just invalidating it — used right after a mutation whose
 // result is already known (see setEpisodeWatched in lib/userShows.ts), so
@@ -280,6 +298,7 @@ export function patchCachedWatchedEpisodes(
   showId: number,
   updater: (prev: WatchedEpisode[]) => WatchedEpisode[]
 ) {
+  recentlyTouchedShowIds.add(showId);
   const current = watchedCache.get(showId);
   if (current === null) {
     invalidateWatchedEpisodes(showId);
