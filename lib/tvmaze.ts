@@ -141,6 +141,14 @@ const POOL_FETCH_CONCURRENCY = 6;
 // slower than it needed to be.
 const RATE_LIMIT_WINDOW_MS = 10_000;
 const RATE_LIMIT_MAX_PER_WINDOW = 15; // margin under TVmaze's ~20 req/10s
+// Low-priority (background prefetch/import) traffic self-limits to this
+// lower ceiling, leaving a few slots free within the window at all times —
+// without this, a big background batch (Watch List loading 200+ tracked
+// shows, a TV Time import) could burn through the *entire* window's
+// budget, and a "high" priority tap on a show/episode still had to wait for
+// the window to clear (up to ~10s) even though it jumps the queue ahead of
+// whatever low-priority work is already waiting once a slot actually opens.
+const LOW_PRIORITY_MAX_PER_WINDOW = 11;
 const requestTimestamps: number[] = [];
 
 // Two FIFO lanes sharing the same rate budget, not two separate budgets —
@@ -163,12 +171,18 @@ async function pump() {
     while (requestTimestamps.length > 0 && now - requestTimestamps[0] >= RATE_LIMIT_WINDOW_MS) {
       requestTimestamps.shift();
     }
-    if (requestTimestamps.length < RATE_LIMIT_MAX_PER_WINDOW) {
+    const canDispatchHigh = highQueue.length > 0 && requestTimestamps.length < RATE_LIMIT_MAX_PER_WINDOW;
+    const canDispatchLow = lowQueue.length > 0 && requestTimestamps.length < LOW_PRIORITY_MAX_PER_WINDOW;
+    if (canDispatchHigh || canDispatchLow) {
       requestTimestamps.push(Date.now());
-      const next = highQueue.shift() ?? lowQueue.shift();
+      const next = canDispatchHigh ? highQueue.shift() : lowQueue.shift();
       next?.();
       continue;
     }
+    // Nothing dispatchable right now — either the window is fully spent, or
+    // only low-priority work is queued and it's sitting at its own lower
+    // ceiling. Either way, waiting for the oldest request to age out of the
+    // window is what frees the next slot.
     await sleep(RATE_LIMIT_WINDOW_MS - (Date.now() - requestTimestamps[0]) + 10);
   }
   pumping = false;
