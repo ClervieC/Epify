@@ -49,5 +49,23 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
+
+    <!--
+      Registers the app-shell service worker (public/sw.js) — speeds up
+      reopening the site from an iOS Home Screen icon after it's been fully
+      quit, by serving the JS/CSS bundle from a local cache instead of
+      re-downloading it every cold start. Plain script here (not inside the
+      React bundle) so registration doesn't depend on that bundle having
+      already loaded — it only needs to succeed once for every later visit
+      to benefit. No-ops harmlessly wherever service workers aren't
+      supported.
+    -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js").catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>

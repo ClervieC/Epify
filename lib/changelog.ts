@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.7",
+    date: "2026-09-22",
+    en: [
+      "The web app now loads much faster when reopened from your iPhone's Home Screen after being fully closed — it no longer has to re-download everything from scratch every time.",
+    ],
+    fr: [
+      "L'appli web se charge maintenant beaucoup plus vite quand tu la rouvres depuis l'écran d'accueil de ton iPhone après l'avoir complètement fermée — elle n'a plus besoin de tout retélécharger à chaque fois.",
+    ],
+  },
+  {
     version: "5.1.6",
     date: "2026-09-22",
     en: [
