@@ -1344,32 +1344,17 @@ export default function ShowsScreen() {
     // by fetchWatchedEpisodesPage, not `tracked`), so the tracked update
     // above alone doesn't touch it and the just-unwatched episode stayed
     // sitting in the history list looking watched.
+    //
+    // Deliberately NOT mirrored on the watched transition: marking an
+    // episode watched used to also insert it into historyItems immediately,
+    // popping the "HISTORIQUE" section into view (or growing it) right above
+    // Watch Next the instant you tapped the checkmark — distracting, not
+    // what a tap meant to update Watch Next should visibly do. The freshly
+    // watched episode still shows up in History normally the next time this
+    // screen loads (loadData() resets and repaginates historyItems from
+    // offset 0 on every focus), just not mid-tap.
     if (currentlyWatched) {
       setHistoryItems((prev) => prev.filter((h) => h.episode.id !== item.episode.id));
-    } else if (result) {
-      // The reverse gap: marking an episode watched had no corresponding
-      // insert into historyItems at all — the row only ever showed up in
-      // History after a full app restart (loadData() resets historyItems to
-      // [] and repaginates from offset 0, so the freshly-watched episode
-      // naturally comes back as the newest row). Appending it here (History
-      // reads oldest-to-newest, ending right above Watch Next — see
-      // watchListData below) makes it show up immediately, without needing
-      // to ever leave/reopen the app. historyOffset is bumped too so the
-      // next loadMoreHistory() pagination call (position-based, not
-      // cursor-based) doesn't re-fetch this exact row a second time now that
-      // it's shifted the underlying query's positions by one.
-      setHistoryItems((prev) => [
-        ...prev,
-        {
-          show: item.show,
-          episode: item.episode,
-          watched: true,
-          watchedAt: result.watched_at,
-          timesWatched: result.times_watched,
-          isSeriesFinale: item.isSeriesFinale,
-        },
-      ]);
-      setHistoryOffset((prev) => prev + 1);
     }
 
     // Only on the unwatched -> watched transition, never on unwatch or on a

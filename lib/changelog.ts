@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.5",
+    date: "2026-09-22",
+    en: [
+      "Marking an episode watched no longer pops the History section into view — it updates there next time you revisit the tab instead.",
+    ],
+    fr: [
+      "Marquer un épisode comme vu ne fait plus apparaître la section Historique à l'écran — elle se met à jour normalement la prochaine fois que tu reviens sur l'onglet.",
+    ],
+  },
+  {
     version: "5.1.4",
     date: "2026-09-15",
     en: [
