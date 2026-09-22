@@ -1,5 +1,22 @@
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchProfiles, Profile } from "./profiles";
+import { createKeyedShortCache } from "./shortCache";
+
+// A comments section is opened/re-opened a lot in a short span (switching
+// between the Episodes/Info tabs, backing out to the show and back into
+// another episode) with no code-side way to know a comment actually changed
+// between visits — short-TTL keyed caches, one per target type so a show id
+// and an episode id can never collide, close that gap the same way
+// fetchFollowingIdsCached does for follows. Only post*Comment below
+// invalidates: delete/react already update the caller's local state
+// optimistically on success and only ever re-fetch on failure (see
+// app/show/[id].tsx's handleDeleteShowComment/handleToggleShowCommentReaction),
+// so the cache being briefly behind on those two actions is harmless — it
+// self-corrects within the TTL, same trade-off createShortCache's own
+// comment already accepts elsewhere.
+const COMMENTS_TTL_MS = 15_000;
+const showCommentsCache = createKeyedShortCache<number, EnrichedComment[]>(COMMENTS_TTL_MS);
+const episodeCommentsCache = createKeyedShortCache<number, EnrichedComment[]>(COMMENTS_TTL_MS);
 
 export type CommentTarget = "show" | "episode";
 
@@ -52,25 +69,29 @@ async function enrichComments(comments: Comment[]): Promise<EnrichedComment[]> {
 }
 
 export async function fetchShowComments(showId: number): Promise<EnrichedComment[]> {
-  const { data, error } = await supabase
-    .from("comments")
-    .select("*")
-    .eq("target_type", "show")
-    .eq("tvmaze_show_id", showId)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return enrichComments(data as Comment[]);
+  return showCommentsCache.getOrFetch(showId, async () => {
+    const { data, error } = await supabase
+      .from("comments")
+      .select("*")
+      .eq("target_type", "show")
+      .eq("tvmaze_show_id", showId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return enrichComments(data as Comment[]);
+  });
 }
 
 export async function fetchEpisodeComments(episodeId: number): Promise<EnrichedComment[]> {
-  const { data, error } = await supabase
-    .from("comments")
-    .select("*")
-    .eq("target_type", "episode")
-    .eq("tvmaze_episode_id", episodeId)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return enrichComments(data as Comment[]);
+  return episodeCommentsCache.getOrFetch(episodeId, async () => {
+    const { data, error } = await supabase
+      .from("comments")
+      .select("*")
+      .eq("target_type", "episode")
+      .eq("tvmaze_episode_id", episodeId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return enrichComments(data as Comment[]);
+  });
 }
 
 export async function postShowComment(showId: number, body: string, parentCommentId?: string): Promise<void> {
@@ -85,6 +106,7 @@ export async function postShowComment(showId: number, body: string, parentCommen
     parent_comment_id: parentCommentId ?? null,
   });
   if (error) throw error;
+  showCommentsCache.invalidate(showId);
 }
 
 export async function postEpisodeComment(
@@ -105,6 +127,7 @@ export async function postEpisodeComment(
     parent_comment_id: parentCommentId ?? null,
   });
   if (error) throw error;
+  episodeCommentsCache.invalidate(episodeId);
 }
 
 // Admin report cards only — resolves reported comment ids straight to their

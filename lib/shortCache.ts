@@ -35,3 +35,39 @@ export function createShortCache<T>(ttlMs: number) {
 
   return { getOrFetch, invalidate };
 }
+
+// Same idea, keyed — for a short-TTL value that's actually per-id (a show's
+// comments, an episode's comments), where createShortCache's single shared
+// slot would let one id's fetch clobber another's. In-memory only, same as
+// createShortCache: nothing here is meant to survive an app restart, and a
+// short TTL keeps it close enough to live that a cache hit never feels
+// stale.
+export function createKeyedShortCache<K, T>(ttlMs: number) {
+  const entries = new Map<K, { data: T; expiresAt: number }>();
+  const inFlight = new Map<K, Promise<T>>();
+
+  async function getOrFetch(key: K, fetcher: () => Promise<T>): Promise<T> {
+    const entry = entries.get(key);
+    if (entry && entry.expiresAt > Date.now()) return entry.data;
+    const existing = inFlight.get(key);
+    if (existing) return existing;
+
+    const promise = fetcher()
+      .then((data) => {
+        entries.set(key, { data, expiresAt: Date.now() + ttlMs });
+        return data;
+      })
+      .finally(() => {
+        inFlight.delete(key);
+      });
+    inFlight.set(key, promise);
+    return promise;
+  }
+
+  function invalidate(key: K) {
+    entries.delete(key);
+    inFlight.delete(key);
+  }
+
+  return { getOrFetch, invalidate };
+}

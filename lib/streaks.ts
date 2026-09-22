@@ -15,14 +15,29 @@ import type { Translations } from "./i18n";
 const PAGE_SIZE = 1000;
 const GENRE_FETCH_CONCURRENCY = 6;
 
+// Persisted mirror of fetchWatchedDays' own result, plus a cursor — lets the
+// checkBadgesNow() hot path (see lib/badgeNotify.ts, fired after nearly
+// every watch/rate/react/rewatch action across the app, debounced only
+// 1.2s) fetch just the handful of rows added since the last check instead
+// of re-scanning a user's entire watched_episodes history every single
+// time. See fetchWatchedDaysFast below for the full reasoning and its
+// deliberately narrow correctness scope.
+const WATCHED_DAYS_STORAGE_KEY = "watched_days_v1";
+interface WatchedDaysCacheData {
+  userId: string;
+  cursor: string;
+  days: string[];
+  dailyShowTimestamps: Record<string, string[]>;
+}
+
 // IndexedDB-backed local mirror (see the same comment in lib/showStats.ts)
 // — paints app/streaks.tsx and the Shows tab's streak pill instantly from
 // the last computed result, no network round trip, while a fresh compute
 // runs in the background. This has no Supabase-side counterpart the way
-// show_stats_cache does: streak/badge data is cheap enough to recompute
-// (one watched_at scan, a handful of counts) that a per-device cache is
-// all it needs — nothing here is expensive enough to justify syncing a
-// precomputed copy across devices too.
+// show_stats_cache does: a handful of count queries plus the watched-days
+// scan (now itself sped up per-device by WATCHED_DAYS_STORAGE_KEY above) is
+// cheap enough that a per-device cache is all it needs — nothing here is
+// expensive enough to justify syncing a precomputed copy across devices too.
 const localStore = createAsyncStorage("streaks_cache");
 const LOCAL_STORAGE_KEY = "streaks_v1";
 const SCHEMA_VERSION = 8;
@@ -169,23 +184,29 @@ const SOCIAL_THRESHOLDS = [1, 5, 10, 25];
 const REWATCH_THRESHOLDS = [1, 5, 15, 50];
 // Episodes of one single show watched in one calendar day — 3 is a light
 // binge, 20 is a real marathon. Same "one show, one day" metric as
-// lib/showStats.ts's topShows ranking (see fetchWatchedDays' comment above).
+// lib/showStats.ts's topShows ranking (see scanWatchedEpisodeDays' comment
+// below).
 const BINGE_THRESHOLDS = [3, 5, 10, 20];
 
+// Shared by fetchWatchedDays (full) and fetchWatchedDaysFast (delta) below.
 // Also tallies the single biggest "one show, one day" episode count across
-// the user's whole history (maxDailyShowEpisodes) — the same "binge day"
-// metric lib/showStats.ts's topShows already ranks shows by, just reduced
-// to one number here for the "binge" badge category (see buildBadges). Rides
-// along on this function's existing full watched_episodes scan rather than
-// adding a second one — this already runs on every computeStreakData() call
-// (including the fire-and-forget check after every single watch action, see
-// lib/badgeNotify.ts), so a duplicate scan just for this would double that
-// cost for no reason.
-async function fetchWatchedDays(): Promise<{ days: Set<string>; maxDailyShowEpisodes: number }> {
-  const userId = await getCurrentUserId();
+// the scanned rows (maxDailyShowEpisodes) — the same "binge day" metric
+// lib/showStats.ts's topShows already ranks shows by, just reduced to one
+// number here for the "binge" badge category (see buildBadges). Rides along
+// on this scan rather than adding a second one — this runs on every
+// computeStreakData() call (including the fire-and-forget check after every
+// single watch action, see lib/badgeNotify.ts), so a duplicate scan just for
+// this would double that cost for no reason.
+// `sinceExclusive`, when given, restricts the scan to rows watched strictly
+// after that watched_at, for the incremental path. Ordering by watched_at
+// makes a multi-page scan's cursor math (maxWatchedAt) unambiguous, and
+// costs nothing extra since the rows would otherwise come back in no
+// particular order anyway.
+async function scanWatchedEpisodeDays(
+  userId: string,
+  sinceExclusive?: string
+): Promise<{ days: Set<string>; dailyShowTimestamps: Map<string, string[]>; maxWatchedAt: string }> {
   const days = new Set<string>();
-  if (!userId) return { days, maxDailyShowEpisodes: 0 };
-
   // Timestamps, not a running count — a bulk "mark all previous episodes
   // watched" (or a season/import bulk-write) puts many rows on the same
   // calendar day with near-identical watched_at values, which isn't a real
@@ -193,13 +214,17 @@ async function fetchWatchedDays(): Promise<{ days: Set<string>; maxDailyShowEpis
   // that down to 1, only counting timestamps genuinely spaced apart, so
   // this badge tracks actual sequential viewing, not bulk catch-up marking.
   const dailyShowTimestamps = new Map<string, string[]>();
+  let maxWatchedAt = "";
   let offset = 0;
   for (;;) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("watched_episodes")
       .select("watched_at, tvmaze_show_id")
       .eq("user_id", userId)
+      .order("watched_at", { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
+    if (sinceExclusive) query = query.gt("watched_at", sinceExclusive);
+    const { data, error } = await query;
     if (error) throw error;
     const page = data ?? [];
     for (const row of page) {
@@ -210,26 +235,157 @@ async function fetchWatchedDays(): Promise<{ days: Set<string>; maxDailyShowEpis
       const list = dailyShowTimestamps.get(showDayKey);
       if (list) list.push(row.watched_at);
       else dailyShowTimestamps.set(showDayKey, [row.watched_at]);
+      if (row.watched_at > maxWatchedAt) maxWatchedAt = row.watched_at;
     }
     if (page.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
+  return { days, dailyShowTimestamps, maxWatchedAt };
+}
+
+async function fetchMovieWatchedDays(userId: string): Promise<Set<string>> {
+  const days = new Set<string>();
+  const { data: movieRows, error } = await supabase
+    .from("user_movies")
+    .select("watched_at")
+    .eq("user_id", userId)
+    .eq("status", "watched");
+  if (error) throw error;
+  for (const row of movieRows ?? []) {
+    if (row.watched_at) days.add(row.watched_at.slice(0, 10));
+  }
+  return days;
+}
+
+async function loadWatchedDaysCache(userId: string): Promise<WatchedDaysCacheData | null> {
+  try {
+    const raw = await localStore.getItem(WATCHED_DAYS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as WatchedDaysCacheData;
+    // Different account on this device (or nothing saved for this one yet)
+    // — same "don't trust it" rule as every other per-user local cache in
+    // this file, just checked inline here instead of via a sign-out clear,
+    // since this key has no per-user namespacing of its own.
+    if (parsed.userId !== userId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function saveWatchedDaysCache(data: WatchedDaysCacheData): Promise<void> {
+  try {
+    await localStore.setItem(WATCHED_DAYS_STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    // Best-effort.
+  }
+}
+
+// Called on sign-out (see context/AuthContext.tsx), same reasoning as
+// clearLocalStreakData below.
+export async function clearWatchedDaysCache(): Promise<void> {
+  try {
+    await localStore.removeItem(WATCHED_DAYS_STORAGE_KEY);
+  } catch {
+    // Best-effort.
+  }
+}
+
+async function fetchWatchedDays(): Promise<{ days: Set<string>; maxDailyShowEpisodes: number }> {
+  const userId = await getCurrentUserId();
+  if (!userId) return { days: new Set(), maxDailyShowEpisodes: 0 };
+
+  const { days: episodeDays, dailyShowTimestamps, maxWatchedAt } = await scanWatchedEpisodeDays(userId);
   let maxDailyShowEpisodes = 0;
   for (const timestamps of dailyShowTimestamps.values()) {
     const count = realBingeCount(timestamps);
     if (count > maxDailyShowEpisodes) maxDailyShowEpisodes = count;
   }
 
-  const { data: movieRows, error: movieError } = await supabase
-    .from("user_movies")
-    .select("watched_at")
-    .eq("user_id", userId)
-    .eq("status", "watched");
-  if (movieError) throw movieError;
-  for (const row of movieRows ?? []) {
-    if (row.watched_at) days.add(row.watched_at.slice(0, 10));
+  // Seeds/refreshes fetchWatchedDaysFast's local cache with this call's
+  // authoritative result, so every checkBadgesNow() after this one (on this
+  // device) can take the cheap delta path below instead of falling back to
+  // this same full scan again. A no-op the user never has to think about —
+  // this function's own return value/behavior is unchanged either way.
+  if (maxWatchedAt) {
+    saveWatchedDaysCache({
+      userId,
+      cursor: maxWatchedAt,
+      days: Array.from(episodeDays),
+      dailyShowTimestamps: Object.fromEntries(dailyShowTimestamps),
+    });
   }
 
+  const movieDays = await fetchMovieWatchedDays(userId);
+  const days = new Set([...episodeDays, ...movieDays]);
+  return { days, maxDailyShowEpisodes };
+}
+
+// Fast path for checkBadgesNow() only (see lib/badgeNotify.ts) — fired after
+// nearly every watch/rate/react/rewatch action across the app, debounced
+// only 1.2s. Fetches just the watched_episodes rows added since the last
+// call (watched_at > cursor) and merges them into the local mirror
+// fetchWatchedDays() above seeds/refreshes, instead of re-scanning the
+// user's entire history on every single action.
+//
+// Deliberately NOT used by a direct computeStreakData() call from
+// app/(tabs)/profile.tsx or app/streaks.tsx — those stay on the full,
+// authoritative fetchWatchedDays() above, which both self-corrects any
+// drift this path can't see and re-seeds this cache's cursor from scratch.
+// Two gaps this path knowingly accepts in exchange for the speed:
+//   - A row's watched_at landing *before* the cursor (an import writing
+//     historical dates, or a manual edit) is invisible to a ">cursor"
+//     filter — it can only ever miss rows, never see a false extra one.
+//     Bounded in practice: nothing that calls checkBadgesNow() backdates
+//     watched_at — imports don't call it at all (see lib/tvtimeImport.ts) —
+//     so this only matters until the next full recompute, which is exactly
+//     what app/(tabs)/profile.tsx's own throttled reload already does
+//     regularly.
+//   - Unwatching (a delete, not an insert/update) never reaches this path
+//     either: every checkBadgesNow() call site is additive (mark watched,
+//     rate, react, rewatch) — lib/userShows.ts's unwatch paths return
+//     before ever calling it. So there's no delete-without-a-matching-
+//     removal case to handle here.
+// Movies aren't delta'd — user_movies is small enough per account that a
+// full re-fetch every time isn't worth the extra cursor/merge bookkeeping;
+// only the potentially-huge watched_episodes scan is what this exists to
+// shrink.
+async function fetchWatchedDaysFast(): Promise<{ days: Set<string>; maxDailyShowEpisodes: number }> {
+  const userId = await getCurrentUserId();
+  if (!userId) return { days: new Set(), maxDailyShowEpisodes: 0 };
+
+  const cached = await loadWatchedDaysCache(userId);
+  if (!cached) {
+    // Nothing local to extend yet — this one call pays for a real full
+    // scan, which seeds the cache as a side effect so every call after it
+    // on this device takes the cheap path below.
+    return fetchWatchedDays();
+  }
+
+  const delta = await scanWatchedEpisodeDays(userId, cached.cursor);
+  const episodeDays = new Set(cached.days);
+  for (const d of delta.days) episodeDays.add(d);
+  const dailyShowTimestamps = new Map(Object.entries(cached.dailyShowTimestamps));
+  for (const [key, timestamps] of delta.dailyShowTimestamps) {
+    const existing = dailyShowTimestamps.get(key);
+    dailyShowTimestamps.set(key, existing ? [...existing, ...timestamps] : timestamps);
+  }
+  const newCursor = delta.maxWatchedAt > cached.cursor ? delta.maxWatchedAt : cached.cursor;
+  saveWatchedDaysCache({
+    userId,
+    cursor: newCursor,
+    days: Array.from(episodeDays),
+    dailyShowTimestamps: Object.fromEntries(dailyShowTimestamps),
+  });
+
+  let maxDailyShowEpisodes = 0;
+  for (const timestamps of dailyShowTimestamps.values()) {
+    const count = realBingeCount(timestamps);
+    if (count > maxDailyShowEpisodes) maxDailyShowEpisodes = count;
+  }
+
+  const movieDays = await fetchMovieWatchedDays(userId);
+  const days = new Set([...episodeDays, ...movieDays]);
   return { days, maxDailyShowEpisodes };
 }
 
@@ -564,7 +720,13 @@ async function getNewlyAlmostUnlocked(userId: string, badges: Badge[]): Promise<
 export async function computeStreakData(
   onNewlyUnlocked?: (badges: Badge[]) => void,
   useNetworkForGenres: boolean = false,
-  onAlmostUnlocked?: (badges: Badge[]) => void
+  onAlmostUnlocked?: (badges: Badge[]) => void,
+  // Only ever passed true from lib/badgeNotify.ts's post-action check — see
+  // fetchWatchedDaysFast's own comment for exactly what this trades away.
+  // Every other caller (Profile, the streaks screen, the Shows tab's streak
+  // pill, the one-time genre backfill) leaves this false and gets the same
+  // full, authoritative scan as before.
+  fast: boolean = false
 ): Promise<StreakData> {
   const userId = await getCurrentUserId();
 
@@ -573,7 +735,7 @@ export async function computeStreakData(
   // watched-days scan were previously six-plus sequential round trips).
   const [{ days, maxDailyShowEpisodes }, shows, watchedMovies, followingIds, totalEpisodesWatched, ratedEpisodes, reactedEpisodes, rewatchedEpisodesCount, rewatchedMoviesCount] =
     await Promise.all([
-      fetchWatchedDays(),
+      fast ? fetchWatchedDaysFast() : fetchWatchedDays(),
       fetchUserShows(),
       fetchUserMovies(),
       userId ? fetchFollowingIds(userId) : Promise.resolve([]),

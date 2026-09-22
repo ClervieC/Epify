@@ -15,6 +15,18 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.6",
+    date: "2026-09-22",
+    en: [
+      "Comments on a show/episode open faster on a repeat visit within the same session.",
+      "Badge/streak progress updates faster after marking something watched — it no longer re-scans your whole watch history on every single action.",
+    ],
+    fr: [
+      "Les commentaires d'une série/épisode s'ouvrent plus vite en cas de revisite dans la même session.",
+      "La progression des badges/streaks se met à jour plus vite après avoir marqué quelque chose comme vu — elle ne rescanne plus tout ton historique à chaque action.",
+    ],
+  },
+  {
     version: "5.1.5",
     date: "2026-09-22",
     en: [

@@ -42,7 +42,10 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 function runBadgeCheck() {
   import("./streaks")
     .then(({ computeStreakData }) =>
-      computeStreakData((badges) => listener?.(badges), false, (badges) => almostListener?.(badges))
+      // fast: true — this is the hot path fired after nearly every watch/
+      // rate/react action (see the debounce above); see fetchWatchedDaysFast
+      // in lib/streaks.ts for what this trades away and why it's safe here.
+      computeStreakData((badges) => listener?.(badges), false, (badges) => almostListener?.(badges), true)
     )
     .catch(() => {});
 }
