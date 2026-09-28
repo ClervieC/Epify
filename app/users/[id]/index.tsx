@@ -11,27 +11,28 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useColors, radius, type, Colors } from "../../lib/theme";
-import { useLanguage } from "../../lib/i18n";
-import { fetchProfile, Profile } from "../../lib/profiles";
-import { fetchFollowCounts, fetchIsFollowing, followUser, unfollowUser } from "../../lib/follows";
-import { fetchEpisodeCount, fetchFavorites, fetchUserShows, UserShow } from "../../lib/userShows";
+import { useColors, radius, type, Colors } from "../../../lib/theme";
+import { useLanguage } from "../../../lib/i18n";
+import { fetchProfile, Profile } from "../../../lib/profiles";
+import { fetchFollowCounts, fetchIsFollowing, followUser, unfollowUser } from "../../../lib/follows";
+import { fetchEpisodeCount, fetchFavorites, fetchUserShows, UserShow } from "../../../lib/userShows";
 import {
   fetchPublicWatchedMovies,
   fetchPublicWatchedMovieCount,
   fetchPublicFavoriteMovies,
   fetchUserMovies,
   PublicMovie,
-} from "../../lib/userMovies";
-import { posterUrl } from "../../lib/tmdb";
-import { getCurrentUserId } from "../../lib/supabase";
-import { FollowButton } from "../../components/FollowButton";
-import { ShowCard } from "../../components/ShowCard";
-import { Avatar } from "../../components/Avatar";
-import { EmptyState } from "../../components/EmptyState";
-import { ReportModal } from "../../components/ReportModal";
-import { Pill } from "../../components/Pill";
-import { useGoBack } from "../../lib/useGoBack";
+} from "../../../lib/userMovies";
+import { posterUrl } from "../../../lib/tmdb";
+import { getCurrentUserId } from "../../../lib/supabase";
+import { FollowButton } from "../../../components/FollowButton";
+import { ShowCard } from "../../../components/ShowCard";
+import { Avatar } from "../../../components/Avatar";
+import { EmptyState } from "../../../components/EmptyState";
+import { ReportModal } from "../../../components/ReportModal";
+import { Tooltip } from "../../../components/Tooltip";
+import { Pill } from "../../../components/Pill";
+import { useGoBack } from "../../../lib/useGoBack";
 
 const AVG_EPISODE_MINUTES = 42;
 // Matches app/(tabs)/profile.tsx's own constant — same rough estimate used
@@ -221,14 +222,16 @@ export default function UserProfileScreen() {
             <FollowButton following={isFollowing} loading={busy} onPress={toggleFollow} />
           </Animated.View>
         )}
-        <Pressable
-          onPress={() => setReporting(true)}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={t.report.reportUser}
-        >
-          <Ionicons name="flag-outline" size={20} color={colors.textFaint} />
-        </Pressable>
+        <Tooltip label={t.report.reportUser}>
+          <Pressable
+            onPress={() => setReporting(true)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t.report.reportUser}
+          >
+            <Ionicons name="flag-outline" size={20} color={colors.textFaint} />
+          </Pressable>
+        </Tooltip>
         {isSmallScreen && (
           // Only actually needed once the compact bar is what's pinned at
           // the top (profileHeader's own border below serves that purpose
@@ -343,7 +346,12 @@ export default function UserProfileScreen() {
           />
         </ScrollView>
 
-        <SectionHeader title={t.profile.favorites} count={favorites.length} styles={styles} />
+        <SectionHeader
+          title={t.profile.favorites}
+          count={favorites.length}
+          onViewAll={() => router.push(`/users/${id}/list?type=favorites&title=${encodeURIComponent(t.profile.favorites)}`)}
+          styles={styles}
+        />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
           {favorites.length === 0 ? (
             <EmptyState icon="heart-outline" title={t.profile.noFavorites} />
@@ -352,7 +360,12 @@ export default function UserProfileScreen() {
           )}
         </ScrollView>
 
-        <SectionHeader title={t.profile.shows} count={shows.length} styles={styles} />
+        <SectionHeader
+          title={t.profile.shows}
+          count={shows.length}
+          onViewAll={() => router.push(`/users/${id}/list?type=shows&title=${encodeURIComponent(t.profile.shows)}`)}
+          styles={styles}
+        />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
           {shows.length === 0 ? (
             <EmptyState icon="tv-outline" title={t.profile.noShows} />
@@ -361,7 +374,14 @@ export default function UserProfileScreen() {
           )}
         </ScrollView>
 
-        <SectionHeader title={t.profile.favoriteMovies} count={favoriteMovies.length} styles={styles} />
+        <SectionHeader
+          title={t.profile.favoriteMovies}
+          count={favoriteMovies.length}
+          onViewAll={() =>
+            router.push(`/users/${id}/list?type=favoriteMovies&title=${encodeURIComponent(t.profile.favoriteMovies)}`)
+          }
+          styles={styles}
+        />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
           {favoriteMovies.length === 0 ? (
             <EmptyState icon="heart-outline" title={t.profile.noFavoriteMovies} />
@@ -378,7 +398,12 @@ export default function UserProfileScreen() {
           )}
         </ScrollView>
 
-        <SectionHeader title={t.profile.movies} count={movies.length} styles={styles} />
+        <SectionHeader
+          title={t.profile.movies}
+          count={movies.length}
+          onViewAll={() => router.push(`/users/${id}/list?type=movies&title=${encodeURIComponent(t.profile.movies)}`)}
+          styles={styles}
+        />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.showsRow}>
           {movies.length === 0 ? (
             <EmptyState icon="film-outline" title={t.profile.noMovies} />
@@ -399,9 +424,22 @@ export default function UserProfileScreen() {
   );
 }
 
-// Matches app/(tabs)/profile.tsx's own SectionHeader exactly — that screen
-// is what this one is meant to look like, just read-only.
-function SectionHeader({ title, count, styles }: { title: string; count?: number; styles: ReturnType<typeof createStyles> }) {
+// Matches app/(tabs)/profile.tsx's own SectionHeader, plus a "view all" link
+// (see app/users/[id]/list.tsx) that one doesn't need — a horizontal row is
+// a preview here, unlike Profile's own sections which already open into a
+// full list/detail elsewhere in the app.
+function SectionHeader({
+  title,
+  count,
+  onViewAll,
+  styles,
+}: {
+  title: string;
+  count?: number;
+  onViewAll?: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const { t } = useLanguage();
   return (
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -409,6 +447,11 @@ function SectionHeader({ title, count, styles }: { title: string; count?: number
         <View style={styles.sectionCountPill}>
           <Text style={styles.sectionCountText}>{count}</Text>
         </View>
+      )}
+      {onViewAll && count !== undefined && count > 0 && (
+        <Pressable onPress={onViewAll} hitSlop={8} style={styles.sectionViewAll}>
+          <Text style={styles.sectionViewAllText}>{t.explore.viewAll}</Text>
+        </Pressable>
       )}
     </View>
   );
@@ -514,6 +557,8 @@ function createStyles(colors: Colors) {
       paddingBottom: 12,
     },
     sectionTitle: { fontSize: type.subtitle, fontWeight: "800", color: colors.text },
+    sectionViewAll: { marginLeft: "auto" },
+    sectionViewAllText: { fontSize: 13, fontWeight: "700", color: colors.accent },
     sectionCountPill: {
       backgroundColor: colors.pillBg,
       borderRadius: radius.pill,

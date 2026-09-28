@@ -58,6 +58,7 @@ import { WatchedCheck } from "../../components/WatchedCheck";
 import { CommentsSection } from "../../components/CommentsSection";
 import { CharacterVote } from "../../components/CharacterVote";
 import { ReportModal } from "../../components/ReportModal";
+import { Tooltip } from "../../components/Tooltip";
 import { getCurrentUserId } from "../../lib/supabase";
 import { useGoBack } from "../../lib/useGoBack";
 import {
@@ -391,22 +392,26 @@ export default function EpisodeDetailScreen() {
               <Ionicons name="chevron-down" size={22} color="#fff" />
             </Pressable>
             <View style={{ flexDirection: "row", gap: 10 }}>
-              <Pressable
-                style={styles.iconBtn}
-                onPress={() => shareEpisode(currentEpisode)}
-                accessibilityRole="button"
-                accessibilityLabel="Share"
-              >
-                <Ionicons name="share-outline" size={20} color="#fff" />
-              </Pressable>
-              <Pressable
-                style={styles.iconBtn}
-                onPress={() => setReporting(true)}
-                accessibilityRole="button"
-                accessibilityLabel={t.report.reportEpisode}
-              >
-                <Ionicons name="flag-outline" size={18} color="#fff" />
-              </Pressable>
+              <Tooltip label={t.common.share}>
+                <Pressable
+                  style={styles.iconBtn}
+                  onPress={() => shareEpisode(currentEpisode)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.common.share}
+                >
+                  <Ionicons name="share-outline" size={20} color="#fff" />
+                </Pressable>
+              </Tooltip>
+              <Tooltip label={t.report.reportEpisode}>
+                <Pressable
+                  style={styles.iconBtn}
+                  onPress={() => setReporting(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.report.reportEpisode}
+                >
+                  <Ionicons name="flag-outline" size={18} color="#fff" />
+                </Pressable>
+              </Tooltip>
             </View>
           </View>
           {show && (
@@ -525,22 +530,26 @@ export default function EpisodeDetailScreen() {
             ))}
           </View>
           <View style={{ flexDirection: "row", gap: 10 }}>
-            <Pressable
-              style={styles.iconBtn}
-              onPress={() => shareEpisode(currentEpisode)}
-              accessibilityRole="button"
-              accessibilityLabel="Share"
-            >
-              <Ionicons name="share-outline" size={20} color="#fff" />
-            </Pressable>
-            <Pressable
-              style={styles.iconBtn}
-              onPress={() => setReporting(true)}
-              accessibilityRole="button"
-              accessibilityLabel={t.report.reportEpisode}
-            >
-              <Ionicons name="flag-outline" size={18} color="#fff" />
-            </Pressable>
+            <Tooltip label={t.common.share}>
+              <Pressable
+                style={styles.iconBtn}
+                onPress={() => shareEpisode(currentEpisode)}
+                accessibilityRole="button"
+                accessibilityLabel={t.common.share}
+              >
+                <Ionicons name="share-outline" size={20} color="#fff" />
+              </Pressable>
+            </Tooltip>
+            <Tooltip label={t.report.reportEpisode}>
+              <Pressable
+                style={styles.iconBtn}
+                onPress={() => setReporting(true)}
+                accessibilityRole="button"
+                accessibilityLabel={t.report.reportEpisode}
+              >
+                <Ionicons name="flag-outline" size={18} color="#fff" />
+              </Pressable>
+            </Tooltip>
           </View>
         </View>
         {show && (

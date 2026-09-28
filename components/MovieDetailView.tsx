@@ -17,6 +17,7 @@ import { useColors, radius, type, hueForTitle, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useSwipeDownToDismiss } from "../lib/animations";
 import { ReportModal } from "./ReportModal";
+import { Tooltip } from "./Tooltip";
 import { WatchInfo } from "./WatchInfo";
 import { RecommendationsRow, RecommendationItem } from "./RecommendationsRow";
 
@@ -134,14 +135,16 @@ export function MovieDetailView({
                   </Pressable>
                 )}
                 {tmdbId != null && (
-                  <Pressable
-                    style={styles.iconBtn}
-                    onPress={() => setReporting(true)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t.report.reportMovie}
-                  >
-                    <Ionicons name="flag-outline" size={18} color="#fff" />
-                  </Pressable>
+                  <Tooltip label={t.report.reportMovie}>
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPress={() => setReporting(true)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t.report.reportMovie}
+                    >
+                      <Ionicons name="flag-outline" size={18} color="#fff" />
+                    </Pressable>
+                  </Tooltip>
                 )}
               </View>
             </View>

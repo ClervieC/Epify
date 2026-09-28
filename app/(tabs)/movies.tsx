@@ -9,6 +9,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   useWindowDimensions,
+  Platform,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
@@ -70,6 +71,10 @@ const MIN_RELOAD_INTERVAL_MS = 10_000;
 // the default AsyncStorage rather than createAsyncStorage's IndexedDB
 // variant — this is a single small boolean, not a cache.
 const SORT_STORAGE_KEY = "movies_to_watch_sort_asc_v1";
+// How long a web browser tab has to have been hidden before coming back to
+// it triggers a reload — see the visibilitychange effect below and its
+// twin in app/(tabs)/index.tsx for the full reasoning.
+const STALE_TAB_REFRESH_MS = 5 * 60 * 1000;
 
 export default function MoviesScreen() {
   const router = useRouter();
@@ -199,6 +204,31 @@ export default function MoviesScreen() {
       reload();
     }, [reload]),
   );
+
+  // Web only: useFocusEffect above only fires on *in-app* navigation focus
+  // (switching between this app's own tabs) — it has no idea whether the
+  // browser tab itself has been sitting hidden in the background for days.
+  // Without this, a long-lived Movies tab left open keeps showing whatever
+  // it looked like the last time it actually gained in-app focus, even
+  // though a movie was marked watched from another device since. Mirrors
+  // lib/versionCheck.ts's own visibilitychange listener, and its twin in
+  // app/(tabs)/index.tsx.
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    let hiddenAt: number | null = null;
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      if (hiddenAt !== null && Date.now() - hiddenAt > STALE_TAB_REFRESH_MS) {
+        reload();
+      }
+      hiddenAt = null;
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [reload]);
 
   // Stable references (empty deps, functional setState) so MovieCard's
   // memo() can actually skip re-rendering every other card in the grid when

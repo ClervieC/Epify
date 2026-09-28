@@ -18,13 +18,12 @@
 // enumerable set of paths, so there's nothing sensible to "pre-warm" for
 // them.
 //
-// TVmaze has no equivalent shared-cache Edge Function (see lib/tvmaze.ts —
-// the client calls TVmaze directly; a load test found the Edge Function
-// path serializing badly under concurrency, multi-second latency past ~20
-// simultaneous requests despite near-idle CPU, while TVmaze's own per-IP
-// rate limit already gives every device its own budget without needing a
-// shared cache the way TMDB's single app-wide key does), so there's
-// nothing TVmaze-side left for this job to pre-warm either.
+// TVmaze now has its own equivalent job — see refresh-tvmaze-cache, a
+// separate function (own schedule, own secret) rather than folded in here,
+// since it refreshes a completely different, per-user-determined set of
+// paths (every currently-tracked show) instead of this function's small
+// fixed list. Its own header comment covers why the concurrency problem
+// documented below doesn't apply to it.
 //
 // Deployed with --no-verify-jwt (no real user session is ever involved
 // here) and gated instead by a shared secret header only the scheduled

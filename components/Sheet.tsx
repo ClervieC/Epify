@@ -1,5 +1,5 @@
 import { ReactNode, useMemo } from "react";
-import { Animated, Pressable, StyleSheet, useWindowDimensions } from "react-native";
+import { Animated, Platform, Pressable, StyleSheet, useWindowDimensions, ViewStyle } from "react-native";
 import { useColors, radius, dropShadow, Colors } from "../lib/theme";
 import { useSheetTransition } from "../lib/animations";
 
@@ -47,14 +47,44 @@ export function Sheet({ visible, onClose, children }: SheetProps) {
 function createStyles(colors: Colors) {
   return StyleSheet.create({
     backdrop: {
-      position: "absolute",
+      // "absolute" is relative to the nearest positioned ancestor — inside
+      // a screen's scrolling content, that's the scroll container itself,
+      // whose height is the full *scrollable content* height, not the
+      // visible viewport. top/bottom:0 then stretched this backdrop to
+      // cover the whole page (found live: 1393px tall on a 900px-tall
+      // window), so "centered" meant centered in the whole page, not in
+      // whatever's actually on screen — open this scrolled partway down and
+      // the popup could land visually near the bottom of the viewport, or
+      // off-screen, instead of centered in view. "fixed" pins it to the
+      // actual browser viewport regardless of scroll position or which
+      // container it's nested in; native ignores this distinction (RN has
+      // no scrolling positioned-ancestor concept the same way), so it stays
+      // "absolute" there.
+      position: Platform.OS === "web" ? "fixed" : "absolute",
       top: 0,
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: "rgba(0,0,0,0.45)",
+      // Darkened from 0.45 — the previous version read as barely-there
+      // once the page behind it was fully visible/undimmed at the wrong
+      // scroll position (see the position fix above); this is dark enough
+      // to read clearly as "this is now behind a modal" on its own.
+      backgroundColor: "rgba(0,0,0,0.6)",
       justifyContent: "flex-end",
-    },
+      // Every View in this app defaults to position:relative (React Native
+      // Web), so a z-index:auto backdrop has no special "always on top"
+      // status — with no zIndex set at all, it only ever painted above the
+      // rest of the screen by accident of DOM order (rendered after
+      // whatever it's meant to cover). That broke as soon as a screen
+      // rendered content *after* this component in the same scroll
+      // container (see components/MovieDetailView.tsx, app/episode/
+      // [id].tsx) — the later content won the paint order and covered the
+      // sheet entirely. 1000 matches this app's other full-screen overlays
+      // (FinaleToast, ChoiceDialog, NewVersionToast) so every modal built
+      // on Sheet is robust regardless of where it happens to sit in its
+      // screen's tree.
+      zIndex: 1000,
+    } as ViewStyle,
     backdropWide: { justifyContent: "center", alignItems: "center", padding: 24 },
     sheet: {
       backgroundColor: colors.surface,

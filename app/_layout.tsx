@@ -111,7 +111,9 @@ function RootNavigation() {
         <Stack.Screen name="show/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="episode/[id]" options={{ headerShown: false, presentation: "modal" }} />
         <Stack.Screen name="users/search" options={{ headerShown: false }} />
-        <Stack.Screen name="users/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="users/[id]/index" options={{ headerShown: false }} />
+        <Stack.Screen name="users/[id]/list" options={{ headerShown: false }} />
+        <Stack.Screen name="browse" options={{ headerShown: false }} />
         <Stack.Screen name="connections/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="notifications" options={{ headerShown: false }} />
         <Stack.Screen name="legal/terms" options={{ headerShown: false }} />

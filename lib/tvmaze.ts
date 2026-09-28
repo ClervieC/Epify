@@ -1,6 +1,7 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { mapWithConcurrency } from "./concurrency";
 import { fetchWithTimeout } from "./fetchTimeout";
+import { supabase } from "./supabase";
 
 // The package's default export is a legacy singleton backed by
 // window.localStorage on web (~5-10MB quota, shared with everything else
@@ -19,6 +20,55 @@ const SIX_HOURS = 6 * ONE_HOUR;
 const ONE_DAY = 24 * ONE_HOUR;
 
 const memoryCache = new Map<string, { data: unknown; expiresAt: number }>();
+
+// Refreshed nightly by supabase/functions/refresh-tvmaze-cache — 30h gives
+// a full day's slack past that schedule before a row is treated as stale,
+// so a cron run landing a little late never makes an otherwise-fresh row
+// look expired.
+const SHARED_CACHE_TTL = 30 * ONE_HOUR;
+
+// Shared, cross-user cache (public.tvmaze_api_cache in supabase/schema.sql)
+// — sits *behind* every local withCache below, same relationship
+// lib/tmdb.ts's own fetchViaSharedCache has to TMDB's local cache. Reads
+// tvmaze_api_cache directly via PostgREST (never an Edge Function) — see
+// that table's own schema.sql comment for exactly why this is what makes
+// it safe to reintroduce a shared TVmaze cache after the earlier attempt
+// was reverted for a concurrency problem that only ever applied to the
+// Edge-Function-per-request path. `{ hit: false }` on any failure (offline,
+// RLS/migration not yet applied, whatever) falls straight through to
+// fetching TVmaze directly, same as before this existed.
+async function fetchTvmazeViaSharedCache<T>(path: string): Promise<{ hit: true; payload: T } | { hit: false }> {
+  try {
+    const { data: row } = await supabase
+      .from("tvmaze_api_cache")
+      .select("payload, fetched_at")
+      .eq("path", path)
+      .maybeSingle();
+    if (row && Date.now() - new Date(row.fetched_at).getTime() < SHARED_CACHE_TTL) {
+      return { hit: true, payload: row.payload as T };
+    }
+  } catch {
+    // Table/policy not there yet, offline, whatever — just a miss.
+  }
+  return { hit: false };
+}
+
+// Fire-and-forget upsert after a genuine live TVmaze fetch succeeds — never
+// awaited by a caller, never lets a write failure surface as a fetch
+// failure. This is what makes a show nobody's ever cached before available
+// to every *other* user immediately, rather than only after the next
+// nightly refresh (see supabase/functions/refresh-tvmaze-cache, which
+// covers the opposite case: keeping an already-cached show's episode list
+// from going stale once new episodes start airing on it).
+function writeTvmazeSharedCache(path: string, payload: unknown): void {
+  (async () => {
+    try {
+      await supabase.from("tvmaze_api_cache").upsert({ path, payload, fetched_at: new Date().toISOString() });
+    } catch {
+      // Best-effort — see comment above.
+    }
+  })();
+}
 
 // Show metadata and episode lists rarely change and are identical for every user,
 // so caching them (in-memory for the session, persisted to disk across restarts)
@@ -255,18 +305,38 @@ export function searchShows(query: string) {
   );
 }
 
+// Show info/episodes specifically (not cast, search, etc.) go through the
+// shared cross-user cache first — these are what Watch Next needs for
+// every tracked show on every load, the exact case a cold local cache made
+// slow. See fetchTvmazeViaSharedCache's own comment for why this table
+// (unlike the local `priority` queue below) is safe from the earlier
+// Edge-Function concurrency problem: this never calls an Edge Function at
+// all, just a direct PostgREST read.
+async function getWithSharedCache<T>(path: string, priority: Priority): Promise<T> {
+  const shared = await fetchTvmazeViaSharedCache<T>(path);
+  if (shared.hit) return shared.payload;
+  const data = await get<T>(path, priority);
+  writeTvmazeSharedCache(path, data);
+  return data;
+}
+
 // Defaults to "low" for the many bulk/background callers (Watch List
 // prefetch, showStats, recap, tvtimeImport) — but a real cache miss on an
 // interactive open (a tap on a show or episode) needs to jump the queue the
 // same way searchShows/lookupShowByTvdbId already do, or it sits behind
 // whatever background batch happened to be mid-flight (see
-// app/show/[id].tsx and app/episode/[id].tsx, which pass "high").
+// app/show/[id].tsx and app/episode/[id].tsx, which pass "high"). Only
+// matters on a genuine miss past the shared cache above — this `priority`
+// never affects a shared-cache hit, which is already a fast Postgres read
+// regardless.
 export function getShow(id: number, priority: Priority = "low") {
-  return withCache(`show:${id}`, ONE_DAY, () => get<TVMazeShow>(`/shows/${id}`, priority));
+  return withCache(`show:${id}`, ONE_DAY, () => getWithSharedCache<TVMazeShow>(`/shows/${id}`, priority));
 }
 
 export function getShowEpisodes(id: number, priority: Priority = "low") {
-  return withCache(`episodes:${id}`, SIX_HOURS, () => get<TVMazeEpisode[]>(`/shows/${id}/episodes`, priority));
+  return withCache(`episodes:${id}`, SIX_HOURS, () =>
+    getWithSharedCache<TVMazeEpisode[]>(`/shows/${id}/episodes`, priority)
+  );
 }
 
 export function getShowCast(id: number, priority: Priority = "low") {

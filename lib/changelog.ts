@@ -15,6 +15,38 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.8",
+    date: "2026-09-28",
+    en: [
+      "Fixed the report pop-up sometimes appearing below the page content on Movies and Episode screens, and sometimes off-center or barely dimmed on Movies — it now always shows centered on top with a darker backdrop, wherever you are on the page.",
+      "Added tooltips on a show's page explaining what the star and \"...\" icons do.",
+      "Watch Next now loads your Watch Later and Not Started shows first, before less important things like comments — noticeably faster.",
+      "Badges no longer show a flood of \"unlocked\" alerts the first time you open the app — only when you actually just earned one.",
+      "Shows are now cached and shared across users on the backend, so an already-tracked show loads faster for everyone.",
+      "The sign-up confirmation message now mentions checking your spam folder.",
+      "The \"watched\" checkmark on a movie's page is bigger and now properly aligned with the \"Watched on [date]\" label next to it.",
+      "The Social feed no longer shows a giant list when someone adds more than 25 episodes at once.",
+      "Reports in the admin panel now link directly to the reported show/episode/movie/comment.",
+      "Added \"View all\" pages for Explore categories and for every list on a profile (yours and others') — a full scrollable grid instead of a single row, with a search-style genre filter.",
+      "Fixed cards on these \"View all\" pages being way too big on a wide screen — they're now the same size as search results, with as many fitting per row as the screen allows, and centered.",
+      "Fixed the Explore genre filter pills briefly turning into giant bars while switching genres.",
+    ],
+    fr: [
+      "Correction de la pop-up de signalement qui apparaissait parfois sous le contenu de la page sur Films et Épisode, et parfois mal centrée ou à peine assombrie sur Films — elle s'affiche maintenant toujours centrée au-dessus avec un fond plus sombre, peu importe où tu es sur la page.",
+      "Ajout de tooltips sur la page d'une série expliquant ce que font l'étoile et les trois petits points.",
+      "Watch Next charge maintenant en priorité tes séries \"à regarder plus tard\" et \"pas commencées\" avant les éléments moins importants comme les commentaires — nettement plus rapide.",
+      "Les badges n'affichent plus une avalanche d'alertes \"débloqué\" à la première ouverture de l'appli — seulement quand tu viens vraiment d'en gagner un.",
+      "Les séries sont maintenant mises en cache et partagées entre utilisateurs côté serveur, donc une série déjà suivie se charge plus vite pour tout le monde.",
+      "Le message de confirmation d'inscription mentionne maintenant de vérifier le dossier spam.",
+      "La coche \"vu\" sur la page d'un film est plus grande et correctement alignée avec le texte \"Vu le [date]\" à côté.",
+      "Le fil Social n'affiche plus une liste géante quand quelqu'un ajoute plus de 25 épisodes d'un coup.",
+      "Les signalements dans le panneau admin renvoient maintenant directement vers la série/l'épisode/le film/le commentaire signalé.",
+      "Ajout de pages \"Tout voir\" pour les catégories d'Explore et pour chaque liste d'un profil (le tien et ceux des autres) — une grille défilante complète au lieu d'une seule rangée, avec un filtre par genre façon recherche.",
+      "Correction des cartes sur ces pages \"Tout voir\" qui étaient beaucoup trop grandes sur un écran large — elles ont maintenant la même taille que dans la recherche, avec autant de cartes par ligne que l'écran le permet, et centrées.",
+      "Correction des pastilles de filtre par genre d'Explore qui se transformaient brièvement en barres géantes pendant le changement de genre.",
+    ],
+  },
+  {
     version: "5.1.7",
     date: "2026-09-22",
     en: [

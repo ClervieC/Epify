@@ -37,6 +37,8 @@ const en = {
     somethingWentWrongDetail:
       "This couldn't be loaded — it may not exist anymore, or there was a network problem.",
     backToShows: "Back to Shows",
+    share: "Share",
+    moreOptions: "More options",
   },
   onboarding: {
     skip: "Skip",
@@ -85,7 +87,7 @@ const en = {
     username: "Username",
     signUp: "Sign up",
     hasAccountPrompt: "Already have an account?",
-    success: "Account created. Check your inbox if a confirmation is required.",
+    success: "Account created. Check your inbox — it may be in your spam folder.",
     usernameInvalid: "3 to 20 letters, numbers or underscores.",
     usernameTaken: "That username is already taken.",
     passwordTooShort: "Password must be at least 6 characters.",
@@ -239,6 +241,11 @@ const en = {
     noMatchTitle: "Show not found",
     noMatchDesc:
       "This show isn't available on TVmaze, which the app uses to track episodes.",
+    viewAll: "View all",
+    allGenres: "All genres",
+    sortPopularity: "Popularity",
+    sortRating: "Rating",
+    sortNewest: "Newest",
   },
   profile: {
     recapTitle: (year: number) => `Your ${year} recap`,
@@ -392,6 +399,11 @@ const en = {
     reportShow: "Report show",
     reportEpisode: "Report episode",
     reportMovie: "Report movie",
+    addPhoto: "Add photo",
+    photoCount: (n: number, max: number) => `${n}/${max} photos`,
+    removePhoto: "Remove photo",
+    photoUploadFailedTitle: "Couldn't attach photo",
+    photoUploadFailedMessage: "Check your connection and try again.",
   },
   support: {
     title: "Contact us",
@@ -604,6 +616,8 @@ const fr: typeof en = {
     somethingWentWrongDetail:
       "Impossible de charger ce contenu — il n'existe peut-être plus, ou il y a eu un problème réseau.",
     backToShows: "Retour aux séries",
+    share: "Partager",
+    moreOptions: "Plus d'options",
   },
   onboarding: {
     skip: "Passer",
@@ -653,7 +667,7 @@ const fr: typeof en = {
     signUp: "S'inscrire",
     hasAccountPrompt: "Déjà un compte ?",
     success:
-      "Compte créé. Vérifie ta boîte mail si une confirmation est requise.",
+      "Compte créé. Vérifie ta boîte mail — il est peut-être dans tes spams.",
     usernameInvalid: "3 à 20 lettres, chiffres ou underscores.",
     usernameTaken: "Ce pseudo est déjà pris.",
     passwordTooShort: "Le mot de passe doit faire au moins 6 caractères.",
@@ -801,6 +815,11 @@ const fr: typeof en = {
     noMatchTitle: "Série introuvable",
     noMatchDesc:
       "Cette série n'est pas disponible sur TVmaze, que l'app utilise pour suivre les épisodes.",
+    viewAll: "Tout voir",
+    allGenres: "Tous les genres",
+    sortPopularity: "Popularité",
+    sortRating: "Note",
+    sortNewest: "Plus récent",
   },
   profile: {
     recapTitle: (year: number) => `Ton bilan ${year}`,
@@ -956,6 +975,11 @@ const fr: typeof en = {
     reportShow: "Signaler la série",
     reportEpisode: "Signaler l'épisode",
     reportMovie: "Signaler le film",
+    addPhoto: "Ajouter une photo",
+    photoCount: (n: number, max: number) => `${n}/${max} photos`,
+    removePhoto: "Retirer la photo",
+    photoUploadFailedTitle: "Échec de l'ajout de la photo",
+    photoUploadFailedMessage: "Vérifie ta connexion et réessaie.",
   },
   support: {
     title: "Nous contacter",

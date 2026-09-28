@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  Platform,
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -456,6 +457,13 @@ const TRACKED_SHOW_FETCH_CONCURRENCY = 10;
 // only the actual Supabase recompute is gated by this.
 const MIN_STREAK_RELOAD_INTERVAL_MS = 15_000;
 
+// How long a web browser tab has to have been hidden before coming back to
+// it triggers a reload (see the visibilitychange effect below) — long
+// enough that switching to another window for a few seconds (checking a
+// notification, say) doesn't refetch everything, short enough that a tab
+// left in the background over a lunch break or longer reliably catches up.
+const STALE_TAB_REFRESH_MS = 5 * 60 * 1000;
+
 const HISTORY_PAGE_SIZE = 20;
 // Scrolling within this many pixels of the top triggers loading the next
 // (older) page of history — the natural "pull up for more" gesture instead
@@ -537,17 +545,54 @@ export default function ShowsScreen() {
   const router = useRouter();
   const announceBadges = useBadgeUnlockToast();
   const lastStreakComputedAt = useRef(0);
+  // Set by the focus effect below when this focus wants a fresh streak
+  // recompute; consumed from loadData()'s own `finally` block once it's
+  // actually done, rather than firing here in parallel with it. Not
+  // "lightweight" (computeStreakData does 9 concurrent Supabase queries,
+  // including a full watched_episodes scan and its own fetchUserShows/
+  // fetchUserMovies calls) — running it at the same time as loadData()'s
+  // own fetchUserShows()/primeWatchedEpisodes()/per-show fetches used to
+  // compete for the same connection pool right when this screen's actual
+  // content (Watch Next/Not Started/History) most needed the bandwidth,
+  // for a small secondary pill that isn't what this screen is for.
+  const streakRefreshDueRef = useRef(false);
+  const runStreakRefreshRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    runStreakRefreshRef.current = () => {
+      if (!streakRefreshDueRef.current) return;
+      streakRefreshDueRef.current = false;
+      if (Date.now() - lastStreakComputedAt.current < MIN_STREAK_RELOAD_INTERVAL_MS) return;
+      lastStreakComputedAt.current = Date.now();
+      computeStreakData(announceBadges)
+        .then((d) => {
+          setCurrentStreak(d.currentStreak);
+          setStreakAtRisk(d.streakAtRisk);
+        })
+        .catch(() => {});
+    };
+  }, [announceBadges]);
 
-  // Lightweight — only reads watched dates, no per-show TVmaze calls (unlike
-  // lib/showStats.ts) — fine to compute once per mount rather than folding
-  // into loadData() below. Surfaces the streak here (see the pill above the
-  // tabs row) so it reads as a small game rather than something buried in
-  // Profile, with a tap through to the full streaks/badges page.
+  // Same "wait for loadData() to say it's done" pattern as the streak
+  // refresh above, for History's own first page (see loadMoreHistory below
+  // for the fuller reasoning) — kept up to date every render (no deps
+  // array) so it always calls the current loadMoreHistory closure rather
+  // than a stale one captured back when loadData() was first created.
+  const runHistoryLoadRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    runHistoryLoadRef.current = () => {
+      if (historyItems.length === 0 && hasMoreHistory) loadMoreHistory();
+    };
+  });
+
+  // Surfaces the streak here (see the pill above the tabs row) so it reads
+  // as a small game rather than something buried in Profile, with a tap
+  // through to the full streaks/badges page.
   useFocusEffect(
     useCallback(() => {
       let active = true;
       // Local IndexedDB read first — instant, no network round trip (see
-      // lib/streaks.ts) — then a fresh compute reconciles it in the background.
+      // lib/streaks.ts) — then a fresh compute reconciles it in the background
+      // once loadData() below signals it's done (see runStreakRefreshRef).
       // Runs on every focus (not just mount) so marking something watched on
       // another screen — an episode's detail page, a movie — and coming back
       // here updates the pill immediately instead of only after a full app
@@ -558,25 +603,11 @@ export default function ShowsScreen() {
           setStreakAtRisk(local.streakAtRisk);
         }
       });
-      // The actual Supabase recompute is throttled (see
-      // MIN_STREAK_RELOAD_INTERVAL_MS) — without this, rapidly switching back
-      // to this tab re-ran the full watched-episodes scan + count queries +
-      // badge sync every single time.
-      if (Date.now() - lastStreakComputedAt.current >= MIN_STREAK_RELOAD_INTERVAL_MS) {
-        lastStreakComputedAt.current = Date.now();
-        computeStreakData(announceBadges)
-          .then((d) => {
-            if (active) {
-              setCurrentStreak(d.currentStreak);
-              setStreakAtRisk(d.streakAtRisk);
-            }
-          })
-          .catch(() => {});
-      }
+      streakRefreshDueRef.current = true;
       return () => {
         active = false;
       };
-    }, [announceBadges])
+    }, [])
   );
   // Set right after marking an episode watched (never on unwatch) — opens
   // the quick feeling picker for that specific episode. Tapping outside
@@ -869,31 +900,15 @@ export default function ShowsScreen() {
       // retries once the session (or StrictMode's second, real invocation)
       // has caught up.
       if (shows.length === 0 && seed.length > 0) return;
-      // Shows already being watched go first in the fetch queue — that's
-      // what populates Watch Next and History, the two sections actually
-      // visible on load. Shows not started yet only feed "Not started",
-      // which the user is less likely to be checking first, so they can
-      // trail in behind.
+      // Watch Next, then Not Started — two fully sequential phases, not
+      // just "watching goes first in one shared queue" (mapWithConcurrency's
+      // own concurrency lanes used to let a want_to_watch show start
+      // fetching the moment a lane freed up, even before every watching
+      // show had resolved). Not Started's own fetch — prime call included —
+      // doesn't start at all until Watch Next has fully painted.
       const watching = shows.filter((s) => s.status === "watching");
       const wantToWatch = shows.filter((s) => s.status === "want_to_watch");
-      let followed = [...watching, ...wantToWatch];
-      // A show just mutated elsewhere (marked watched/unwatched from its own
-      // detail screen, then navigated back here) already has a warm,
-      // correctly-patched cache — see patchCachedWatchedEpisodes in
-      // lib/showDataCache.ts — so its refetch below resolves instantly. But
-      // left in its normal list position, it could still sit behind dozens
-      // of other (possibly real, rate-limited) fetches before its turn comes
-      // up, leaving its Watch Next row showing stale pre-mutation data in
-      // the meantime. Bumping it to the front means the correction lands in
-      // the very first flush instead of trailing in "after a while."
-      const touched = takeRecentlyTouchedShowIds();
-      if (touched.length > 0) {
-        const touchedSet = new Set(touched);
-        followed = [
-          ...followed.filter((s) => touchedSet.has(s.tvmaze_id)),
-          ...followed.filter((s) => !touchedSet.has(s.tvmaze_id)),
-        ];
-      }
+      const followed = [...watching, ...wantToWatch];
       // Re-key against the freshly fetched statuses/order — this also drops
       // any seeded show whose status changed away from watching/want_to_watch
       // (or that's no longer followed at all) and adds newly-followed shows,
@@ -902,8 +917,28 @@ export default function ShowsScreen() {
       for (const id of [...byId.keys()]) {
         if (!order.includes(id)) byId.delete(id);
       }
-      if (followed.length > 0) setFollowedShowsSettled(false);
+      // Only Watch Next's own source data gates its loading indicator (see
+      // watchNextLoading in the row-building useMemo below) — a want_to_watch-
+      // only account should read as "Watch Next is empty" immediately, not
+      // "still loading" for however long Not Started's own fetch takes.
+      if (watching.length > 0) setFollowedShowsSettled(false);
       flush();
+
+      // A show just mutated elsewhere (marked watched/unwatched from its own
+      // detail screen, then navigated back here) already has a warm,
+      // correctly-patched cache — see patchCachedWatchedEpisodes in
+      // lib/showDataCache.ts — so its refetch below resolves instantly. But
+      // left in its normal list position, it could still sit behind dozens
+      // of other (possibly real, rate-limited) fetches before its turn comes
+      // up, leaving its row showing stale pre-mutation data in the
+      // meantime. Bumping it to the front of whichever phase it belongs to
+      // means the correction lands in that phase's very first flush instead
+      // of trailing in "after a while."
+      const touched = new Set(takeRecentlyTouchedShowIds());
+      function prioritizeTouched(group: UserShow[]): UserShow[] {
+        if (touched.size === 0) return group;
+        return [...group.filter((s) => touched.has(s.tvmaze_id)), ...group.filter((s) => !touched.has(s.tvmaze_id))];
+      }
 
       // Render shows as their data arrives instead of blocking on the very
       // last one to resolve — with a couple hundred tracked shows, the
@@ -914,14 +949,14 @@ export default function ShowsScreen() {
       // 200+ re-renders. Seed data for shows still awaiting their fresh
       // fetch stays visible until it's overwritten the moment that fetch
       // lands.
-      // One batched watched_episodes round trip for every followed show
-      // instead of one per show — fetchTrackedShow's own
-      // getCachedWatchedEpisodes call below then resolves from the now-warm
-      // cache for each show instead of firing its own request.
-      await primeWatchedEpisodes(followed.map((s) => s.tvmaze_id), fetchWatchedEpisodesForShows);
-
+      // One batched watched_episodes round trip per phase instead of one per
+      // show — fetchTrackedShow's own getCachedWatchedEpisodes call below
+      // then resolves from the now-warm cache for each show instead of
+      // firing its own request.
+      const watchingOrdered = prioritizeTouched(watching);
+      await primeWatchedEpisodes(watchingOrdered.map((s) => s.tvmaze_id), fetchWatchedEpisodesForShows);
       await mapWithConcurrency(
-        followed,
+        watchingOrdered,
         TRACKED_SHOW_FETCH_CONCURRENCY,
         fetchTrackedShow,
         (result) => {
@@ -929,10 +964,25 @@ export default function ShowsScreen() {
           scheduleFlush();
         },
       );
-      // Final flush covers both the trailing rAF-coalesced items and the
-      // followed.length === 0 case, where onItemDone never fires at all.
+      // Covers both the trailing rAF-coalesced items and the
+      // watching.length === 0 case, where onItemDone never fires at all —
+      // Watch Next is fully settled the moment this flush lands, regardless
+      // of how long Not Started's own phase below takes.
       flush();
       setFollowedShowsSettled(true);
+
+      const wantToWatchOrdered = prioritizeTouched(wantToWatch);
+      await primeWatchedEpisodes(wantToWatchOrdered.map((s) => s.tvmaze_id), fetchWatchedEpisodesForShows);
+      await mapWithConcurrency(
+        wantToWatchOrdered,
+        TRACKED_SHOW_FETCH_CONCURRENCY,
+        fetchTrackedShow,
+        (result) => {
+          byId.set(result.show.tvmaze_id, result);
+          scheduleFlush();
+        },
+      );
+      flush();
       persistSnapshot();
       // Fire-and-forget, low priority (see backgroundPrefetch.ts): once the
       // watching/want_to_watch list — the shows actually on screen — is
@@ -950,6 +1000,15 @@ export default function ShowsScreen() {
       // error), this run is done — never leave the Watch Next loading hint
       // stuck on indefinitely because something failed partway through.
       setFollowedShowsSettled(true);
+      // This screen's own critical fetches (shows, episodes, watched
+      // status) are done — now it's safe to spend bandwidth on the streak
+      // pill's much heavier recompute, if this focus asked for one. See
+      // runStreakRefreshRef's own comment above for why this isn't done in
+      // parallel with everything above instead.
+      runStreakRefreshRef.current();
+      // Same reasoning for History's first page — see loadMoreHistory and
+      // runHistoryLoadRef's own comments.
+      runHistoryLoadRef.current();
     }
   }, []);
 
@@ -988,6 +1047,36 @@ export default function ShowsScreen() {
     }, [loadData]),
   );
 
+  // Web only: useFocusEffect above only fires on *in-app* navigation focus
+  // (React Navigation's own concept — switching between this app's tabs) —
+  // it has no idea whether the browser tab itself has been sitting hidden
+  // in the background for days/weeks. Without this, someone who leaves an
+  // Epify browser tab open for a long time and then switches back to it
+  // keeps seeing whatever `tracked` looked like the last time this screen
+  // actually gained in-app focus — stale Watch Next entries for anything
+  // watched from another device since, even though watched_episodes itself
+  // is fully up to date (see lib/streaks.ts and friends, which always
+  // revalidate watched status live — this is purely about nothing ever
+  // asking them to). Mirrors lib/versionCheck.ts's own visibilitychange
+  // listener for the same class of problem. Only refires after a real gap
+  // (STALE_TAB_REFRESH_MS), not on every quick alt-tab.
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    let hiddenAt: number | null = null;
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      if (hiddenAt !== null && Date.now() - hiddenAt > STALE_TAB_REFRESH_MS) {
+        loadData();
+      }
+      hiddenAt = null;
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [loadData]);
+
   function goToWatchList() {
     setTab("list");
     loadData();
@@ -1000,6 +1089,18 @@ export default function ShowsScreen() {
 
   async function loadMoreHistory() {
     if (loadingHistoryRef.current || !hasMoreHistory) return;
+    // History is the lowest priority of this screen's three sections (Watch
+    // Next, then Not Started, then History) — the FlatList can fire a
+    // scroll event (and so reach the "near the top" check below) from
+    // nothing more than its own content size changing as loadData() below
+    // progressively flushes Watch Next/Not Started rows in, well before the
+    // user has actually scrolled anywhere. Without this, History's own
+    // Supabase round trip used to fire right alongside that, competing for
+    // bandwidth with the two sections that actually matter first. Not a
+    // dead end for the very first page though — runHistoryLoadRef calls
+    // this again once loadData() signals it's actually settled, so History
+    // still fills in on its own without the user needing to scroll for it.
+    if (!followedShowsSettled) return;
     if (Date.now() - lastHistoryLoadAt.current < HISTORY_LOAD_COOLDOWN_MS)
       return;
     lastHistoryLoadAt.current = Date.now();

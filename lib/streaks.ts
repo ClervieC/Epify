@@ -599,12 +599,23 @@ async function countRows(table: string, userId: string, extra?: (q: any) => any)
 // every earnedAt null rather than breaking the rest of the streak compute.
 //
 // Returns the badges that are genuinely newly earned (for a celebratory
-// banner — see computeStreakData's onNewlyUnlocked) — but only when this
-// user already had at least one badge_unlocks row. Without that guard, the
-// very first compute after this table existed would insert a row for every
-// already-achieved badge in one go and report all of them as "just earned,"
-// flooding a long-time user with a banner for a dozen badges they actually
-// earned months ago.
+// banner — see computeStreakData's onNewlyUnlocked), guarded two ways:
+//   - Per-user: a brand new account's very first sync (existing.size === 0)
+//     would otherwise insert a row for every already-achieved badge in one
+//     go and report all of them as "just earned," flooding a long-time user
+//     with a banner for a dozen badges they actually earned months ago.
+//   - Per-category: the *first* sync after a brand new badge category ships
+//     (e.g. "binge," added mid-session one release) hits the exact same
+//     problem one level down — an existing user with years of watch history
+//     can already qualify for several of that category's thresholds at
+//     once, none of which happened "just now." A user with other synced
+//     badges already isn't a whole-account backfill (isBackfill is false),
+//     so without this, every threshold they already happened to qualify for
+//     in the new category gets reported as newly unlocked in one spammy
+//     batch the moment this code first runs for them. Guarded by whether
+//     the category itself already had a synced row, not just the account —
+//     the category's own first sync stays silent, and real progress in it
+//     from the very next sync onward reports normally.
 async function syncBadgeUnlocks(userId: string, badges: Badge[]): Promise<Badge[]> {
   try {
     const { data, error } = await supabase
@@ -614,6 +625,10 @@ async function syncBadgeUnlocks(userId: string, badges: Badge[]): Promise<Badge[
     if (error) throw error;
     const existing = new Map((data ?? []).map((r) => [r.badge_id, r.earned_at as string]));
     const isBackfill = existing.size === 0;
+    const categoryById = new Map(badges.map((b) => [b.id, b.category]));
+    const categoriesWithHistory = new Set(
+      [...existing.keys()].map((id) => categoryById.get(id)).filter((c): c is BadgeCategory => !!c)
+    );
 
     const toInsert: Badge[] = [];
     for (const badge of badges) {
@@ -634,7 +649,8 @@ async function syncBadgeUnlocks(userId: string, badges: Badge[]): Promise<Badge[
     );
     if (insertError) throw insertError;
     for (const badge of toInsert) badge.earnedAt = now;
-    return isBackfill ? [] : toInsert;
+    if (isBackfill) return [];
+    return toInsert.filter((badge) => categoriesWithHistory.has(badge.category));
   } catch {
     // Best-effort — see comment above.
     return [];

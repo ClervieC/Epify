@@ -272,20 +272,24 @@ export default function TmdbMovieDetailScreen() {
                 onRewatch={handleRewatch}
                 onUndoRewatch={handleUndoRewatch}
                 disabled={notYetReleased && !isWatched}
-                size={26}
+                size={38}
               />
             </View>
             {isWatched ? (
               <>
-                {watchedDate && <Pill>{t.movies.watchedOn(watchedDate)}</Pill>}
-                {(userRow?.times_watched ?? 0) > 1 && <Pill tone="accent">{t.movies.watchCount(userRow!.times_watched)}</Pill>}
+                {watchedDate && <Pill style={styles.pillCenter}>{t.movies.watchedOn(watchedDate)}</Pill>}
+                {(userRow?.times_watched ?? 0) > 1 && (
+                  <Pill tone="accent" style={styles.pillCenter}>
+                    {t.movies.watchCount(userRow!.times_watched)}
+                  </Pill>
+                )}
               </>
             ) : userRow ? (
-              <Pill tone="accent" onPress={handleRemoveFromWatchlist}>
+              <Pill tone="accent" style={styles.pillCenter} onPress={handleRemoveFromWatchlist}>
                 {t.movies.inWatchlist}
               </Pill>
             ) : (
-              <Pill tone="accent" onPress={handleAddToWatchlist}>
+              <Pill tone="accent" style={styles.pillCenter} onPress={handleAddToWatchlist}>
                 {t.movies.addToWatchlist}
               </Pill>
             )}
@@ -314,4 +318,5 @@ export default function TmdbMovieDetailScreen() {
 
 const styles = StyleSheet.create({
   checkInline: { alignSelf: "center" },
+  pillCenter: { alignSelf: "center" },
 });

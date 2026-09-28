@@ -15,13 +15,19 @@ interface ShowCardProps {
   // this card at something else with its own id space (e.g. Profile's
   // favorite-episodes row, where `id` is an episode id, not a show id).
   onPress?: () => void;
+  // Fires on the initial touch, before onPress — for a caller that needs to
+  // know a navigation is about to happen earlier than onPress itself runs
+  // (see app/users/[id]/list.tsx's own scroll-restoration guard, and
+  // app/browse.tsx's identical one, for why that timing actually matters).
+  // Composed with useScalePress's own onPressIn below, not a replacement.
+  onNavigateAway?: () => void;
   // A small "x" overlaid on the poster corner when set — e.g. removing a
   // show from a custom list (see app/list/[id].tsx) without navigating
   // into it first.
   onRemove?: () => void;
 }
 
-export function ShowCard({ id, name, imageUrl, subtitle, onPress, onRemove }: ShowCardProps) {
+export function ShowCard({ id, name, imageUrl, subtitle, onPress, onNavigateAway, onRemove }: ShowCardProps) {
   const router = useRouter();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -30,7 +36,10 @@ export function ShowCard({ id, name, imageUrl, subtitle, onPress, onRemove }: Sh
 
   return (
     <Pressable
-      onPressIn={onPressIn}
+      onPressIn={() => {
+        onPressIn();
+        onNavigateAway?.();
+      }}
       onPressOut={onPressOut}
       onPress={onPress ?? (() => router.push(`/show/${id}`))}
     >

@@ -1293,3 +1293,110 @@ drop index concurrently if exists public.user_shows_tvmaze_id_idx;
 -- nothing writes to this table anymore. Safe to drop.
 -- ============================================================
 drop table if exists public.tmdb_only_shows;
+
+-- ============================================================
+-- Reports can now include one or more screenshots (e.g. proof of
+-- harassment, a broken show page) — components/ReportModal.tsx uploads
+-- them to Storage first, then passes the resulting public URLs in here.
+-- Capped at 5 client-side (see ReportModal.tsx); not re-enforced with a
+-- check constraint here — a client bypassing its own limit only costs a
+-- little extra storage, not worth the risk of getting ALTER TABLE ... ADD
+-- CONSTRAINT's lack of IF NOT EXISTS support wrong in an idempotent script.
+-- Purely additive — safe to run once.
+-- ============================================================
+alter table public.reports add column if not exists image_urls text[] not null default '{}';
+
+-- Public (read), same reasoning/shape as the avatars bucket above — write
+-- is locked to a user's own folder (report-images/{user_id}/...). Reports
+-- themselves stay visible only to their reporter and admins (see the RLS
+-- policies on public.reports above); the *image URLs* stored inside a
+-- report row are plain public links regardless, same trust level as an
+-- avatar URL — not advertised anywhere, but not access-controlled either.
+insert into storage.buckets (id, name, public)
+values ('report-images', 'report-images', true)
+on conflict (id) do nothing;
+
+create policy "Report images are publicly readable"
+  on storage.objects
+  for select
+  using (bucket_id = 'report-images');
+
+create policy "Users upload their own report images"
+  on storage.objects
+  for insert
+  with check (bucket_id = 'report-images' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ============================================================
+-- Shared, cross-user cache for TVmaze show/episode data — reintroduces an
+-- earlier tvmaze_show_cache/tvmaze_episodes_cache/tvmaze_api_cache that was
+-- reverted (see supabase/functions/refresh-lists/index.ts's own history)
+-- after a load test found the Edge Function path serializing badly under
+-- concurrency. This version avoids that: clients (lib/tvmaze.ts) read this
+-- table directly via PostgREST — same fix already proven for tmdb_api_cache
+-- above — and never call an Edge Function on the read path at all. Only
+-- supabase/functions/refresh-tvmaze-cache (pg_cron, once daily, never
+-- client-invoked) touches the Edge Function, which is exactly what the old
+-- concurrency problem needed many *client* callers to trigger in the first
+-- place.
+--
+-- Keyed by the real TVmaze path (`/shows/169`, `/shows/169/episodes`),
+-- mirroring tmdb_api_cache's own keying convention.
+--
+-- One deliberate difference from tmdb_api_cache: authenticated users can
+-- also upsert here (not just the service-role Edge Function) — a fresh
+-- TVmaze fetch a client made on its own cache-miss gets written back here
+-- too (see lib/tvmaze.ts's writeTvmazeSharedCache), so a newly-tracked show
+-- becomes available to every other user immediately instead of waiting for
+-- the next nightly refresh. The data being written is a public API
+-- passthrough with no injection/abuse surface worth locking down further —
+-- worst case a bad write is a stale value for one path, which self-heals
+-- on the next real fetch or the next nightly refresh either way.
+--
+-- Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.tvmaze_api_cache (
+  path text primary key,
+  payload jsonb,
+  fetched_at timestamptz not null default now()
+);
+
+alter table public.tvmaze_api_cache enable row level security;
+
+create policy "tvmaze_api_cache_select_authenticated"
+  on public.tvmaze_api_cache for select
+  using (auth.role() = 'authenticated');
+
+create policy "tvmaze_api_cache_upsert_authenticated"
+  on public.tvmaze_api_cache for insert
+  with check (auth.role() = 'authenticated');
+
+create policy "tvmaze_api_cache_update_authenticated"
+  on public.tvmaze_api_cache for update
+  using (auth.role() = 'authenticated');
+
+-- refresh-tvmaze-cache is deployed with --no-verify-jwt and gated by its
+-- own shared secret header (REFRESH_TVMAZE_SECRET as its Edge Function
+-- secret) — a *different* secret from refresh_lists_secret above, kept in
+-- Vault, never in this file. Run once, with your own generated value:
+--   select vault.create_secret('<openssl rand -hex 32>', 'refresh_tvmaze_secret');
+-- and set the same value as this project's REFRESH_TVMAZE_SECRET Edge
+-- Function secret (`npx supabase secrets set REFRESH_TVMAZE_SECRET=<same value>`).
+
+-- `url` below is a placeholder — same replacement rule as refresh-tmdb-lists
+-- above (internal Kong URL for a self-hosted instance, the public project
+-- URL for Supabase Cloud). Scheduled an hour after the TMDB job so the two
+-- don't compete for this VPS's own resources at the same moment.
+select cron.schedule(
+  'refresh-tvmaze-cache',
+  '0 5 * * *', -- daily at 05:00 UTC
+  $$
+  select net.http_post(
+    url := 'REPLACE_WITH_YOUR_FUNCTIONS_URL/functions/v1/refresh-tvmaze-cache',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'X-Refresh-Secret', (select decrypted_secret from vault.decrypted_secrets where name = 'refresh_tvmaze_secret')
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);

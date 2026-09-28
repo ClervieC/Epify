@@ -278,17 +278,23 @@ export default function MovieDetailScreen() {
               onToggle={handleToggleWatched}
               onRewatch={handleRewatch}
               onUndoRewatch={handleUndoRewatch}
+              size={38}
               disabled={notYetReleased && !isWatched}
-              size={26}
             />
           </View>
           {isWatched ? (
             <>
-              <Pill>{t.movies.watchedOn(watchedDate)}</Pill>
-              {movie.times_watched > 1 && <Pill tone="accent">{t.movies.watchCount(movie.times_watched)}</Pill>}
+              <Pill style={styles.pillCenter}>{t.movies.watchedOn(watchedDate)}</Pill>
+              {movie.times_watched > 1 && (
+                <Pill tone="accent" style={styles.pillCenter}>
+                  {t.movies.watchCount(movie.times_watched)}
+                </Pill>
+              )}
             </>
           ) : (
-            <Pill tone="accent">{t.movies.inWatchlist}</Pill>
+            <Pill tone="accent" style={styles.pillCenter}>
+              {t.movies.inWatchlist}
+            </Pill>
           )}
         </>
       }
@@ -314,4 +320,5 @@ export default function MovieDetailScreen() {
 
 const styles = StyleSheet.create({
   checkInline: { alignSelf: "center" },
+  pillCenter: { alignSelf: "center" },
 });

@@ -528,7 +528,9 @@ function createStyles(colors: Colors) {
       paddingHorizontal: 14,
       paddingVertical: 10,
       color: colors.text,
-      fontSize: 14,
+      // 16px, not type.body's 14 — anything smaller makes iOS Safari
+      // auto-zoom the whole page on focus.
+      fontSize: type.input,
       marginBottom: 10,
     },
     modalSubmitBtn: {

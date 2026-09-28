@@ -575,7 +575,14 @@ export default function ExploreScreen() {
           ) : (
             showCategories.map((category) => (
               <View key={category.key} style={styles.categorySection}>
-                <Text style={styles.categoryTitle}>{category.title}</Text>
+                <View style={styles.categoryHeaderRow}>
+                  <Text style={styles.categoryTitle}>{category.title}</Text>
+                  {category.key !== "forYouTv" && (
+                    <Pressable onPress={() => router.push(`/browse?category=${category.key}`)} hitSlop={8}>
+                      <Text style={styles.viewAllLink}>{t.explore.viewAll}</Text>
+                    </Pressable>
+                  )}
+                </View>
                 <CategoryRow
                   data={category.data}
                   keyExtractor={(show) => String(show.id)}
@@ -611,7 +618,14 @@ export default function ExploreScreen() {
           ) : (
             movieCategories.map((category) => (
               <View key={category.key} style={styles.categorySection}>
-                <Text style={styles.categoryTitle}>{category.title}</Text>
+                <View style={styles.categoryHeaderRow}>
+                  <Text style={styles.categoryTitle}>{category.title}</Text>
+                  {category.key !== "forYouMovies" && (
+                    <Pressable onPress={() => router.push(`/browse?category=${category.key}`)} hitSlop={8}>
+                      <Text style={styles.viewAllLink}>{t.explore.viewAll}</Text>
+                    </Pressable>
+                  )}
+                </View>
                 <CategoryRow
                   data={category.data}
                   keyExtractor={(movie) => String(movie.id)}
@@ -933,17 +947,23 @@ function createStyles(colors: Colors) {
     searchScroll: { paddingTop: 16, paddingBottom: 24 },
     grid: { padding: 16, paddingTop: 8, gap: 16 },
     row: { gap: 16 },
-    wrapGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 16, gap: 16 },
+    wrapGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 16, gap: 16, justifyContent: "center" },
     wrapGridItem: { width: 150 },
     categoriesScroll: { paddingTop: 16, paddingBottom: 24 },
     categorySection: { marginBottom: 20 },
+    categoryHeaderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      marginBottom: 12,
+    },
     categoryTitle: {
       fontSize: type.subtitle,
       fontWeight: "800",
       color: colors.text,
-      paddingHorizontal: 16,
-      marginBottom: 12,
     },
+    viewAllLink: { fontSize: 13, fontWeight: "700", color: colors.accent },
     categoryRow: { paddingHorizontal: 16, gap: 12 },
     categoryCard: { width: 130 },
     card: { flex: 1 },

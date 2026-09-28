@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextInput, Platform } from "react-native";
+import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextInput, Platform, Linking } from "react-native";
+import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
@@ -30,11 +31,18 @@ const TARGET_ICON: Record<ReportTargetType, keyof typeof Ionicons.glyphMap> = {
 interface EpisodeInfo {
   name: string;
   showName: string | null;
+  showId: number;
 }
 
 interface CommentInfo {
   body: string;
   authorName: string | null;
+  // Lets the report card link through to whatever the comment is actually
+  // on — a comment/movie_comment report has no tvmaze/tmdb id of its own on
+  // the report row (see targetHref below), only this resolved lookup does.
+  showId?: number; // comment (show/episode) only
+  episodeId?: number | null; // comment (episode) only
+  movieTmdbId?: number; // movie_comment only
 }
 
 const TARGET_COLOR: Record<ReportTargetType, string> = {
@@ -132,7 +140,7 @@ export default function AdminScreen() {
     );
     mapWithConcurrency(episodeIds, 5, (id) =>
       getEpisodeWithShow(id)
-        .then((ep) => [id, { name: ep.name, showName: ep._embedded.show.name }] as const)
+        .then((ep) => [id, { name: ep.name, showName: ep._embedded.show.name, showId: ep._embedded.show.id }] as const)
         .catch(() => [id, null] as const),
     ).then((entries) => {
       setEpisodeInfo((prev) => {
@@ -153,7 +161,14 @@ export default function AdminScreen() {
       .then((comments) => {
         setCommentInfo((prev) => {
           const next = new Map(prev);
-          for (const c of comments) next.set(c.id, { body: c.body, authorName: c.author?.username ?? null });
+          for (const c of comments) {
+            next.set(c.id, {
+              body: c.body,
+              authorName: c.author?.username ?? null,
+              showId: c.tvmaze_show_id,
+              episodeId: c.tvmaze_episode_id,
+            });
+          }
           return next;
         });
       })
@@ -170,7 +185,9 @@ export default function AdminScreen() {
       .then((comments) => {
         setMovieCommentInfo((prev) => {
           const next = new Map(prev);
-          for (const c of comments) next.set(c.id, { body: c.body, authorName: c.author?.username ?? null });
+          for (const c of comments) {
+            next.set(c.id, { body: c.body, authorName: c.author?.username ?? null, movieTmdbId: c.tmdb_id });
+          }
           return next;
         });
       })
@@ -406,6 +423,45 @@ function targetSummary(
   }
 }
 
+// Where tapping a report's target should navigate — same screens the app
+// itself uses (show/episode/movie/user detail), so an admin can see
+// exactly what was reported instead of only reading its resolved name.
+// null when there's nothing to navigate to yet (id missing, or a comment
+// whose own target hasn't resolved from commentInfo/movieCommentInfo yet).
+type Href = string | { pathname: string; params: Record<string, string> };
+function targetHref(
+  r: Report,
+  commentInfo: Map<string, CommentInfo>,
+  movieCommentInfo: Map<string, CommentInfo>,
+): Href | null {
+  switch (r.target_type) {
+    case "user":
+      return r.target_user_id ? `/users/${r.target_user_id}` : null;
+    case "show":
+      return r.target_tvmaze_show_id ? `/show/${r.target_tvmaze_show_id}` : null;
+    case "episode":
+      return r.target_tvmaze_episode_id
+        ? {
+            pathname: "/episode/[id]",
+            params: { id: String(r.target_tvmaze_episode_id), showId: String(r.target_tvmaze_show_id ?? "") },
+          }
+        : null;
+    case "movie":
+      return r.target_tmdb_id ? `/movie/tmdb/${r.target_tmdb_id}` : null;
+    case "comment": {
+      const info = r.target_comment_id ? commentInfo.get(r.target_comment_id) : undefined;
+      if (!info?.showId) return null;
+      return info.episodeId
+        ? { pathname: "/episode/[id]", params: { id: String(info.episodeId), showId: String(info.showId) } }
+        : `/show/${info.showId}`;
+    }
+    case "movie_comment": {
+      const info = r.target_movie_comment_id ? movieCommentInfo.get(r.target_movie_comment_id) : undefined;
+      return info?.movieTmdbId ? `/movie/tmdb/${info.movieTmdbId}` : null;
+    }
+  }
+}
+
 function ReportCard({
   report,
   onActed,
@@ -424,8 +480,10 @@ function ReportCard({
   movieCommentInfo: Map<string, CommentInfo>;
 }) {
   const { t } = useLanguage();
+  const router = useRouter();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const href = targetHref(report, commentInfo, movieCommentInfo);
 
   async function act(action: "resolve" | "dismiss") {
     setBusy(true);
@@ -447,13 +505,31 @@ function ReportCard({
         <View style={[styles.iconWrap, { backgroundColor: `${color}22` }]}>
           <Ionicons name={TARGET_ICON[report.target_type]} size={15} color={color} />
         </View>
-        <Text style={styles.cardTarget} numberOfLines={1}>
-          {targetSummary(t, report, userNames, showNames, episodeInfo, commentInfo, movieCommentInfo)}
-        </Text>
+        {href ? (
+          <Pressable onPress={() => router.push(href as never)} style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[styles.cardTarget, styles.cardTargetLink]} numberOfLines={1}>
+              {targetSummary(t, report, userNames, showNames, episodeInfo, commentInfo, movieCommentInfo)}
+            </Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.cardTarget} numberOfLines={1}>
+            {targetSummary(t, report, userNames, showNames, episodeInfo, commentInfo, movieCommentInfo)}
+          </Text>
+        )}
         <Text style={styles.cardDate}>{shortDate(report.created_at)}</Text>
       </View>
 
       <Text style={styles.cardReason}>{report.reason}</Text>
+
+      {report.image_urls.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.reportImageRow}>
+          {report.image_urls.map((url) => (
+            <Pressable key={url} onPress={() => Linking.openURL(url)}>
+              <Image source={{ uri: url }} style={styles.reportImageThumb} contentFit="cover" />
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
 
       <View style={styles.cardMetaRow}>
         <Ionicons name="person-circle-outline" size={13} color={C.textMuted} />
@@ -618,15 +694,21 @@ const styles = StyleSheet.create({
     borderColor: C.border,
     borderRadius: 10,
   },
-  searchInput: { flex: 1, color: C.text, fontSize: 13 },
+  // 16px, not 13 — anything smaller makes iOS Safari auto-zoom the whole
+  // page when this input is focused (see app/admin/support/[userId].tsx's
+  // own input, which already uses 16 for the same reason).
+  searchInput: { flex: 1, color: C.text, fontSize: 16 },
   empty: { color: C.textMuted, textAlign: "center", marginTop: 32 },
   list: { padding: 16, paddingTop: 0, gap: 10 },
   card: { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 12, gap: 8 },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   iconWrap: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
   cardTarget: { flex: 1, color: C.text, fontWeight: "700", fontSize: 13 },
+  cardTargetLink: { color: C.accent, textDecorationLine: "underline" },
   cardDate: { color: C.textMuted, fontSize: 11 },
   cardReason: { color: C.text, fontSize: 13, lineHeight: 18 },
+  reportImageRow: { gap: 8, marginTop: 4 },
+  reportImageThumb: { width: 72, height: 72, borderRadius: 8, backgroundColor: C.bg },
   cardMetaRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   cardMeta: { color: C.textMuted, fontSize: 11 },
   quoteBlock: { borderLeftWidth: 2, borderLeftColor: C.accent, paddingLeft: 10 },
@@ -639,7 +721,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     color: C.text,
-    fontSize: 13,
+    // 16px, not 13 — see searchInput's own comment above.
+    fontSize: 16,
   },
   actionRow: { flexDirection: "row", gap: 8 },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 9, borderRadius: 8 },

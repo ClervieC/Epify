@@ -61,6 +61,7 @@ import { WatchedCheck } from "../../components/WatchedCheck";
 import { ChoiceDialog } from "../../components/ChoiceDialog";
 import { CommentsSection } from "../../components/CommentsSection";
 import { ReportModal } from "../../components/ReportModal";
+import { Tooltip } from "../../components/Tooltip";
 import { DetailErrorState } from "../../components/DetailErrorState";
 import { Sheet } from "../../components/Sheet";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
@@ -703,27 +704,31 @@ export default function ShowDetailScreen() {
               </Pressable>
               <View style={{ flexDirection: "row", gap: 10 }}>
                 {userShow && (
+                  <Tooltip label={userShow.is_favorite ? t.showDetail.removeFavorite : t.showDetail.addFavorite}>
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPress={handleToggleFavorite}
+                      accessibilityRole="button"
+                      accessibilityLabel={userShow.is_favorite ? t.showDetail.removeFavorite : t.showDetail.addFavorite}
+                    >
+                      <Ionicons
+                        name={userShow.is_favorite ? "star" : "star-outline"}
+                        size={19}
+                        color={userShow.is_favorite ? colors.accent : "#fff"}
+                      />
+                    </Pressable>
+                  </Tooltip>
+                )}
+                <Tooltip label={t.common.moreOptions}>
                   <Pressable
                     style={styles.iconBtn}
-                    onPress={handleToggleFavorite}
+                    onPress={() => setMenuOpen(true)}
                     accessibilityRole="button"
-                    accessibilityLabel={userShow.is_favorite ? t.showDetail.removeFavorite : t.showDetail.addFavorite}
+                    accessibilityLabel={t.common.moreOptions}
                   >
-                    <Ionicons
-                      name={userShow.is_favorite ? "star" : "star-outline"}
-                      size={19}
-                      color={userShow.is_favorite ? colors.accent : "#fff"}
-                    />
+                    <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
                   </Pressable>
-                )}
-                <Pressable
-                  style={styles.iconBtn}
-                  onPress={() => setMenuOpen(true)}
-                  accessibilityRole="button"
-                  accessibilityLabel="More options"
-                >
-                  <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
-                </Pressable>
+                </Tooltip>
               </View>
             </View>
           </Reanimated.View>
@@ -1432,7 +1437,9 @@ function createStyles(colors: Colors) {
     paddingHorizontal: 14,
     paddingVertical: 10,
     color: colors.text,
-    fontSize: 14,
+    // 16px, not type.body's 14 — anything smaller makes iOS Safari
+    // auto-zoom the whole page on focus.
+    fontSize: type.input,
   },
   newListBtn: {
     width: 40,

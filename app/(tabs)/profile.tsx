@@ -104,6 +104,25 @@ function formatTvTime(totalMinutes: number) {
 export default function ProfileScreen() {
   const { session } = useAuth();
   const router = useRouter();
+  const myId = session?.user.id;
+  // Every Favorites/Shows/Movies/Paused/Dropped section, plus each custom
+  // list below, opens into the same scrollable grid
+  // (app/users/[id]/list.tsx) the other-profile viewer's own "View all"
+  // links already use — reused rather than duplicated, it already has the
+  // click-into-detail-then-back scroll restoration this needs.
+  // back=profile is what tells that screen's own back button to return here
+  // (the Profile tab) instead of falling back to /users/{myId} (the
+  // "viewing someone else" reading of my own profile) — see its own comment.
+  function openViewAll(type: string, title: string, listId?: string) {
+    const params = new URLSearchParams({ type, title, back: "profile" });
+    if (listId) params.set("listId", listId);
+    // expo-router's typed routes can't validate a dynamically-built query
+    // string against its generated href union (see useGoBack.ts's identical
+    // cast, and app/users/[id]/index.tsx's own equivalent pushes, which only
+    // pass typecheck because they're written as one literal template
+    // instead of going through a shared helper like this one).
+    router.push(`/users/${myId}/list?${params.toString()}` as Parameters<typeof router.push>[0]);
+  }
   const [shows, setShows] = useState<UserShow[]>([]);
   const [movies, setMovies] = useState<UserMovie[]>([]);
   const [favorites, setFavorites] = useState<UserShow[]>([]);
@@ -755,6 +774,7 @@ export default function ProfileScreen() {
           count={favorites.length}
           collapsed={collapsedSections.has("favorites")}
           onToggle={() => toggleSection("favorites")}
+          onViewAll={myId ? () => openViewAll("favorites", t.profile.favorites) : undefined}
           colors={colors}
           styles={styles}
         />
@@ -815,6 +835,7 @@ export default function ProfileScreen() {
           count={shows.length}
           collapsed={collapsedSections.has("shows")}
           onToggle={() => toggleSection("shows")}
+          onViewAll={myId ? () => openViewAll("shows", t.profile.shows) : undefined}
           colors={colors}
           styles={styles}
         />
@@ -840,6 +861,7 @@ export default function ProfileScreen() {
           count={favoriteMovies.length}
           collapsed={collapsedSections.has("favoriteMovies")}
           onToggle={() => toggleSection("favoriteMovies")}
+          onViewAll={myId ? () => openViewAll("favoriteMovies", t.profile.favoriteMovies) : undefined}
           colors={colors}
           styles={styles}
         />
@@ -871,6 +893,7 @@ export default function ProfileScreen() {
           count={movies.length}
           collapsed={collapsedSections.has("movies")}
           onToggle={() => toggleSection("movies")}
+          onViewAll={myId ? () => openViewAll("movies", t.profile.movies) : undefined}
           colors={colors}
           styles={styles}
         />
@@ -902,6 +925,7 @@ export default function ProfileScreen() {
           count={pausedShows.length}
           collapsed={collapsedSections.has("paused")}
           onToggle={() => toggleSection("paused")}
+          onViewAll={myId ? () => openViewAll("paused", t.profile.paused) : undefined}
           colors={colors}
           styles={styles}
         />
@@ -927,6 +951,7 @@ export default function ProfileScreen() {
           count={droppedShows.length}
           collapsed={collapsedSections.has("dropped")}
           onToggle={() => toggleSection("dropped")}
+          onViewAll={myId ? () => openViewAll("dropped", t.profile.dropped) : undefined}
           colors={colors}
           styles={styles}
         />
@@ -1008,6 +1033,20 @@ export default function ProfileScreen() {
                       <Text style={styles.listsCardItemCount}>
                         {t.profile.seriesCount(items.length)}
                       </Text>
+                      {myId && items.length > 0 && (
+                        <Pressable
+                          onPress={(e) => {
+                            // Without this, the tap can bubble up into this
+                            // row's own onPress (toggleListCollapsed) on web
+                            // and collapse the row right as it navigates.
+                            e.stopPropagation();
+                            openViewAll("list", list.name, list.id);
+                          }}
+                          hitSlop={8}
+                        >
+                          <Text style={styles.listsCardViewAllText}>{t.explore.viewAll}</Text>
+                        </Pressable>
+                      )}
                       <Pressable
                         onPress={() => openListMenu(list)}
                         hitSlop={10}
@@ -1119,6 +1158,7 @@ function SectionHeader({
   title,
   count,
   action,
+  onViewAll,
   collapsed,
   onToggle,
   colors,
@@ -1130,6 +1170,13 @@ function SectionHeader({
   // title/count (a custom list's "..." menu — see the lists section below);
   // every other section header is just a label + count.
   action?: ReactNode;
+  // Opens this section's own scrollable grid (app/users/[id]/list.tsx, same
+  // screen the other-profile viewer's "View all" already uses) — a nested
+  // Pressable inside the header's own onToggle Pressable below, same pattern
+  // already proven by the custom-list "..." menu button further down this
+  // file (RN's responder system targets the innermost Pressable, it doesn't
+  // bubble like a raw DOM click would, so this doesn't also fire onToggle).
+  onViewAll?: () => void;
   // When set, the whole header becomes pressable and shows a chevron — every
   // one of Profile's horizontal rows (Favorites, Shows, Movies, Paused,
   // Dropped, ...) is collapsible now, not just custom lists.
@@ -1138,6 +1185,7 @@ function SectionHeader({
   colors?: Colors;
   styles: ProfileStyles;
 }) {
+  const { t } = useLanguage();
   const content = (
     <>
       {onToggle && (
@@ -1148,6 +1196,21 @@ function SectionHeader({
         <View style={styles.sectionCountPill}>
           <Text style={styles.sectionCountText}>{count}</Text>
         </View>
+      )}
+      {onViewAll && count !== undefined && count > 0 && (
+        <Pressable
+          onPress={(e) => {
+            // Without this, the tap can bubble up into the header's own
+            // onPress (the collapse toggle) on web and collapse the section
+            // right as it navigates.
+            e.stopPropagation();
+            onViewAll();
+          }}
+          hitSlop={8}
+          style={styles.sectionHeaderAction}
+        >
+          <Text style={styles.sectionViewAllText}>{t.explore.viewAll}</Text>
+        </Pressable>
       )}
       {action && <View style={styles.sectionHeaderAction}>{action}</View>}
     </>
@@ -1319,6 +1382,7 @@ function createStyles(colors: Colors, isSmallScreen: boolean) {
       color: colors.textMuted,
     },
     sectionHeaderAction: { marginLeft: "auto" },
+    sectionViewAllText: { fontSize: 13, fontWeight: "700", color: colors.accent },
     recapBanner: {
       flexDirection: "row",
       alignItems: "center",
@@ -1462,6 +1526,7 @@ function createStyles(colors: Colors, isSmallScreen: boolean) {
       color: colors.textMuted,
       marginLeft: "auto",
     },
+    listsCardViewAllText: { fontSize: 12, fontWeight: "700", color: colors.accent },
     // Nested inside listsCard's own 14px padding, unlike the page-level
     // showsRow (16px) every other section's horizontal row uses — stacking
     // both would double up the inset on a card that's already narrower than
@@ -1513,7 +1578,10 @@ function createStyles(colors: Colors, isSmallScreen: boolean) {
       paddingHorizontal: 14,
       paddingVertical: 10,
       color: colors.text,
-      fontSize: 14,
+      // 16px, not type.body's 14 — anything smaller makes iOS Safari
+      // auto-zoom the whole page on focus (see the other TextInputs in the
+      // app, which already use type.input for exactly this reason).
+      fontSize: type.input,
     },
     newListBtn: {
       width: 40,

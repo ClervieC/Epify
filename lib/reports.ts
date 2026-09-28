@@ -25,11 +25,40 @@ export interface Report {
   target_tvmaze_episode_id: number | null;
   target_tmdb_id: number | null;
   reason: string;
+  image_urls: string[];
   status: ReportStatus;
   resolution_note: string | null;
   resolved_by: string | null;
   created_at: string;
   resolved_at: string | null;
+}
+
+// Matches components/ReportModal.tsx's own limit — see supabase/schema.sql
+// for why this isn't also enforced as a server-side check constraint.
+export const MAX_REPORT_IMAGES = 5;
+
+// `uri`/`mimeType` are whatever DocumentPicker handed back (see
+// ReportModal.tsx), same as lib/profiles.ts's uploadAvatar. Unlike avatars
+// (one fixed path, upsert), every report image gets its own path — a
+// report can carry several, and unlike an avatar there's nothing to
+// "replace." Storage path doesn't need to reference the report's own id at
+// all (that only exists once createReport's insert below succeeds) — it
+// just needs to be unique per upload, which Date.now() + the caller's own
+// index already guarantees.
+export async function uploadReportImage(uri: string, mimeType: string, index: number): Promise<string> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const response = await fetch(uri);
+  const blob = await response.blob();
+  const ext = mimeType.split("/")[1] ?? "jpg";
+  const path = `${userId}/${Date.now()}-${index}.${ext}`;
+
+  const { error } = await supabase.storage.from("report-images").upload(path, blob, { contentType: mimeType });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from("report-images").getPublicUrl(path);
+  return data.publicUrl;
 }
 
 // A single loosely-typed params object rather than one function per target
@@ -40,6 +69,7 @@ export interface Report {
 export interface CreateReportParams {
   targetType: ReportTargetType;
   reason: string;
+  imageUrls?: string[];
   targetUserId?: string;
   targetCommentId?: string;
   targetMovieCommentId?: string;
@@ -56,6 +86,7 @@ export async function createReport(params: CreateReportParams): Promise<void> {
     reporter_id: userId,
     target_type: params.targetType,
     reason: params.reason.trim(),
+    image_urls: params.imageUrls ?? [],
     target_user_id: params.targetUserId ?? null,
     target_comment_id: params.targetCommentId ?? null,
     target_movie_comment_id: params.targetMovieCommentId ?? null,

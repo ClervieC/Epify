@@ -370,11 +370,12 @@ export function searchMovies(query: string): Promise<TMDBSearchResult[]> {
   });
 }
 
-function cachedMovieList(path: string) {
+function cachedMovieList(path: string, params: Record<string, string> = {}) {
+  const fullPath = pathWithQuery(path, params);
   return () =>
-    withCache(`list:${path}`, ONE_DAY, async () => {
-      const shared = await fetchViaSharedCache<{ results: TMDBSearchResult[] }>(path, ONE_DAY);
-      const data = shared.hit ? shared.payload : await get<{ results: TMDBSearchResult[] }>(path);
+    withCache(`list:${fullPath}`, ONE_DAY, async () => {
+      const shared = await fetchViaSharedCache<{ results: TMDBSearchResult[] }>(fullPath, ONE_DAY);
+      const data = shared.hit ? shared.payload : await get<{ results: TMDBSearchResult[] }>(path, params);
       return data.results;
     });
 }
@@ -383,6 +384,18 @@ export const getPopularMovies = cachedMovieList("/movie/popular");
 export const getTopRatedMovies = cachedMovieList("/movie/top_rated");
 export const getNowPlayingMovies = cachedMovieList("/movie/now_playing");
 export const getUpcomingMovies = cachedMovieList("/movie/upcoming");
+
+// Paginated version of the four fixed lists above, for the "View All"
+// browse screen (see app/browse.tsx) — a home-screen preview row only ever
+// needs page 1 (what getPopularMovies etc. already fetch), but scrolling
+// through everything needs the rest of TMDB's ~500 pages on demand.
+export function fetchMovieListPage(
+  path: string,
+  page: number,
+  extraParams: Record<string, string> = {}
+): Promise<TMDBSearchResult[]> {
+  return cachedMovieList(path, { ...extraParams, page: String(page) })();
+}
 
 // "For You" (see lib/forYou.ts) — popularity-sorted discover filtered to the
 // genres the user actually watches most, rather than one more generic
@@ -499,4 +512,43 @@ export function getUpcomingTv() {
 export function getForYouTv(genreIds: number[]): Promise<TMDBTvResult[]> {
   if (genreIds.length === 0) return Promise.resolve([]);
   return cachedTvList("/discover/tv", { with_genres: genreIds.join(","), sort_by: "popularity.desc" })();
+}
+
+// TV equivalent of fetchMovieListPage above, same reasoning.
+export function fetchTvListPage(
+  path: string,
+  page: number,
+  extraParams: Record<string, string> = {}
+): Promise<TMDBTvResult[]> {
+  return cachedTvList(path, { ...extraParams, page: String(page) })();
+}
+
+export interface TMDBGenre {
+  id: number;
+  name: string;
+}
+
+// TMDB's own genre list (not the small curated GENRE_DEFS in lib/streaks.ts,
+// which is for badge tallying and keyed by name substring, not id) — for
+// the genre filter chips on the browse/search screens. Effectively static
+// (TMDB adds a new genre maybe once every few years) and language-dependent
+// for its display names, so a week-long TTL keyed by language is plenty.
+// `language` is this app's own "en"|"fr" toggle (see regionForLanguage
+// above for the same conversion, TMDB itself wants the fuller xx-XX form).
+function tmdbLanguageTag(language: "en" | "fr"): string {
+  return language === "fr" ? "fr-FR" : "en-US";
+}
+
+export function getMovieGenres(language: "en" | "fr"): Promise<TMDBGenre[]> {
+  return withCache(`genres:movie:${language}`, ONE_DAY * 7, async () => {
+    const data = await get<{ genres: TMDBGenre[] }>("/genre/movie/list", { language: tmdbLanguageTag(language) });
+    return data.genres;
+  });
+}
+
+export function getTvGenres(language: "en" | "fr"): Promise<TMDBGenre[]> {
+  return withCache(`genres:tv:${language}`, ONE_DAY * 7, async () => {
+    const data = await get<{ genres: TMDBGenre[] }>("/genre/tv/list", { language: tmdbLanguageTag(language) });
+    return data.genres;
+  });
 }

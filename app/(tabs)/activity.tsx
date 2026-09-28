@@ -344,6 +344,13 @@ type FeedRow =
 // read as one thing, not fragment back apart just because of the gaps
 // between episodes. Only episode_watched groups — movies and comments stay
 // as individual rows, since those don't tend to arrive in the same bursts.
+// Above this, a "watched N episodes" row reads less like real activity and
+// more like catching up a backlog or importing a watch history — not
+// something worth broadcasting to followers. Dropped from the feed
+// entirely rather than just capped/truncated: there's no single episode in
+// a 30-episode catch-up that's more "the" activity than any other.
+const BULK_MARK_HIDE_THRESHOLD = 25;
+
 function groupActivityItems(items: ActivityItem[]): FeedRow[] {
   const groups = new Map<string, EpisodeWatchedItem[]>();
   for (const item of items) {
@@ -363,6 +370,7 @@ function groupActivityItems(items: ActivityItem[]): FeedRow[] {
       const group = groups.get(key)!;
       if (group.length > 1) {
         for (const g of group) consumed.add(g.id);
+        if (group.length > BULK_MARK_HIDE_THRESHOLD) continue;
         rows.push({ type: "episodeGroup", key, items: group });
         continue;
       }
