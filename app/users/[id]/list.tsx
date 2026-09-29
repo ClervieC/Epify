@@ -14,8 +14,24 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, type, Colors } from "../../../lib/theme";
 import { useLanguage } from "../../../lib/i18n";
-import { fetchFavorites, fetchUserShows, fetchListItems } from "../../../lib/userShows";
-import { fetchPublicWatchedMovies, fetchPublicFavoriteMovies, PublicMovie } from "../../../lib/userMovies";
+import {
+  fetchFavorites,
+  fetchUserShows,
+  fetchListItems,
+  upsertUserShow,
+  removeUserShow,
+  setShowFavorite,
+} from "../../../lib/userShows";
+import {
+  fetchPublicWatchedMovies,
+  fetchPublicFavoriteMovies,
+  fetchUserMovieTmdbMap,
+  addMovieToWatchlist,
+  removeUserMovie,
+  setMovieFavorite,
+  PublicMovie,
+  UserMovie,
+} from "../../../lib/userMovies";
 import { posterUrl } from "../../../lib/tmdb";
 import { ShowCard } from "../../../components/ShowCard";
 import { EmptyState } from "../../../components/EmptyState";
@@ -35,15 +51,18 @@ interface ShowCardSource {
   show_image: string | null;
 }
 
-// ShowCard itself is a fixed 110px card with its own built-in 12px
-// marginRight (see components/ShowCard.tsx — it's normally used inside a
-// horizontal scroll row, where that margin is the only spacing mechanism).
-// This grid used a numColumns={3}/flex:1/3 column that just meant "1/3 of
-// the screen width" regardless of that, so a wide/desktop viewport ended up
-// with 3 huge, mostly-empty columns each centering one small card (see
+// ShowCard itself is a fixed 110px card (see components/ShowCard.tsx). This
+// grid used a numColumns={3}/flex:1/3 column that just meant "1/3 of the
+// screen width" regardless of that, so a wide/desktop viewport ended up with
+// 3 huge, mostly-empty columns each centering one small card (see
 // app/browse.tsx's identical bug/fix, applied here the same way: size each
-// column to the card's own real footprint and compute how many fit,
-// **without** adding a second gap on top of ShowCard's own margin).
+// column to the card's own real footprint and compute how many fit).
+// Spacing between columns is a real flex `gap` (row style below) rather than
+// ShowCard's own built-in marginRight (passed as `noTrailingMargin` to turn
+// that off here) — a manual margin on every card, including the last one in
+// a row, doesn't just double-space full rows, it also throws off centering
+// on a short/partial last row: the row's own width (used to center it)
+// ends up counting a trailing margin that isn't actually visible content.
 const CARD_WIDTH = 110;
 const CARD_MARGIN_RIGHT = 12;
 const GRID_PADDING = 12;
@@ -91,7 +110,10 @@ export default function UserListScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
   const { width: windowWidth } = useWindowDimensions();
-  const numColumns = Math.max(1, Math.floor((windowWidth - GRID_PADDING * 2) / (CARD_WIDTH + CARD_MARGIN_RIGHT)));
+  const numColumns = Math.max(
+    1,
+    Math.floor((windowWidth - GRID_PADDING * 2 + CARD_MARGIN_RIGHT) / (CARD_WIDTH + CARD_MARGIN_RIGHT)),
+  );
   const [shows, setShows] = useState<ShowCardSource[]>([]);
   const [movies, setMovies] = useState<PublicMovie[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,6 +122,97 @@ export default function UserListScreen() {
   const cacheKey = type === "list" ? `${id}:list:${listId ?? ""}` : `${id}:${type}`;
 
   const isMovieList = type === "movies" || type === "favoriteMovies";
+
+  // The viewer's *own* tracked/favorited shows and movies — independent of
+  // whose list (id/type above) is actually being displayed here, same as
+  // Explore's own cards: you can favorite/quick-add a show you found on
+  // someone else's profile without it having anything to do with their own
+  // list. Fetched once on mount, not per cacheKey change.
+  const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
+  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
+  const [movieTmdbMap, setMovieTmdbMap] = useState<Map<number, UserMovie>>(new Map());
+
+  useEffect(() => {
+    let active = true;
+    fetchUserShows().then((r) => {
+      if (!active) return;
+      setAddedIds(new Set(r.map((s) => s.tvmaze_id)));
+      setFavoriteIds(new Set(r.filter((s) => s.is_favorite).map((s) => s.tvmaze_id)));
+    });
+    fetchUserMovieTmdbMap().then((m) => active && setMovieTmdbMap(m));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function quickAdd(show: ShowCardSource) {
+    if (addedIds.has(show.tvmaze_id)) {
+      await removeUserShow(show.tvmaze_id);
+      setAddedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(show.tvmaze_id);
+        return next;
+      });
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(show.tvmaze_id);
+        return next;
+      });
+    } else {
+      await upsertUserShow({
+        tvmaze_id: show.tvmaze_id,
+        show_name: show.show_name,
+        show_image: show.show_image,
+        status: "want_to_watch",
+      });
+      setAddedIds((prev) => new Set(prev).add(show.tvmaze_id));
+    }
+  }
+
+  async function toggleFavorite(show: ShowCardSource) {
+    const isFav = favoriteIds.has(show.tvmaze_id);
+    if (!addedIds.has(show.tvmaze_id)) {
+      await upsertUserShow({
+        tvmaze_id: show.tvmaze_id,
+        show_name: show.show_name,
+        show_image: show.show_image,
+        status: "want_to_watch",
+      });
+      setAddedIds((prev) => new Set(prev).add(show.tvmaze_id));
+    }
+    await setShowFavorite(show.tvmaze_id, !isFav);
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (isFav) next.delete(show.tvmaze_id);
+      else next.add(show.tvmaze_id);
+      return next;
+    });
+  }
+
+  async function quickAddMovie(movie: PublicMovie) {
+    const existing = movieTmdbMap.get(movie.tmdb_id);
+    if (existing?.status === "want_to_watch") {
+      await removeUserMovie(existing.id);
+      setMovieTmdbMap((prev) => {
+        const next = new Map(prev);
+        next.delete(movie.tmdb_id);
+        return next;
+      });
+      return;
+    }
+    // Already watched — managing that stays on the movie's own page (see
+    // Explore's own quickAddMovie for the identical reasoning).
+    if (existing?.status === "watched") return;
+    const row = await addMovieToWatchlist(movie.tmdb_id, movie.title, movie.year, movie.poster_path);
+    setMovieTmdbMap((prev) => new Map(prev).set(movie.tmdb_id, row));
+  }
+
+  async function toggleFavoriteMovie(movie: PublicMovie) {
+    const existing = movieTmdbMap.get(movie.tmdb_id);
+    const row = existing ?? (await addMovieToWatchlist(movie.tmdb_id, movie.title, movie.year, movie.poster_path));
+    const updated = await setMovieFavorite(row.id, !row.is_favorite);
+    setMovieTmdbMap((prev) => new Map(prev).set(movie.tmdb_id, updated));
+  }
 
   useEffect(() => {
     const cached = userListCache.get(cacheKey);
@@ -201,6 +314,11 @@ export default function UserListScreen() {
                     navigatingAwayRef.current = true;
                   }}
                   onPress={() => router.push(`/movie/tmdb/${m.tmdb_id}`)}
+                  isFavorite={!!movieTmdbMap.get(m.tmdb_id)?.is_favorite}
+                  onToggleFavorite={() => toggleFavoriteMovie(m)}
+                  isAdded={movieTmdbMap.has(m.tmdb_id)}
+                  onQuickAdd={() => quickAddMovie(m)}
+                  noTrailingMargin
                 />
               </View>
             )}
@@ -228,6 +346,11 @@ export default function UserListScreen() {
                 onNavigateAway={() => {
                   navigatingAwayRef.current = true;
                 }}
+                isFavorite={favoriteIds.has(s.tvmaze_id)}
+                onToggleFavorite={() => toggleFavorite(s)}
+                isAdded={addedIds.has(s.tvmaze_id)}
+                onQuickAdd={() => quickAdd(s)}
+                noTrailingMargin
               />
             </View>
           )}
@@ -250,10 +373,9 @@ function createStyles(colors: Colors) {
     },
     headerTitle: { flex: 1, textAlign: "center", fontSize: type.subtitle, fontWeight: "800", color: colors.text },
     grid: { paddingHorizontal: GRID_PADDING, paddingBottom: 32 },
-    // No gap here — ShowCard already carries its own marginRight (see the
-    // CARD_MARGIN_RIGHT comment above); adding a second gap on top of it
-    // would double-space every column.
-    row: { justifyContent: "center" },
+    // A real flex gap, not ShowCard's own marginRight — see the
+    // CARD_MARGIN_RIGHT comment above for why that matters for centering.
+    row: { gap: CARD_MARGIN_RIGHT, justifyContent: "center" },
     cardWrap: { marginBottom: 16 },
   });
 }

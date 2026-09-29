@@ -224,12 +224,20 @@ type EpisodeWatchedItem = Extract<ActivityItem, { kind: "episode_watched" }>;
 // ActivityScreen) — nothing else on screen needs to know or react to it.
 function EpisodeGroupRow({
   items,
+  bulk,
   index,
   t,
   colors,
   styles,
 }: {
   items: EpisodeWatchedItem[];
+  // Past BULK_MARK_HIDE_THRESHOLD, that many episodes in one day essentially
+  // always means catching up a backlog (or a bulk "mark season watched"),
+  // not really watching them one by one — so there's no useful per-episode
+  // detail to expand into. The row just states the flat threshold ("25+")
+  // instead of the real count and drops the chevron/expand entirely; tapping
+  // it goes straight to the show, same as tapping its title/thumbnail would.
+  bulk: boolean;
   index: number;
   t: Translations;
   colors: Colors;
@@ -254,7 +262,7 @@ function EpisodeGroupRow({
     <Animated.View style={{ opacity: mountIn.opacity, transform: mountIn.transform }}>
       <Pressable
         style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        onPress={() => setExpanded((e) => !e)}
+        onPress={bulk ? goToShow : () => setExpanded((e) => !e)}
       >
         <Pressable
           style={styles.avatarWrap}
@@ -283,7 +291,10 @@ function EpisodeGroupRow({
             >
               {username}
             </Text>
-            <Text style={styles.verb}> {t.activity.watchedEpisodes(items.length)} </Text>
+            <Text style={styles.verb}>
+              {" "}
+              {bulk ? t.activity.watchedManyEpisodes(BULK_MARK_HIDE_THRESHOLD) : t.activity.watchedEpisodes(items.length)}{" "}
+            </Text>
             <Text style={styles.title} onPress={goToShow}>
               {first.showName}
             </Text>
@@ -293,7 +304,7 @@ function EpisodeGroupRow({
           </View>
         </View>
         <View style={styles.groupThumbCol}>
-          <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={colors.textFaint} />
+          {!bulk && <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={colors.textFaint} />}
           <Pressable onPress={goToShow}>
             {first.showImage ? (
               <Image source={{ uri: first.showImage }} style={styles.thumb} contentFit="cover" />
@@ -305,7 +316,7 @@ function EpisodeGroupRow({
           </Pressable>
         </View>
       </Pressable>
-      {expanded && (
+      {!bulk && expanded && (
         <View style={styles.groupChildren}>
           {sortedEpisodes.map((ep) => (
             <Pressable
@@ -333,7 +344,7 @@ function EpisodeGroupRow({
 
 type FeedRow =
   | { type: "item"; item: ActivityItem }
-  | { type: "episodeGroup"; key: string; items: EpisodeWatchedItem[] };
+  | { type: "episodeGroup"; key: string; items: EpisodeWatchedItem[]; bulk: boolean };
 
 // Collapses same-user/same-show/same-day "watched episode" activity into one
 // row — without this, adding a show you'd already finished (or any binge
@@ -344,11 +355,11 @@ type FeedRow =
 // read as one thing, not fragment back apart just because of the gaps
 // between episodes. Only episode_watched groups — movies and comments stay
 // as individual rows, since those don't tend to arrive in the same bursts.
-// Above this, a "watched N episodes" row reads less like real activity and
-// more like catching up a backlog or importing a watch history — not
-// something worth broadcasting to followers. Dropped from the feed
-// entirely rather than just capped/truncated: there's no single episode in
-// a 30-episode catch-up that's more "the" activity than any other.
+// Above this threshold, that many episodes of one show in one day almost
+// always means the person had already seen it before (a backlog catch-up
+// or a bulk "mark season watched"), not real per-episode activity — the
+// row still shows (see EpisodeGroupRow's `bulk` prop), just as a flat "25+"
+// count with no episode-by-episode detail to expand into.
 const BULK_MARK_HIDE_THRESHOLD = 25;
 
 function groupActivityItems(items: ActivityItem[]): FeedRow[] {
@@ -370,8 +381,7 @@ function groupActivityItems(items: ActivityItem[]): FeedRow[] {
       const group = groups.get(key)!;
       if (group.length > 1) {
         for (const g of group) consumed.add(g.id);
-        if (group.length > BULK_MARK_HIDE_THRESHOLD) continue;
-        rows.push({ type: "episodeGroup", key, items: group });
+        rows.push({ type: "episodeGroup", key, items: group, bulk: group.length > BULK_MARK_HIDE_THRESHOLD });
         continue;
       }
     }
@@ -657,7 +667,7 @@ export default function ActivityScreen() {
               row.type === "item" ? (
                 <ActivityRow item={row.item} index={index} t={t} colors={colors} styles={styles} />
               ) : (
-                <EpisodeGroupRow items={row.items} index={index} t={t} colors={colors} styles={styles} />
+                <EpisodeGroupRow items={row.items} bulk={row.bulk} index={index} t={t} colors={colors} styles={styles} />
               )
             }
             ItemSeparatorComponent={() => <View style={styles.separator} />}

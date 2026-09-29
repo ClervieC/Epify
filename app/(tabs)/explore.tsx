@@ -53,6 +53,18 @@ import { alert } from "../../lib/alert";
 type ExploreTab = "shows" | "movies";
 type Category<T> = { key: string; title: string; data: T[] };
 
+// Search-results grid (wrapGrid/wrapGridItem below) sizing — kept in sync
+// with Profile's and Explore's own "view all" grids (app/users/[id]/
+// list.tsx's CARD_WIDTH/CARD_MARGIN_RIGHT/GRID_PADDING, app/browse.tsx's
+// CARD_WIDTH/GRID_GAP/GRID_PADDING) so a card is the same size everywhere
+// it can show up — search results here, browsing there, or a profile's
+// list. wrapGrid is a plain flexWrap View (not a FlatList), so it doesn't
+// need an explicit numColumns: shrinking the card width alone is enough
+// for more of them to fit on one row, e.g. 3 per row on a ~390px phone.
+const CARD_WIDTH = 110;
+const GRID_GAP = 12;
+const GRID_PADDING = 12;
+
 // Thin wrapper over the shared HorizontalScrollRow (see
 // components/HorizontalScrollRow.tsx — also used by Profile's own
 // Favorites/Shows/Movies/etc. rows) — keeps this file's data/keyExtractor/
@@ -122,7 +134,7 @@ export default function ExploreScreen() {
   const [showCategories, setShowCategories] = useState<Category<TMDBTvResult>[]>([]);
   const [movieCategories, setMovieCategories] = useState<Category<TMDBSearchResult>[]>([]);
   const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles(colors, CARD_WIDTH, GRID_GAP, GRID_PADDING), [colors]);
   const { t } = useLanguage();
   const underlineGrow = useGrowIn(subTab);
   // A plain `let` here would be reassigned on every render, so a debounce
@@ -500,7 +512,7 @@ export default function ExploreScreen() {
             <>
               {userSearchResults.length > 0 && (
                 <View style={styles.categorySection}>
-                  <Text style={styles.categoryTitle}>{t.explore.resultsUsers}</Text>
+                  <Text style={[styles.categoryTitle, styles.searchSectionTitleSpacing]}>{t.explore.resultsUsers}</Text>
                   {userSearchResults.map((profile) => (
                     <UserRow
                       key={profile.user_id}
@@ -520,7 +532,7 @@ export default function ExploreScreen() {
               )}
               {searchResults.length > 0 && (
                 <View style={styles.categorySection}>
-                  <Text style={styles.categoryTitle}>{t.explore.resultsShows}</Text>
+                  <Text style={[styles.categoryTitle, styles.searchSectionTitleSpacing]}>{t.explore.resultsShows}</Text>
                   <View style={styles.wrapGrid}>
                     {searchResults.map((show) => (
                       <View key={show.id} style={styles.wrapGridItem}>
@@ -542,7 +554,7 @@ export default function ExploreScreen() {
               )}
               {movieSearchResults.length > 0 && (
                 <View style={styles.categorySection}>
-                  <Text style={styles.categoryTitle}>{t.explore.resultsMovies}</Text>
+                  <Text style={[styles.categoryTitle, styles.searchSectionTitleSpacing]}>{t.explore.resultsMovies}</Text>
                   <View style={styles.wrapGrid}>
                     {movieSearchResults.map((movie) => (
                       <View key={movie.id} style={styles.wrapGridItem}>
@@ -905,7 +917,7 @@ function ExploreMovieCard({
   );
 }
 
-function createStyles(colors: Colors) {
+function createStyles(colors: Colors, CARD_WIDTH: number, GRID_GAP: number, GRID_PADDING: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     headerGlow: { position: "absolute", top: 0, left: 0, right: 0, height: 140, pointerEvents: "none" },
@@ -947,8 +959,8 @@ function createStyles(colors: Colors) {
     searchScroll: { paddingTop: 16, paddingBottom: 24 },
     grid: { padding: 16, paddingTop: 8, gap: 16 },
     row: { gap: 16 },
-    wrapGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 16, gap: 16, justifyContent: "center" },
-    wrapGridItem: { width: 150 },
+    wrapGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: GRID_PADDING, gap: GRID_GAP, justifyContent: "center" },
+    wrapGridItem: { width: CARD_WIDTH },
     categoriesScroll: { paddingTop: 16, paddingBottom: 24 },
     categorySection: { marginBottom: 20 },
     categoryHeaderRow: {
@@ -963,6 +975,14 @@ function createStyles(colors: Colors) {
       fontWeight: "800",
       color: colors.text,
     },
+    // categoryTitle itself has no horizontal padding — inside a browse
+    // category row it sits in categoryHeaderRow, which already has its own
+    // paddingHorizontal:16, so adding it here too would double it there.
+    // The search-results headings (Users/Shows/Movies below) render this
+    // Text directly with no such wrapper, so without this they sat flush
+    // against the screen edge while the grid underneath (wrapGrid) already
+    // had its own 16px inset.
+    searchSectionTitleSpacing: { marginHorizontal: GRID_PADDING },
     viewAllLink: { fontSize: 13, fontWeight: "700", color: colors.accent },
     categoryRow: { paddingHorizontal: 16, gap: 12 },
     categoryCard: { width: 130 },

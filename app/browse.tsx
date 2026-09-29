@@ -24,6 +24,9 @@ import {
   TMDBSearchResult,
   TMDBTvResult,
 } from "../lib/tmdb";
+import { TVMazeShow } from "../lib/tvmaze";
+import { fetchUserShows, upsertUserShow, removeUserShow, setShowFavorite } from "../lib/userShows";
+import { fetchUserMovieTmdbMap, addMovieToWatchlist, removeUserMovie, setMovieFavorite, UserMovie } from "../lib/userMovies";
 import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useGoBack } from "../lib/useGoBack";
@@ -58,15 +61,18 @@ function isTv(kind: BrowseKind, item: BrowseItem): item is TMDBTvResult {
   return kind === "tv";
 }
 
-// Same fixed poster width Explore's own search results use (its
-// wrapGridItem) — this screen used to stretch each card to 1/3 of the
-// screen width, which looked fine on a phone but turned into oversized
-// cards on a wide/desktop viewport. Matching search's fixed card size and
-// computing how many columns actually fit (rather than hardcoding 3) is
-// what lets a wide screen show many small cards instead of a few huge ones.
-const CARD_WIDTH = 150;
-const GRID_GAP = 16;
-const GRID_PADDING = 16;
+// Same card size/pitch as Profile's own "view all" grid (app/users/[id]/
+// list.tsx's CARD_WIDTH/CARD_MARGIN_RIGHT/GRID_PADDING) and Explore's search
+// results (its wrapGridItem, which mirrors these same constants) — one
+// fixed size that just naturally fits more columns on a wider screen via
+// numColumns below, rather than a separate phone/desktop size to keep in
+// sync by hand. This screen used to stretch each card to 1/3 of the screen
+// width, which looked fine on a phone but turned into oversized cards on a
+// wide/desktop viewport; 110 fits 3 per row on a typical ~390px phone (like
+// Profile's grid) and scales up from there.
+const CARD_WIDTH = 110;
+const GRID_GAP = 12;
+const GRID_PADDING = 12;
 
 // Module-level, not component state — this app's web build remounts a
 // screen from scratch on back-navigation rather than keeping it alive off-
@@ -100,9 +106,12 @@ export default function BrowseScreen() {
   const router = useRouter();
   const goBack = useGoBack("/(tabs)/explore");
   const colors = useColors();
-  const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, language } = useLanguage();
   const { width: windowWidth } = useWindowDimensions();
+  const styles = useMemo(
+    () => createStyles(colors, CARD_WIDTH, GRID_GAP, GRID_PADDING),
+    [colors],
+  );
   const numColumns = Math.max(1, Math.floor((windowWidth - GRID_PADDING * 2 + GRID_GAP) / (CARD_WIDTH + GRID_GAP)));
 
   const categoryConfig = params.category ? CATEGORY_PATHS[params.category] : undefined;
@@ -117,6 +126,38 @@ export default function BrowseScreen() {
   const [resolving, setResolving] = useState<number | null>(null);
   const listRef = useRef<FlatList<BrowseItem>>(null);
   const cacheKey = browseCacheKey(params.category, kind, genreId);
+
+  // The viewer's own tracked/favorited shows and movies — same idea as
+  // Explore's own cards (app/(tabs)/explore.tsx): favoriting/adding here
+  // always acts on your own account, regardless of which category/genre
+  // you're browsing. Fetched once on mount, not per genre/page change.
+  const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
+  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
+  const [movieTmdbMap, setMovieTmdbMap] = useState<Map<number, UserMovie>>(new Map());
+  // A TV item here only ever starts out as a TMDB id — every action on it
+  // (open, favorite, add) resolves to the matching TVmaze show first (see
+  // lib/tmdb.ts's findTvmazeShowFromTmdbTv, and explore.tsx's identical
+  // resolveTvmazeShow this mirrors), cached here so paging back to an
+  // already-resolved card doesn't re-resolve it.
+  const [resolvedTvShows, setResolvedTvShows] = useState<Map<number, TVMazeShow>>(new Map());
+  // Which card's favorite/add button is mid-resolve — distinct from
+  // `resolving` above, which is specifically for tapping the card itself to
+  // open it; a button tap shows its own small spinner instead of the
+  // whole-card overlay `resolving` drives.
+  const [actionPending, setActionPending] = useState<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchUserShows().then((r) => {
+      if (!active) return;
+      setAddedIds(new Set(r.map((s) => s.tvmaze_id)));
+      setFavoriteIds(new Set(r.filter((s) => s.is_favorite).map((s) => s.tvmaze_id)));
+    });
+    fetchUserMovieTmdbMap().then((m) => active && setMovieTmdbMap(m));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const title = categoryConfig ? t.explore[categoryConfig.titleKey] : (params.title as string) || t.explore.viewAll;
 
@@ -218,6 +259,18 @@ export default function BrowseScreen() {
       .finally(() => setLoadingMore(false));
   }
 
+  async function resolveTvmazeShow(item: TMDBTvResult): Promise<TVMazeShow | null> {
+    const cached = resolvedTvShows.get(item.id);
+    if (cached) return cached;
+    const resolved = await findTvmazeShowFromTmdbTv(item.id, "high");
+    if (!resolved) {
+      alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
+      return null;
+    }
+    setResolvedTvShows((prev) => new Map(prev).set(item.id, resolved));
+    return resolved;
+  }
+
   async function openItem(item: BrowseItem) {
     // navigatingAwayRef is already true from the card's own onPressIn — set
     // early enough to beat the spurious scroll-to-0 event (see onScroll's
@@ -229,16 +282,111 @@ export default function BrowseScreen() {
     }
     setResolving(item.id);
     try {
-      const resolved = await findTvmazeShowFromTmdbTv(item.id, "high");
+      const resolved = await resolveTvmazeShow(item as TMDBTvResult);
       if (resolved) {
         router.push(`/show/${resolved.id}`);
       } else {
         navigatingAwayRef.current = false;
-        alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
       }
     } finally {
       setResolving(null);
     }
+  }
+
+  // TVmaze-native add/favorite — used directly once a TV item has a real
+  // tvmaze id (either already resolved, or right after resolveTvmazeShow
+  // below resolves one). Mirrors explore.tsx's own quickAdd/toggleFavorite
+  // exactly, same underlying user_shows upsert.
+  async function quickAdd(show: TVMazeShow) {
+    if (addedIds.has(show.id)) {
+      await removeUserShow(show.id);
+      setAddedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(show.id);
+        return next;
+      });
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(show.id);
+        return next;
+      });
+    } else {
+      await upsertUserShow({
+        tvmaze_id: show.id,
+        show_name: show.name,
+        show_image: show.image?.medium ?? null,
+        status: "want_to_watch",
+      });
+      setAddedIds((prev) => new Set(prev).add(show.id));
+    }
+  }
+
+  async function toggleFavorite(show: TVMazeShow) {
+    const isFav = favoriteIds.has(show.id);
+    if (!addedIds.has(show.id)) {
+      await upsertUserShow({
+        tvmaze_id: show.id,
+        show_name: show.name,
+        show_image: show.image?.medium ?? null,
+        status: "want_to_watch",
+      });
+      setAddedIds((prev) => new Set(prev).add(show.id));
+    }
+    await setShowFavorite(show.id, !isFav);
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (isFav) next.delete(show.id);
+      else next.add(show.id);
+      return next;
+    });
+  }
+
+  async function quickAddTmdbShow(item: TMDBTvResult) {
+    setActionPending(item.id);
+    try {
+      const resolved = await resolveTvmazeShow(item);
+      if (resolved) await quickAdd(resolved);
+    } finally {
+      setActionPending((p) => (p === item.id ? null : p));
+    }
+  }
+
+  async function toggleFavoriteTmdbShow(item: TMDBTvResult) {
+    setActionPending(item.id);
+    try {
+      const resolved = await resolveTvmazeShow(item);
+      if (resolved) await toggleFavorite(resolved);
+    } finally {
+      setActionPending((p) => (p === item.id ? null : p));
+    }
+  }
+
+  // Movies already carry their own TMDB id as the id user_movies tracks by
+  // — no resolution step needed, same reasoning as explore.tsx's own
+  // quickAddMovie/toggleFavoriteMovie, which these mirror.
+  async function quickAddMovie(item: TMDBSearchResult) {
+    const existing = movieTmdbMap.get(item.id);
+    if (existing?.status === "want_to_watch") {
+      await removeUserMovie(existing.id);
+      setMovieTmdbMap((prev) => {
+        const next = new Map(prev);
+        next.delete(item.id);
+        return next;
+      });
+      return;
+    }
+    if (existing?.status === "watched") return;
+    const year = item.release_date ? Number(item.release_date.slice(0, 4)) : null;
+    const row = await addMovieToWatchlist(item.id, item.title, year, item.poster_path);
+    setMovieTmdbMap((prev) => new Map(prev).set(item.id, row));
+  }
+
+  async function toggleFavoriteMovie(item: TMDBSearchResult) {
+    const year = item.release_date ? Number(item.release_date.slice(0, 4)) : null;
+    const existing = movieTmdbMap.get(item.id);
+    const row = existing ?? (await addMovieToWatchlist(item.id, item.title, year, item.poster_path));
+    const updated = await setMovieFavorite(row.id, !row.is_favorite);
+    setMovieTmdbMap((prev) => new Map(prev).set(item.id, updated));
   }
 
   return (
@@ -291,6 +439,14 @@ export default function BrowseScreen() {
             const name = isTv(kind, item) ? item.name : (item as TMDBSearchResult).title;
             const date = isTv(kind, item) ? item.first_air_date : (item as TMDBSearchResult).release_date;
             const poster = posterUrl(item.poster_path, "w200");
+            // A TV item only knows whether it's already added/favorited once
+            // resolveTvmazeShow has resolved it at least once (see its own
+            // comment) — until then these just read as "not yet", same as
+            // explore.tsx's identical isAdded/isFavorite computation for its
+            // own TMDB-sourced show cards.
+            const resolvedId = isTv(kind, item) ? resolvedTvShows.get(item.id)?.id : undefined;
+            const isFav = kind === "movie" ? !!movieTmdbMap.get(item.id)?.is_favorite : resolvedId !== undefined && favoriteIds.has(resolvedId);
+            const isAddedNow = kind === "movie" ? movieTmdbMap.has(item.id) : resolvedId !== undefined && addedIds.has(resolvedId);
             return (
               <Pressable
                 style={styles.card}
@@ -304,18 +460,61 @@ export default function BrowseScreen() {
                 onPress={() => openItem(item)}
                 disabled={resolving === item.id}
               >
-                {poster ? (
-                  <Image source={{ uri: poster }} style={styles.poster} contentFit="cover" />
-                ) : (
-                  <View style={[styles.poster, styles.posterPlaceholder]}>
-                    <Text style={styles.posterPlaceholderText}>{name?.[0]}</Text>
+                <View style={styles.posterWrap}>
+                  {poster ? (
+                    <Image source={{ uri: poster }} style={styles.poster} contentFit="cover" />
+                  ) : (
+                    <View style={[styles.poster, styles.posterPlaceholder]}>
+                      <Text style={styles.posterPlaceholderText}>{name?.[0]}</Text>
+                    </View>
+                  )}
+                  {resolving === item.id && (
+                    <View style={styles.resolvingOverlay}>
+                      <ActivityIndicator color="#fff" />
+                    </View>
+                  )}
+                  {/* Same heart/add icon pair Explore's own cards show
+                      (ExploreCard/ExploreMovieCard) — stopPropagation on
+                      both onPressIn and onPress: onPressIn because the
+                      outer card's own onPressIn (navigatingAwayRef above)
+                      would otherwise fire too and permanently wedge the
+                      scroll-restoration guard on, onPress because without
+                      it tapping either icon would also openItem. */}
+                  <View style={styles.cardActions}>
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPressIn={(e) => e.stopPropagation()}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        if (kind === "movie") toggleFavoriteMovie(item as TMDBSearchResult);
+                        else toggleFavoriteTmdbShow(item as TMDBTvResult);
+                      }}
+                      hitSlop={4}
+                      accessibilityRole="button"
+                      accessibilityLabel="Favorite"
+                    >
+                      <Ionicons name={isFav ? "heart" : "heart-outline"} size={15} color={isFav ? colors.red : "#fff"} />
+                    </Pressable>
+                    <Pressable
+                      style={[styles.iconBtn, isAddedNow && styles.iconBtnActive]}
+                      onPressIn={(e) => e.stopPropagation()}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        if (kind === "movie") quickAddMovie(item as TMDBSearchResult);
+                        else quickAddTmdbShow(item as TMDBTvResult);
+                      }}
+                      hitSlop={4}
+                      accessibilityRole="button"
+                      accessibilityLabel="Add"
+                    >
+                      {actionPending === item.id ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Ionicons name={isAddedNow ? "checkmark" : "add"} size={16} color={isAddedNow ? colors.onAccent : "#fff"} />
+                      )}
+                    </Pressable>
                   </View>
-                )}
-                {resolving === item.id && (
-                  <View style={styles.resolvingOverlay}>
-                    <ActivityIndicator color="#fff" />
-                  </View>
-                )}
+                </View>
                 <Text style={styles.cardTitle} numberOfLines={2}>
                   {name}
                 </Text>
@@ -332,7 +531,7 @@ export default function BrowseScreen() {
   );
 }
 
-function createStyles(colors: Colors) {
+function createStyles(colors: Colors, CARD_WIDTH: number, GRID_GAP: number, GRID_PADDING: number) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     header: {
@@ -368,6 +567,10 @@ function createStyles(colors: Colors) {
     grid: { paddingHorizontal: GRID_PADDING, paddingBottom: 32 },
     row: { gap: GRID_GAP, justifyContent: "center" },
     card: { width: CARD_WIDTH, marginBottom: 16 },
+    // Wraps just the poster (not the title/meta text below it) so the
+    // resolving overlay and the favorite/add buttons can position
+    // themselves absolutely against the poster alone.
+    posterWrap: { position: "relative" },
     poster: { width: CARD_WIDTH, aspectRatio: 2 / 3, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
     posterPlaceholder: { alignItems: "center", justifyContent: "center" },
     posterPlaceholderText: { color: colors.textFaint, fontSize: type.display, fontWeight: "800" },
@@ -376,12 +579,25 @@ function createStyles(colors: Colors) {
       top: 0,
       left: 0,
       right: 0,
-      bottom: 24,
+      bottom: 0,
       borderRadius: radius.sm,
       backgroundColor: "rgba(0,0,0,0.4)",
       alignItems: "center",
       justifyContent: "center",
     },
+    // Matches Explore's own cardActions/iconBtn (app/(tabs)/explore.tsx's
+    // ExploreCard/ExploreMovieCard) so a card looks the same here as it
+    // does in search.
+    cardActions: { position: "absolute", top: 8, right: 8, gap: 6 },
+    iconBtn: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: "rgba(0,0,0,0.45)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    iconBtnActive: { backgroundColor: colors.accent },
     cardTitle: { color: colors.text, fontSize: 12, fontWeight: "700", marginTop: 6 },
     cardMeta: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   });

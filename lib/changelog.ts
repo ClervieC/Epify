@@ -15,6 +15,24 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.9",
+    date: "2026-09-29",
+    en: [
+      "Added favorite and \"add to my list\" buttons directly on the cards in Explore's and Profile's \"View all\" pages, so you don't have to open a show/movie first to act on it.",
+      "\"View all\" cards (Explore search, Explore's \"View all\", and Profile's \"View all\") are now all the same, smaller size — 3 per row on a phone instead of 1–2.",
+      "Fixed a Profile \"View all\" page not being centered when it only had a single card (or an uneven last row).",
+      "Added a bit of margin to the \"Shows\"/\"Movies\" section titles in search results — they were sitting flush against the screen edge.",
+      "The Social feed no longer hides a same-day binge of more than 25 episodes entirely — it now shows as \"watched 25+ episodes of [show]\" instead of the full episode-by-episode list.",
+    ],
+    fr: [
+      "Ajout des boutons favori et \"ajouter à ma liste\" directement sur les cards des pages \"Voir tout\" de l'Explore et du Profil, plus besoin d'ouvrir une série/un film pour agir dessus.",
+      "Les cards des pages \"Voir tout\" (recherche Explore, \"Voir tout\" de l'Explore, \"Voir tout\" du Profil) ont maintenant toutes la même taille, plus petite — 3 par ligne sur téléphone au lieu de 1-2.",
+      "Correction d'une page \"Voir tout\" du Profil pas centrée quand elle n'avait qu'une seule card (ou une dernière rangée incomplète).",
+      "Ajout d'une marge aux titres \"Séries\"/\"Films\" dans les résultats de recherche — ils étaient collés au bord de l'écran.",
+      "Le fil Social ne masque plus entièrement un visionnage de plus de 25 épisodes en une journée — il affiche maintenant \"a regardé 25+ épisodes de [série]\" au lieu de la liste détaillée des épisodes.",
+    ],
+  },
+  {
     version: "5.1.8",
     date: "2026-09-28",
     en: [

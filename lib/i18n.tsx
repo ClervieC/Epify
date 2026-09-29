@@ -108,6 +108,12 @@ const en = {
     watchedEpisode: (season: number, number: number) =>
       `watched S${season}E${number} of`,
     watchedEpisodes: (count: number) => `watched ${count} episode${count > 1 ? "s" : ""} of`,
+    // A same-day binge past BULK_MARK_HIDE_THRESHOLD (app/(tabs)/activity.tsx)
+    // almost always means catching up a backlog (or a bulk "mark season
+    // watched") rather than real activity — worth a mention, but the
+    // episode-by-episode detail isn't, so this row shows a flat "25+" count
+    // instead of the exact number and skips the expand/episode list entirely.
+    watchedManyEpisodes: (threshold: number) => `watched ${threshold}+ episodes of`,
     watchedMovie: "watched",
     commentedOnShow: "commented on",
     commentedOnEpisode: "commented on an episode of",
@@ -688,6 +694,7 @@ const fr: typeof en = {
     watchedEpisode: (season: number, number: number) =>
       `a regardé S${season}E${number} de`,
     watchedEpisodes: (count: number) => `a regardé ${count} épisode${count > 1 ? "s" : ""} de`,
+    watchedManyEpisodes: (threshold: number) => `a regardé ${threshold}+ épisodes de`,
     watchedMovie: "a regardé",
     commentedOnShow: "a commenté",
     commentedOnEpisode: "a commenté un épisode de",

@@ -98,7 +98,13 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8090)",
       "Bash(node e2e/_tmp_report_modal.mjs)",
       "Bash(node e2e/_tmp_profile_viewall.mjs)",
-      "Bash(node e2e/_tmp_chip_height.mjs)"
+      "Bash(node e2e/_tmp_chip_height.mjs)",
+      "Bash(node e2e/_tmp_final_verify.mjs)",
+      "Bash(node e2e/_tmp_search_margin.mjs)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8090/)",
+      "Bash(node e2e/_tmp_card_size.mjs)",
+      "Bash(node e2e/_tmp_verify2.mjs)"
     ],
     "additionalDirectories": [
       "/Users/clervie/Desktop/Projects/Epify/app/show/tmdb",
