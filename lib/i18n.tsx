@@ -160,15 +160,31 @@ const en = {
     newShowsLabel: "shows started",
     daysActiveLabel: "days active",
     topShowLabel: "Most watched show",
+    // Month mode's ranked list header (Year mode keeps the single
+    // topShowLabel card above instead — see app/recap.tsx).
+    topShowsLabel: "Top 5 shows",
+    // RecapShareCard's featured-item label when the period's most-watched
+    // thing was a movie rather than a show (no episodes watched at all, or
+    // just fewer than the movie's own rewatch count — see its own
+    // `featured` comment).
+    topMovieLabel: "Most watched movie",
     topGenreLabel: "Favorite genre",
-    empty: (year: number) => `Nothing watched in ${year} yet.`,
-    shareTitle: (year: number) => `My ${year} on Epify`,
+    modeYear: "Year",
+    modeMonth: "Month",
+    // Takes a period label ("2026" for Year mode, "September 2026" for
+    // Month mode — see app/recap.tsx's periodLabel) rather than a bare
+    // year number, now that this screen covers both.
+    empty: (period: string) => `Nothing watched in ${period} yet.`,
+    shareTitle: (period: string) => `My ${period} on Epify`,
     totalWatchTime: (h: string) => `${h}h watched`,
     episodeCount: (n: number) => `${n} episodes`,
     movieCount: (n: number) => `${n} movies`,
     topShowLine: (name: string) => `Most watched: ${name}`,
+    topShowsLine: (names: string) => `Top shows: ${names}`,
     topGenreLine: (genre: string) => `Favorite genre: ${genre}`,
-    notAvailable: "Your recap opens up in the last week of December.",
+    // components/NewMonthRecapToast.tsx — fires once, the first time this
+    // device opens the app after a new month's recap becomes available.
+    monthlyToast: (monthLabel: string) => `Your ${monthLabel} recap is ready`,
   },
   calendar: {
     toggleMonth: "Month",
@@ -256,6 +272,11 @@ const en = {
   profile: {
     recapTitle: (year: number) => `Your ${year} recap`,
     recapSubtitle: "See your year in shows and movies",
+    // Shown instead of the two above outside the seasonal year-recap window
+    // (see isRecapAvailable in lib/recap.ts) — points at the always-available
+    // Month mode of the same screen instead.
+    recapMonthlyTitle: "Monthly recap",
+    recapMonthlySubtitle: "See this month in shows and movies",
     changePhoto: "Change photo",
     changePhotoFailed: "Couldn't update your photo. Try again.",
     streaksTitle: "Streaks & badges",
@@ -742,15 +763,20 @@ const fr: typeof en = {
     newShowsLabel: "séries commencées",
     daysActiveLabel: "jours actifs",
     topShowLabel: "Série la plus regardée",
+    topShowsLabel: "Top 5 séries",
+    topMovieLabel: "Film le plus regardé",
     topGenreLabel: "Genre préféré",
-    empty: (year: number) => `Rien regardé en ${year} pour l'instant.`,
-    shareTitle: (year: number) => `Mon année ${year} sur Epify`,
+    modeYear: "Année",
+    modeMonth: "Mois",
+    empty: (period: string) => `Rien regardé en ${period} pour l'instant.`,
+    shareTitle: (period: string) => `Mon ${period} sur Epify`,
     totalWatchTime: (h: string) => `${h}h regardées`,
     episodeCount: (n: number) => `${n} épisodes`,
     movieCount: (n: number) => `${n} films`,
     topShowLine: (name: string) => `Plus regardée : ${name}`,
+    topShowsLine: (names: string) => `Top séries : ${names}`,
     topGenreLine: (genre: string) => `Genre préféré : ${genre}`,
-    notAvailable: "Ton bilan s'ouvre la dernière semaine de décembre.",
+    monthlyToast: (monthLabel: string) => `Ton bilan de ${monthLabel} est prêt`,
   },
   calendar: {
     toggleMonth: "Mois",
@@ -831,6 +857,8 @@ const fr: typeof en = {
   profile: {
     recapTitle: (year: number) => `Ton bilan ${year}`,
     recapSubtitle: "Découvre ton année séries et films",
+    recapMonthlyTitle: "Bilan du mois",
+    recapMonthlySubtitle: "Découvre ton mois séries et films",
     changePhoto: "Changer la photo",
     changePhotoFailed: "Impossible de mettre à jour ta photo. Réessaie.",
     streaksTitle: "Séries de jours & badges",

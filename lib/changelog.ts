@@ -15,6 +15,22 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.10",
+    date: "2026-10-01",
+    en: [
+      "Added a Monthly Recap — hours watched, episodes, movies, and your most-watched show/movie for any month you've finished, found on the Social tab. A small banner lets you know as soon as a new one's ready.",
+      "Your Year recap now also shows any past year, anytime — previously it only worked during the late-December/mid-January window. That window is still when the current year's own Wrapped opens up.",
+      "Sharing a recap now shares an actual photo card (with a blurred poster background) instead of plain text, so it looks right when posted to Instagram/etc.",
+      "Fixed the year recap banner on your profile showing the wrong year during the first two weeks of January.",
+    ],
+    fr: [
+      "Ajout d'un bilan mensuel — temps regardé, épisodes, films, et ta série/film le plus regardé pour n'importe quel mois déjà terminé, sur l'onglet Social. Une petite bannière te prévient dès qu'un nouveau est prêt.",
+      "Ton bilan annuel montre maintenant aussi n'importe quelle année passée, à tout moment — avant ça ne marchait que pendant la fenêtre fin décembre/mi-janvier. Cette fenêtre reste nécessaire pour le bilan de l'année en cours.",
+      "Partager un bilan partage maintenant une vraie photo (avec un fond flouté à partir d'un poster) au lieu de texte brut, pour que ça rende bien une fois posté sur Instagram/etc.",
+      "Correction de la bannière de bilan annuel sur le profil qui affichait la mauvaise année pendant les deux premières semaines de janvier.",
+    ],
+  },
+  {
     version: "5.1.9",
     date: "2026-09-29",
     en: [

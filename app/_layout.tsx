@@ -20,6 +20,7 @@ import { ThemeProvider, useThemeMode } from "../lib/theme";
 import { AppSplash } from "../components/AppSplash";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OfflineBanner } from "../components/OfflineBanner";
+import { NewMonthRecapToast } from "../components/NewMonthRecapToast";
 import * as Sentry from '@sentry/react-native';
 
 Sentry.init({
@@ -129,6 +130,22 @@ function RootNavigation() {
       </Stack>
       <AppSplash visible={showSplash} />
       <OfflineBanner />
+      {/* Deliberately NOT mounted on the Shows tab (where NewVersionToast
+          lives) — that tab/screen actually mounts several times in quick
+          succession during the auth-settling boot sequence (initial route
+          resolution, then the real one once session/dataReady land), each
+          one a fresh component instance with its own local `visible`
+          state. A toast fired on an early, still-hidden-behind-AppSplash
+          mount never reaches the user, and by the time the final settled
+          mount runs, its own check already finds "seen" (written by that
+          earlier mount) and skips showing anything at all — confirmed by
+          instrumenting it. RootNavigation itself only mounts once per real
+          app session regardless of that dance. Gated on session too, not
+          just !showSplash — without it this fired on the login screen
+          itself (showSplash clears there too, independent of being
+          authenticated), burning the "seen" marker before the user had
+          even reached any real content. */}
+      {!showSplash && session && <NewMonthRecapToast />}
     </>
   );
 }

@@ -52,7 +52,7 @@ import { fetchMyProfile, uploadAvatar, Profile } from "../../lib/profiles";
 import { fetchFollowCounts } from "../../lib/follows";
 import { fetchOpenReportCount } from "../../lib/reports";
 import { fetchSupportNeedsResponseCount } from "../../lib/support";
-import { isRecapAvailable } from "../../lib/recap";
+import { isRecapAvailable, maxViewableYear } from "../../lib/recap";
 import {
   computeStreakData,
   loadLocalStreakData,
@@ -621,21 +621,25 @@ export default function ProfileScreen() {
           <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
         </Pressable>
 
+        {/* Year "Wrapped" only, shown just during its own seasonal window
+            (isRecapAvailable) — the always-available Monthly recap now has
+            its own entry point on the Social tab instead (see
+            app/(tabs)/activity.tsx) rather than living here too. */}
         {isRecapAvailable() && (
           <Pressable
             style={styles.recapBanner}
-            onPress={() => router.push("/recap")}
+            onPress={() => router.push({ pathname: "/recap", params: { mode: "year" } })}
           >
             <View style={styles.recapBannerIcon}>
               <Ionicons name="sparkles" size={20} color={colors.onAccent} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.recapBannerTitle}>
-                {t.profile.recapTitle(new Date().getFullYear())}
-              </Text>
-              <Text style={styles.recapBannerSubtitle}>
-                {t.profile.recapSubtitle}
-              </Text>
+              {/* maxViewableYear, not literally new Date().getFullYear() —
+                  during the Jan 1-14 stretch of this same window, the
+                  recap being celebrated is still last calendar year's,
+                  not this one's (see lib/recap.ts's own comment). */}
+              <Text style={styles.recapBannerTitle}>{t.profile.recapTitle(maxViewableYear())}</Text>
+              <Text style={styles.recapBannerSubtitle}>{t.profile.recapSubtitle}</Text>
             </View>
             <Ionicons
               name="chevron-forward"

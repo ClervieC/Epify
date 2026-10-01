@@ -650,6 +650,28 @@ export default function ActivityScreen() {
         </Pressable>
       </View>
 
+      {/* Lives here rather than on Profile (see its own comment there) —
+          "what your friends are watching" and "what you watched this
+          month" both read as activity/social content, and Month mode has
+          no window of its own to gate this on (unlike Profile's Year
+          "Wrapped" banner), so it's always shown. Activity-tab only, not
+          Suggested — that tab is about finding people, not watch stats. */}
+      {tab === "activity" && (
+        <Pressable
+          style={styles.recapBanner}
+          onPress={() => router.push({ pathname: "/recap", params: { mode: "month", back: "social" } })}
+        >
+          <View style={styles.recapBannerIcon}>
+            <Ionicons name="sparkles" size={20} color={colors.onAccent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.recapBannerTitle}>{t.profile.recapMonthlyTitle}</Text>
+            <Text style={styles.recapBannerSubtitle}>{t.profile.recapMonthlySubtitle}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.onAccent} />
+        </Pressable>
+      )}
+
       {tab === "activity" ? (
         loading ? (
           <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
@@ -796,6 +818,29 @@ function createStyles(colors: Colors) {
     tabText: { fontWeight: "800", fontSize: 13, color: colors.textFaint, letterSpacing: 0.4 },
     tabTextActive: { color: colors.accent },
     tabUnderline: { height: 2, backgroundColor: colors.accent, width: "60%", marginTop: 6 },
+    // Mirrors app/(tabs)/profile.tsx's own recapBanner styles exactly — same
+    // banner, just relocated (see its own comment above for why).
+    recapBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      marginHorizontal: 16,
+      marginTop: 14,
+      marginBottom: 14,
+      padding: 14,
+      borderRadius: radius.lg,
+      backgroundColor: colors.accent,
+    },
+    recapBannerIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: radius.pill,
+      backgroundColor: "rgba(255,255,255,0.2)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    recapBannerTitle: { color: colors.onAccent, fontWeight: "800", fontSize: 14 },
+    recapBannerSubtitle: { color: colors.onAccent, opacity: 0.85, fontSize: 12, marginTop: 2 },
     searchBar: {
       flexDirection: "row",
       alignItems: "center",
