@@ -1,8 +1,109 @@
+import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
 import { getCachedShow } from "./showDataCache";
 import { getShow } from "./tvmaze";
 import { mapWithConcurrency } from "./concurrency";
 import { posterUrl } from "./tmdb";
+
+// Two-layer cache for a *finished* period's recap, same shape as
+// show_stats_cache/lib/showStats.ts's own local+Supabase pair:
+//   1. An IndexedDB-backed local mirror (see the identical comment in
+//      lib/showDataCache.ts/lib/showStats.ts for why — not the default
+//      AsyncStorage export, which is a localStorage-backed singleton with a
+//      much smaller quota) — zero network round trips at all on a repeat
+//      visit from the *same* device.
+//   2. recap_cache in Supabase (see supabase/schema.sql) — one row per
+//      (user, period). A miss on #1 but a hit here still skips the real
+//      computation (a watched_episodes/user_movies scan plus up to 15
+//      TVmaze show fetches), and also warms #1 for next time. This is what
+//      makes a different device, or a cleared local cache, still skip that
+//      work instead of paying for it again.
+// Safe to cache this aggressively (effectively forever, not just "for a
+// while") because every period computeRecap can even be asked for is
+// already fully over — see lastViewableMonth/maxViewableYear below, which
+// structurally keep the current, still-changing period from ever reaching
+// this function at all.
+const recapCache = createAsyncStorage("recap_cache");
+// Bumped whenever RecapData's shape changes — a cached entry from an older
+// version is missing fields the UI now assumes exist (e.g. topMovies before
+// it was added), so a version mismatch is treated as a cache miss instead of
+// returning a shape the screen can't render. Shared by both cache layers —
+// an old Supabase row fails the same check as an old local one.
+const RECAP_CACHE_SCHEMA_VERSION = 2;
+interface CachedRecapEntry {
+  schemaVersion: number;
+  data: RecapData;
+}
+
+function recapCacheKey(period: RecapPeriod): string {
+  return period.kind === "year" ? `year:${period.year}` : `month:${period.year}-${String(period.month + 1).padStart(2, "0")}`;
+}
+
+async function readLocalRecapCache(period: RecapPeriod): Promise<RecapData | null> {
+  try {
+    const raw = await recapCache.getItem(recapCacheKey(period));
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as CachedRecapEntry;
+    if (entry.schemaVersion !== RECAP_CACHE_SCHEMA_VERSION) return null;
+    return entry.data;
+  } catch {
+    return null;
+  }
+}
+
+async function writeLocalRecapCache(period: RecapPeriod, data: RecapData): Promise<void> {
+  try {
+    const entry: CachedRecapEntry = { schemaVersion: RECAP_CACHE_SCHEMA_VERSION, data };
+    await recapCache.setItem(recapCacheKey(period), JSON.stringify(entry));
+  } catch {
+    // Best-effort — worst case this period just recomputes again next visit.
+  }
+}
+
+// `payload` carries the same {schemaVersion, data} shape as the local
+// cache's own stored JSON — one schema check covers both layers.
+async function readSupabaseRecapCache(userId: string, period: RecapPeriod): Promise<RecapData | null> {
+  try {
+    const { data, error } = await supabase
+      .from("recap_cache")
+      .select("payload")
+      .eq("user_id", userId)
+      .eq("period_key", recapCacheKey(period))
+      .maybeSingle();
+    if (error || !data) return null;
+    const entry = data.payload as CachedRecapEntry;
+    if (entry.schemaVersion !== RECAP_CACHE_SCHEMA_VERSION) return null;
+    return entry.data;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSupabaseRecapCache(userId: string, period: RecapPeriod, data: RecapData): Promise<void> {
+  try {
+    const entry: CachedRecapEntry = { schemaVersion: RECAP_CACHE_SCHEMA_VERSION, data };
+    await supabase
+      .from("recap_cache")
+      .upsert({ user_id: userId, period_key: recapCacheKey(period), payload: entry }, { onConflict: "user_id,period_key" });
+  } catch {
+    // Best-effort — worst case this period just recomputes again next visit
+    // (on this device or any other).
+  }
+}
+
+// Called on sign-out (see context/AuthContext.tsx) — this cache's local
+// storage keys have no user id in them, so without clearing it, signing
+// into a different account on the same device would show the previous
+// account's recap numbers under what looks like a fresh period. The
+// Supabase layer doesn't need this (every row is already scoped by
+// user_id/RLS).
+export async function clearLocalRecapCache(): Promise<void> {
+  try {
+    await recapCache.clear();
+  } catch {
+    // Best-effort.
+  }
+}
 
 const AVG_EPISODE_MINUTES = 42;
 const AVG_MOVIE_MINUTES = 110;
@@ -150,17 +251,29 @@ function emptyRecap(period: RecapPeriod): RecapData {
 }
 
 // Covers both a once-a-year computation (Year mode) and a once-a-month one
-// (Month mode) — see app/recap.tsx. Neither is cached anywhere the way
-// lib/showStats.ts's day-to-day stats are: a past period's watch history
-// never changes once it's over, so there's no staleness to guard against,
-// and re-running this on repeat visits to the screen is cheap enough (one
-// page of history for that period, not the full account like showStats
-// scans). The current, still-in-progress month recomputes fresh each visit
-// for the same reason — it's cheap, and it's the one period actually still
-// changing.
+// (Month mode) — see app/recap.tsx. Checks the two-layer cache above first
+// (local, then Supabase): every period this can even be asked for is
+// already fully over (see lastViewableMonth/maxViewableYear), so its watch
+// history is settled and the result computed here is good forever, not
+// just "good enough for now" — a cache hit skips the watched_episodes/
+// user_movies scan and every TVmaze show fetch entirely. A miss on both
+// falls through to the real computation below and writes its result to
+// both layers before returning, so only the very first visit to a given
+// period, on any device, ever pays for it.
 export async function computeRecap(period: RecapPeriod): Promise<RecapData> {
   const userId = await getCurrentUserId();
   if (!userId) return emptyRecap(period);
+
+  const local = await readLocalRecapCache(period);
+  if (local) return local;
+
+  const fromSupabase = await readSupabaseRecapCache(userId, period);
+  if (fromSupabase) {
+    // Warms the local layer so the *next* visit on this device skips even
+    // the Supabase round trip — fire-and-forget, doesn't block the return.
+    writeLocalRecapCache(period, fromSupabase);
+    return fromSupabase;
+  }
 
   const { start, end } = periodBounds(period);
 
@@ -267,7 +380,7 @@ export async function computeRecap(period: RecapPeriod): Promise<RecapData> {
   const totalMoviesWatched = movies.length;
   const totalWatchTimeMinutes = totalEpisodesWatched * AVG_EPISODE_MINUTES + totalMoviesWatched * AVG_MOVIE_MINUTES;
 
-  return {
+  const result: RecapData = {
     period,
     totalEpisodesWatched,
     totalMoviesWatched,
@@ -278,4 +391,10 @@ export async function computeRecap(period: RecapPeriod): Promise<RecapData> {
     newShowsStarted,
     daysActive: daysActive.size,
   };
+  await writeLocalRecapCache(period, result);
+  // Fire-and-forget — the caller already has what it needs; this is purely
+  // so other devices (and this one, after a cleared cache) skip the work
+  // next time too.
+  writeSupabaseRecapCache(userId, period, result);
+  return result;
 }

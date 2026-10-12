@@ -1400,3 +1400,43 @@ select cron.schedule(
   );
   $$
 );
+
+-- ============================================================
+-- Recap cache — app/recap.tsx's Month/Year recap (lib/recap.ts) needs a
+-- watched_episodes/user_movies scan plus up to 15 TVmaze show fetches per
+-- period; since every period it can even be asked for is already fully
+-- over (see lastViewableMonth/maxViewableYear in lib/recap.ts — the
+-- current, still-in-progress one is never computed at all), that result
+-- never changes once computed, so it's worth keeping instead of redoing on
+-- every visit. One row per (user, period) holding the computed result as
+-- JSON.
+--
+-- lib/recap.ts also keeps a local IndexedDB mirror of this (its own
+-- recapCache) — that one skips even this row's own read on a repeat visit
+-- from the *same* device; this table is what makes a different device, or
+-- a cleared local cache, still skip the real computation instead of paying
+-- for it again, the same two-layer shape as show_stats_cache above plus
+-- its own lib/showStats.ts local mirror.
+--
+-- period_key mirrors lib/recap.ts's own recapCacheKey format exactly
+-- ("year:2025" / "month:2026-09") rather than separate year/month columns
+-- or a generated key — nothing here ever queries across periods, always
+-- one exact row by its own key.
+--
+-- Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.recap_cache (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  period_key text not null,
+  payload jsonb not null,
+  computed_at timestamptz not null default now(),
+  primary key (user_id, period_key)
+);
+
+alter table public.recap_cache enable row level security;
+
+create policy "Users manage their own recap cache"
+  on public.recap_cache
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);

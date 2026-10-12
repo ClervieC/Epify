@@ -286,17 +286,25 @@ export default function EpisodeDetailScreen() {
       watched: !isWatched,
     });
     setWatchedMap((prev) => ({ ...prev, [episode.id]: result }));
+    // ensureInList() only applies when marking watched (an untracked show
+    // can't have a watched episode to un-mark in the first place).
     if (!isWatched) {
       await ensureInList();
-      // Resumes a paused/dropped show back to "watching" server-side (see
-      // resumeIfPausedOrDropped in lib/userShows.ts) — mirrored in local
-      // state so a status-dependent UI here wouldn't show stale paused/
-      // dropped state until the next full reload.
-      setUserShow((prev) =>
-        prev && (prev.status === "paused" || prev.status === "dropped") ? { ...prev, status: "watching" } : prev
-      );
       if (isSeriesFinale(episode)) showFinaleToast();
     }
+    // Resumes a paused/dropped/watched show back to "watching" server-side
+    // (see resumeIfNotActivelyWatching in lib/userShows.ts) — mirrored in
+    // local state so a status-dependent UI here wouldn't show stale status
+    // until the next full reload. Applies either direction: marking an
+    // episode watched clearly means re-engaging with a paused/dropped show,
+    // and un-marking one on a fully-"Watched" show means it no longer
+    // honestly is — either way "Watched"/"Paused"/"Dropped" is now the
+    // wrong status for it.
+    setUserShow((prev) =>
+      prev && (prev.status === "paused" || prev.status === "dropped" || prev.status === "watched")
+        ? { ...prev, status: "watching" }
+        : prev,
+    );
   }
 
   async function rewatchEpisode(episode: TVMazeEpisode) {

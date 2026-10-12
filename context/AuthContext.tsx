@@ -17,6 +17,7 @@ import { clearFollowingIdsCache } from "../lib/follows";
 import { clearMyProfileCache } from "../lib/profiles";
 import { clearOpenReportCountCache } from "../lib/reports";
 import { clearSupportNeedsResponseCountCache } from "../lib/support";
+import { clearLocalRecapCache } from "../lib/recap";
 import { alert } from "../lib/alert";
 import { shouldShowOnboarding } from "../lib/onboarding";
 
@@ -41,6 +42,7 @@ function clearUserScopedCaches() {
   clearMyProfileCache();
   clearOpenReportCountCache();
   clearSupportNeedsResponseCountCache();
+  clearLocalRecapCache();
 }
 
 interface AuthContextValue {

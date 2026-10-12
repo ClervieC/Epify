@@ -15,16 +15,20 @@ const USER_SHOWS_CACHE_KEY = "user_shows_v1";
 
 export type ShowStatus = "watching" | "want_to_watch" | "watched" | "dropped" | "paused";
 
-// Marking a new episode watched, or adding a show to a custom list, means
-// the user is actively engaging with it again — leaving its status stuck on
-// "Paused"/"Dropped" while that happens reads as a bug (the show never
-// reappears in Watch Next, stays hidden in Profile's paused/dropped rows).
-// A single scoped UPDATE (not a read-then-write) — the WHERE clause itself
-// makes this a no-op for a show that's already watching/want_to_watch/fully
-// watched, or not tracked at all. Best-effort: never throws, since this is a
-// side effect of the real action (mark watched / add to list), not the
-// action itself.
-async function resumeIfPausedOrDropped(tvmazeId: number) {
+// Marking an episode watched/unwatched, or adding a show to a custom list,
+// means the user is actively engaging with it again — leaving its status
+// stuck on "Paused"/"Dropped"/"Watched" while that happens reads as a bug
+// (the show never reappears in Watch Next, stays hidden in Profile's
+// paused/dropped rows). "Watched" belongs in this list too, not just
+// paused/dropped: un-marking an episode on a fully-watched show leaves it
+// with an unwatched episode again, so "Watched" is now simply the wrong
+// status for it, the same way it'd be wrong to leave a show "Paused" once
+// you're actively watching it again. A single scoped UPDATE (not a
+// read-then-write) — the WHERE clause itself makes this a no-op for a show
+// that's already watching/want_to_watch, or not tracked at all. Best-effort:
+// never throws, since this is a side effect of the real action (mark
+// watched/unwatched, add to list), not the action itself.
+async function resumeIfNotActivelyWatching(tvmazeId: number) {
   const userId = await getCurrentUserId();
   if (!userId) return;
   try {
@@ -33,7 +37,7 @@ async function resumeIfPausedOrDropped(tvmazeId: number) {
       .update({ status: "watching" })
       .eq("user_id", userId)
       .eq("tvmaze_id", tvmazeId)
-      .in("status", ["paused", "dropped"]);
+      .in("status", ["paused", "dropped", "watched"]);
   } catch {
     // Best-effort — see comment above.
   }
@@ -61,7 +65,7 @@ export async function setShowWatchingIfWatched(tvmazeId: number): Promise<void> 
       .eq("tvmaze_id", tvmazeId)
       .eq("status", "watched");
   } catch {
-    // Best-effort — see resumeIfPausedOrDropped's comment above.
+    // Best-effort — see resumeIfNotActivelyWatching's comment above.
   }
 }
 
@@ -335,7 +339,7 @@ export async function addShowToList(
     { onConflict: "list_id,tvmaze_id" }
   );
   if (error) throw error;
-  await resumeIfPausedOrDropped(show.tvmaze_id);
+  await resumeIfNotActivelyWatching(show.tvmaze_id);
 }
 
 // Removes one show from one custom list only — leaves the show's own
@@ -522,6 +526,13 @@ export async function setEpisodeWatched(params: {
     patchCachedWatchedEpisodes(params.tvmaze_show_id, (prev) =>
       prev.filter((w) => w.tvmaze_episode_id !== params.tvmaze_episode_id)
     );
+    // A show marked "Watched"/"Paused"/"Dropped" no longer honestly is once
+    // one of its episodes goes back to unwatched — see
+    // resumeIfNotActivelyWatching's own comment. Without this, un-marking
+    // the last episode of a finished show left it stuck "Watched" forever:
+    // invisible in Watch Next, with no way back onto the Shows tab short of
+    // manually changing its status.
+    await resumeIfNotActivelyWatching(params.tvmaze_show_id);
     return null;
   }
 
@@ -546,7 +557,7 @@ export async function setEpisodeWatched(params: {
     ...prev.filter((w) => w.tvmaze_episode_id !== params.tvmaze_episode_id),
     row,
   ]);
-  await resumeIfPausedOrDropped(params.tvmaze_show_id);
+  await resumeIfNotActivelyWatching(params.tvmaze_show_id);
   checkBadgesNow();
   return row;
 }
@@ -577,7 +588,7 @@ export async function setEpisodesWatched(
   const rows = data as WatchedEpisode[];
   const newIds = new Set(rows.map((r) => r.tvmaze_episode_id));
   patchCachedWatchedEpisodes(showId, (prev) => [...prev.filter((w) => !newIds.has(w.tvmaze_episode_id)), ...rows]);
-  await resumeIfPausedOrDropped(showId);
+  await resumeIfNotActivelyWatching(showId);
   checkBadgesNow();
 }
 
@@ -594,6 +605,9 @@ export async function setEpisodesUnwatched(showId: number, episodeIds: number[])
   if (error) throw error;
   const removed = new Set(episodeIds);
   patchCachedWatchedEpisodes(showId, (prev) => prev.filter((w) => !removed.has(w.tvmaze_episode_id)));
+  // See the identical call (and comment) in setEpisodeWatched's own unwatch
+  // branch above — same reasoning, just the bulk "unmark a season" path.
+  await resumeIfNotActivelyWatching(showId);
 }
 
 // Bulk version of incrementRewatch — used to mark a whole season/show as

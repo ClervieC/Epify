@@ -15,6 +15,26 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.12",
+    date: "2026-10-12",
+    en: [
+      "Recap (Monthly/Year) now loads instantly after the first time you check a given month/year — it's saved instead of being recomputed every single visit, on this device and any other you're signed into.",
+    ],
+    fr: [
+      "Le bilan (mensuel/annuel) se charge maintenant instantanément après la première fois que tu consultes un mois/une année donné — il est sauvegardé au lieu d'être recalculé à chaque visite, sur cet appareil et tout autre où tu es connecté.",
+    ],
+  },
+  {
+    version: "5.1.11",
+    date: "2026-10-12",
+    en: [
+      "Fixed unmarking an episode on a finished show not bringing it back to Watch Next/your list — it stayed stuck as \"Watched\" (same for a Paused/Dropped show) no matter what you unwatched.",
+    ],
+    fr: [
+      "Correction d'un bug où décocher un épisode d'une série terminée ne la ramenait pas dans Watch Next/ta liste — elle restait bloquée sur \"Vue\" (pareil pour une série en pause/abandonnée), peu importe ce que tu décochais.",
+    ],
+  },
+  {
     version: "5.1.10",
     date: "2026-10-01",
     en: [

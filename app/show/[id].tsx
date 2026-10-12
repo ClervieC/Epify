@@ -448,12 +448,17 @@ export default function ShowDetailScreen() {
     setListPickerOpen(true);
   }
 
-  // Adding to a list resumes a paused/dropped show back to "watching"
-  // server-side (see resumeIfPausedOrDropped in lib/userShows.ts) — mirrored
-  // here so the status pill/menu update immediately instead of only after
-  // the next full reload.
+  // Adding to a list, or marking/unmarking an episode, resumes a
+  // paused/dropped/watched show back to "watching" server-side (see
+  // resumeIfNotActivelyWatching in lib/userShows.ts) — mirrored here so the
+  // status pill/menu update immediately instead of only after the next full
+  // reload.
   function resumeUserShowIfNeeded() {
-    setUserShow((prev) => (prev && (prev.status === "paused" || prev.status === "dropped") ? { ...prev, status: "watching" } : prev));
+    setUserShow((prev) =>
+      prev && (prev.status === "paused" || prev.status === "dropped" || prev.status === "watched")
+        ? { ...prev, status: "watching" }
+        : prev,
+    );
   }
 
   async function handleAddToList(listId: string) {
@@ -539,10 +544,11 @@ export default function ShowDetailScreen() {
         ? prev.filter((w) => w.tvmaze_episode_id !== ep.id)
         : [...prev, { tvmaze_episode_id: ep.id, season: ep.season, number: ep.number, times_watched: 1 } as WatchedEpisode]
     );
-    if (!isWatched) {
-      await ensureInList();
-      resumeUserShowIfNeeded();
-    }
+    // ensureInList() only applies when marking watched (an untracked show
+    // can't have a watched episode to un-mark in the first place) —
+    // resumeUserShowIfNeeded() applies either way (see its own comment).
+    if (!isWatched) await ensureInList();
+    resumeUserShowIfNeeded();
   }
 
   async function rewatchEpisode(ep: TVMazeEpisode) {
@@ -586,6 +592,7 @@ export default function ShowDetailScreen() {
     if (ids.length === 0) return;
     await setEpisodesUnwatched(showId, ids);
     setWatched((prev) => prev.filter((w) => !ids.includes(w.tvmaze_episode_id)));
+    resumeUserShowIfNeeded();
   }
 
   async function rewatchSeason(eps: TVMazeEpisode[]) {
