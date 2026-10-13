@@ -20,10 +20,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     en: [
       "On someone else's profile, shows and movies you already have in your list now show a checkmark on the poster (tap it to add/remove, just like on your own \"View all\" pages).",
       "Movies on your own profile now display the same way as shows — removed the separate watched-checkmark overlay.",
+      "Fixed the \"How did it make you feel?\" popup's last row of emotions sitting right against (or under) the home indicator on phone — it's pushed up out of the way now.",
     ],
     fr: [
       "Sur le profil de quelqu'un d'autre, les séries et films déjà dans ta liste affichent maintenant une coche sur le poster (appuie dessus pour ajouter/retirer, comme sur tes pages \"Voir tout\").",
       "Les films sur ton propre profil s'affichent maintenant comme les séries — suppression de l'overlay \"vu\" séparé.",
+      "Correction de la dernière ligne d'émotions du popup \"Comment tu t'es senti(e) ?\" collée contre (voire sous) la barre d'accueil sur téléphone — elle est maintenant remontée.",
     ],
   },
   {

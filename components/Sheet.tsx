@@ -1,5 +1,6 @@
 import { ReactNode, useMemo } from "react";
 import { Animated, Platform, Pressable, StyleSheet, useWindowDimensions, ViewStyle } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors, radius, dropShadow, Colors } from "../lib/theme";
 import { useSheetTransition } from "../lib/animations";
 
@@ -21,6 +22,7 @@ interface SheetProps {
 export function Sheet({ visible, onClose, children }: SheetProps) {
   const { width } = useWindowDimensions();
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const isWide = width >= WIDE_BREAKPOINT;
   const { mounted, progress } = useSheetTransition(visible);
@@ -36,7 +38,21 @@ export function Sheet({ visible, onClose, children }: SheetProps) {
       onPress={onClose}
     >
       <Animated.View
-        style={[styles.sheet, isWide && styles.sheetWide, { transform: [isWide ? { scale } : { translateY }] }]}
+        style={[
+          styles.sheet,
+          // The home indicator (and similar bottom insets) sits right under
+          // this sheet's flush-to-the-edge padding — on a tall sheet (many
+          // chips wrapping to 2-3 rows, e.g. FeelingSheet's 11 options) the
+          // last row ended up grazing/behind it. Pushing the sheet up by
+          // the inset keeps its content clear of that area instead of
+          // relying on the fixed paddingBottom to be enough.
+          // 32 mirrors styles.sheet's own paddingBottom — read as a literal,
+          // not off the StyleSheet object, since StyleSheet.create returns
+          // an opaque id (not a plain object) on native.
+          !isWide && { paddingBottom: 32 + insets.bottom },
+          isWide && styles.sheetWide,
+          { transform: [isWide ? { scale } : { translateY }] },
+        ]}
       >
         <Pressable onPress={(e) => e.stopPropagation()}>{children}</Pressable>
       </Animated.View>
