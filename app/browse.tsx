@@ -489,7 +489,7 @@ export default function BrowseScreen() {
                         if (kind === "movie") toggleFavoriteMovie(item as TMDBSearchResult);
                         else toggleFavoriteTmdbShow(item as TMDBTvResult);
                       }}
-                      hitSlop={4}
+                      hitSlop={6}
                       accessibilityRole="button"
                       accessibilityLabel="Favorite"
                     >
@@ -503,7 +503,7 @@ export default function BrowseScreen() {
                         if (kind === "movie") quickAddMovie(item as TMDBSearchResult);
                         else quickAddTmdbShow(item as TMDBTvResult);
                       }}
-                      hitSlop={4}
+                      hitSlop={6}
                       accessibilityRole="button"
                       accessibilityLabel="Add"
                     >

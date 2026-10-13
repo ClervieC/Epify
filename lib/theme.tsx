@@ -27,6 +27,11 @@ const lightColors = {
   blue: "#2f6fed",
   red: "#e0453c",
   yellow: "#e0a400",
+  // The active-streak flame (app/(tabs)/index.tsx's streak pill,
+  // app/streaks.tsx, app/(tabs)/profile.tsx's streak banner) — previously
+  // "#ff9f43" hardcoded identically in all three, with no dark-mode
+  // counterpart the way every other color here has one.
+  streakFlame: "#ff9f43",
   badgePremiere: "#111111",
   badgeNew: "#7c5cff",
   badgeAired: "#05b920",
@@ -64,6 +69,11 @@ const darkColors: typeof lightColors = {
   blue: "#6b93ff",
   red: "#ff6b62",
   yellow: "#f0b429",
+  // Same value as light mode (unlike most colors here) — kept identical to
+  // exactly match what was already shipping before this became a token,
+  // rather than introducing an untested new dark-mode shade as part of a
+  // pure refactor.
+  streakFlame: "#ff9f43",
   badgePremiere: "#2a3247",
   badgeNew: "#8a72ff",
   badgeAired: "#05b920",

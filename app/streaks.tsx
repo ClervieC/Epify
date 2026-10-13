@@ -75,7 +75,7 @@ export default function StreaksScreen() {
               data.streakAtRisk
                 ? [`${colors.red}33`, `${colors.red}00`]
                 : data.currentStreak > 0
-                  ? ["#ff9f4333", "#ff9f4300"]
+                  ? [`${colors.streakFlame}33`, `${colors.streakFlame}00`]
                   : [colors.pillBg, colors.pillBg]
             }
             style={styles.heroCard}
@@ -84,7 +84,7 @@ export default function StreaksScreen() {
               <Ionicons
                 name="flame"
                 size={40}
-                color={data.streakAtRisk ? colors.red : data.currentStreak > 0 ? "#ff9f43" : colors.textFaint}
+                color={data.streakAtRisk ? colors.red : data.currentStreak > 0 ? colors.streakFlame : colors.textFaint}
               />
             </View>
             <Text style={styles.heroValue}>{data.currentStreak}</Text>

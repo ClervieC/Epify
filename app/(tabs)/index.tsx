@@ -1879,7 +1879,7 @@ export default function ShowsScreen() {
           style={[styles.streakPill, streakAtRisk && styles.streakPillAtRisk]}
           onPress={() => router.push("/streaks")}
         >
-          <Ionicons name="flame" size={14} color={streakAtRisk ? colors.red : "#ff9f43"} />
+          <Ionicons name="flame" size={14} color={streakAtRisk ? colors.red : colors.streakFlame} />
           <Text style={[styles.streakPillText, streakAtRisk && styles.streakPillTextAtRisk]}>
             {streakAtRisk ? t.shows.streakAtRisk(currentStreak) : t.shows.streakDays(currentStreak)}
           </Text>

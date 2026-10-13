@@ -1078,7 +1078,12 @@ export default function ShowDetailScreen() {
             value={newListName}
             onChangeText={setNewListName}
           />
-          <Pressable style={styles.newListBtn} onPress={handleCreateList}>
+          <Pressable
+            style={styles.newListBtn}
+            onPress={handleCreateList}
+            accessibilityRole="button"
+            accessibilityLabel={t.showDetail.createList}
+          >
             <Ionicons name="add" size={20} color={colors.onAccent} />
           </Pressable>
         </View>

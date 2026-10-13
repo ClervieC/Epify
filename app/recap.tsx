@@ -200,7 +200,11 @@ export default function RecapScreen() {
       <View style={styles.periodSwitch}>
         <Pressable
           onPress={() => (mode === "year" ? setYear((y) => y - 1) : setMonthDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1)))}
-          hitSlop={8}
+          // 16px icon + 12 on each side = 40px — short of the usual 44px
+          // touch target, but a plain 44 here (hitSlop 14) started
+          // overlapping periodSwitch's own 10px gap to the label text next
+          // to it; 12 is the largest that doesn't.
+          hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="Previous period"
         >
@@ -215,7 +219,7 @@ export default function RecapScreen() {
               setMonthDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
             }
           }}
-          hitSlop={8}
+          hitSlop={12}
           disabled={mode === "year" ? isAtMaxYear : isAtMaxMonth}
           accessibilityRole="button"
           accessibilityLabel="Next period"
@@ -281,7 +285,7 @@ export default function RecapScreen() {
           ) : (
             recap!.topShows.length > 0 && (
               <View style={styles.card}>
-                <Text style={styles.cardLabel}>{t.recap.topShowsLabel}</Text>
+                <Text style={styles.cardLabel}>{t.recap.topShowsLabel(recap!.topShows.length)}</Text>
                 {recap!.topShows.map((show, index) => (
                   <Pressable
                     key={show.showId}

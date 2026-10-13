@@ -15,13 +15,25 @@ import { useColors, radius, type, Colors } from "../../../lib/theme";
 import { useLanguage } from "../../../lib/i18n";
 import { fetchProfile, Profile } from "../../../lib/profiles";
 import { fetchFollowCounts, fetchIsFollowing, followUser, unfollowUser } from "../../../lib/follows";
-import { fetchEpisodeCount, fetchFavorites, fetchUserShows, UserShow } from "../../../lib/userShows";
+import {
+  fetchEpisodeCount,
+  fetchFavorites,
+  fetchUserShows,
+  upsertUserShow,
+  removeUserShow,
+  setShowFavorite,
+  UserShow,
+} from "../../../lib/userShows";
 import {
   fetchPublicWatchedMovies,
   fetchPublicWatchedMovieCount,
   fetchPublicFavoriteMovies,
   fetchUserMovies,
+  addMovieToWatchlist,
+  removeUserMovie,
+  setMovieFavorite,
   PublicMovie,
+  UserMovie,
 } from "../../../lib/userMovies";
 import { posterUrl } from "../../../lib/tmdb";
 import { getCurrentUserId } from "../../../lib/supabase";
@@ -92,6 +104,18 @@ export default function UserProfileScreen() {
   const [match, setMatch] = useState<{ shared: number; percent: number } | null>(null);
   const [movieMatch, setMovieMatch] = useState<{ shared: number; percent: number } | null>(null);
 
+  // The *viewer's own* tracked/favorited shows and movies — independent of
+  // whose profile (id above) is actually being displayed, same spirit as
+  // Explore's own cards: lets a show/movie on someone else's profile show
+  // (and let you toggle) whether it's already on your own list, without
+  // that having anything to do with their list. Populated alongside the
+  // match-percent computation below (same fetchUserShows()/fetchUserMovies()
+  // calls, no extra round trip), just unconditionally rather than only when
+  // there's a nonzero overlap to report.
+  const [myAddedIds, setMyAddedIds] = useState<Set<number>>(new Set());
+  const [myFavoriteIds, setMyFavoriteIds] = useState<Set<number>>(new Set());
+  const [myMovieMap, setMyMovieMap] = useState<Map<number, UserMovie>>(new Map());
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
@@ -134,6 +158,8 @@ export default function UserProfileScreen() {
           const mine = await fetchUserShows();
           if (!active) return;
           const mineIds = new Set(mine.map((s) => s.tvmaze_id));
+          setMyAddedIds(mineIds);
+          setMyFavoriteIds(new Set(mine.filter((s) => s.is_favorite).map((s) => s.tvmaze_id)));
           const shared = allShows.filter((s) => mineIds.has(s.tvmaze_id)).length;
           if (shared > 0) {
             const percent = Math.round((shared / Math.max(Math.min(mineIds.size, allShows.length), 1)) * 100);
@@ -143,6 +169,7 @@ export default function UserProfileScreen() {
           const myMovies = await fetchUserMovies();
           if (!active) return;
           const myMovieIds = new Set(myMovies.filter((m) => m.tmdb_id != null).map((m) => m.tmdb_id));
+          setMyMovieMap(new Map(myMovies.filter((m) => m.tmdb_id != null).map((m) => [m.tmdb_id!, m])));
           const sharedMovies = watchedMovies.filter((m) => myMovieIds.has(m.tmdb_id)).length;
           if (sharedMovies > 0) {
             const moviePercent = Math.round(
@@ -176,6 +203,79 @@ export default function UserProfileScreen() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Quick-add/favorite a show or movie straight from someone else's
+  // profile, without opening its detail page first — mirrors
+  // app/users/[id]/list.tsx's own identical set of handlers exactly (direct
+  // TVmaze/TMDB writes, no resolution step needed either way).
+  async function quickAdd(show: UserShow) {
+    if (myAddedIds.has(show.tvmaze_id)) {
+      await removeUserShow(show.tvmaze_id);
+      setMyAddedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(show.tvmaze_id);
+        return next;
+      });
+      setMyFavoriteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(show.tvmaze_id);
+        return next;
+      });
+    } else {
+      await upsertUserShow({
+        tvmaze_id: show.tvmaze_id,
+        show_name: show.show_name,
+        show_image: show.show_image,
+        status: "want_to_watch",
+      });
+      setMyAddedIds((prev) => new Set(prev).add(show.tvmaze_id));
+    }
+  }
+
+  async function toggleShowFavorite(show: UserShow) {
+    const isFav = myFavoriteIds.has(show.tvmaze_id);
+    if (!myAddedIds.has(show.tvmaze_id)) {
+      await upsertUserShow({
+        tvmaze_id: show.tvmaze_id,
+        show_name: show.show_name,
+        show_image: show.show_image,
+        status: "want_to_watch",
+      });
+      setMyAddedIds((prev) => new Set(prev).add(show.tvmaze_id));
+    }
+    await setShowFavorite(show.tvmaze_id, !isFav);
+    setMyFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (isFav) next.delete(show.tvmaze_id);
+      else next.add(show.tvmaze_id);
+      return next;
+    });
+  }
+
+  async function quickAddMovie(movie: PublicMovie) {
+    const existing = myMovieMap.get(movie.tmdb_id);
+    if (existing?.status === "want_to_watch") {
+      await removeUserMovie(existing.id);
+      setMyMovieMap((prev) => {
+        const next = new Map(prev);
+        next.delete(movie.tmdb_id);
+        return next;
+      });
+      return;
+    }
+    // Already watched — managing that stays on the movie's own page (see
+    // Explore's own quickAddMovie for the identical reasoning).
+    if (existing?.status === "watched") return;
+    const row = await addMovieToWatchlist(movie.tmdb_id, movie.title, movie.year, movie.poster_path);
+    setMyMovieMap((prev) => new Map(prev).set(movie.tmdb_id, row));
+  }
+
+  async function toggleMovieFavorite(movie: PublicMovie) {
+    const existing = myMovieMap.get(movie.tmdb_id);
+    const row = existing ?? (await addMovieToWatchlist(movie.tmdb_id, movie.title, movie.year, movie.poster_path));
+    const updated = await setMovieFavorite(row.id, !row.is_favorite);
+    setMyMovieMap((prev) => new Map(prev).set(movie.tmdb_id, updated));
   }
 
   if (loading || !profile) {
@@ -356,7 +456,18 @@ export default function UserProfileScreen() {
           {favorites.length === 0 ? (
             <EmptyState icon="heart-outline" title={t.profile.noFavorites} />
           ) : (
-            favorites.map((s) => <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />)
+            favorites.map((s) => (
+              <ShowCard
+                key={s.id}
+                id={s.tvmaze_id}
+                name={s.show_name}
+                imageUrl={s.show_image}
+                isFavorite={myFavoriteIds.has(s.tvmaze_id)}
+                onToggleFavorite={() => toggleShowFavorite(s)}
+                isAdded={myAddedIds.has(s.tvmaze_id)}
+                onQuickAdd={() => quickAdd(s)}
+              />
+            ))
           )}
         </ScrollView>
 
@@ -370,7 +481,18 @@ export default function UserProfileScreen() {
           {shows.length === 0 ? (
             <EmptyState icon="tv-outline" title={t.profile.noShows} />
           ) : (
-            shows.map((s) => <ShowCard key={s.id} id={s.tvmaze_id} name={s.show_name} imageUrl={s.show_image} />)
+            shows.map((s) => (
+              <ShowCard
+                key={s.id}
+                id={s.tvmaze_id}
+                name={s.show_name}
+                imageUrl={s.show_image}
+                isFavorite={myFavoriteIds.has(s.tvmaze_id)}
+                onToggleFavorite={() => toggleShowFavorite(s)}
+                isAdded={myAddedIds.has(s.tvmaze_id)}
+                onQuickAdd={() => quickAdd(s)}
+              />
+            ))
           )}
         </ScrollView>
 
@@ -393,6 +515,10 @@ export default function UserProfileScreen() {
                 name={m.title}
                 imageUrl={posterUrl(m.poster_path, "w200")}
                 onPress={() => router.push(`/movie/tmdb/${m.tmdb_id}`)}
+                isFavorite={!!myMovieMap.get(m.tmdb_id)?.is_favorite}
+                onToggleFavorite={() => toggleMovieFavorite(m)}
+                isAdded={myMovieMap.has(m.tmdb_id)}
+                onQuickAdd={() => quickAddMovie(m)}
               />
             ))
           )}
@@ -415,6 +541,10 @@ export default function UserProfileScreen() {
                 name={m.title}
                 imageUrl={posterUrl(m.poster_path, "w200")}
                 onPress={() => router.push(`/movie/tmdb/${m.tmdb_id}`)}
+                isFavorite={!!myMovieMap.get(m.tmdb_id)?.is_favorite}
+                onToggleFavorite={() => toggleMovieFavorite(m)}
+                isAdded={myMovieMap.has(m.tmdb_id)}
+                onQuickAdd={() => quickAddMovie(m)}
               />
             ))
           )}

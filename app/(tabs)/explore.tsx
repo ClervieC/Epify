@@ -720,6 +720,9 @@ function ExploreCard({
                 e.stopPropagation();
                 onToggleFavorite();
               }}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Favorite"
             >
               <Ionicons
                 name={isFavorite ? "heart" : "heart-outline"}
@@ -733,6 +736,9 @@ function ExploreCard({
                 e.stopPropagation();
                 onQuickAdd();
               }}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Add"
             >
               <Ionicons
                 name={isAdded ? "checkmark" : "add"}
@@ -806,6 +812,9 @@ function ExploreTvCard({
                 e.stopPropagation();
                 onToggleFavorite();
               }}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Favorite"
             >
               <Ionicons
                 name={isFavorite ? "heart" : "heart-outline"}
@@ -819,6 +828,9 @@ function ExploreTvCard({
                 e.stopPropagation();
                 onQuickAdd();
               }}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Add"
             >
               <Ionicons name={isAdded ? "checkmark" : "add"} size={16} color={isAdded ? colors.onAccent : "#fff"} />
             </Pressable>
@@ -884,6 +896,9 @@ function ExploreMovieCard({
                 e.stopPropagation();
                 onToggleFavorite();
               }}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Favorite"
             >
               <Ionicons
                 name={isFavorite ? "heart" : "heart-outline"}
@@ -897,6 +912,9 @@ function ExploreMovieCard({
                 e.stopPropagation();
                 onQuickAdd();
               }}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Add"
             >
               <Ionicons name={isAdded ? "checkmark" : "add"} size={16} color={isAdded ? colors.onAccent : "#fff"} />
             </Pressable>

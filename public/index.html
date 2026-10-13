@@ -61,7 +61,19 @@
       supported.
     -->
     <script>
-      if ("serviceWorker" in navigator) {
+      // Never on localhost — that's always a local dev server (expo start
+      // --web), never the real deployed site, and this worker's cache-first
+      // rule for same-origin requests doesn't know Metro's own dev bundle
+      // URL (/node_modules/expo-router/entry.bundle?...) is special: unlike
+      // a production build's content-hashed filenames, that URL stays
+      // identical across every single edit, so the first version this
+      // worker ever saw of it would otherwise get served forever — every
+      // later code change silently invisible in that browser profile, no
+      // matter how many times the dev server restarts, until the one
+      // *registering* this worker stops happening (here) and sw.js's own
+      // self-destruct (see its own comment) clears what's already stuck.
+      const isLocalDev = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      if (!isLocalDev && "serviceWorker" in navigator) {
         window.addEventListener("load", () => {
           navigator.serviceWorker.register("/sw.js").catch(() => {});
         });

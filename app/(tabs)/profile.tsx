@@ -46,6 +46,7 @@ import {
   fetchFavoriteMovies,
   UserMovie,
 } from "../../lib/userMovies";
+import { posterUrl } from "../../lib/tmdb";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { fetchMyProfile, uploadAvatar, Profile } from "../../lib/profiles";
@@ -73,7 +74,6 @@ import { Sheet } from "../../components/Sheet";
 import { loadCollapsedProfileState, saveCollapsedProfileState } from "../../lib/profileSections";
 import { ShowCard } from "../../components/ShowCard";
 import { HorizontalScrollRow } from "../../components/HorizontalScrollRow";
-import { MovieCard } from "../../components/MovieCard";
 import { Avatar } from "../../components/Avatar";
 import { EmptyState } from "../../components/EmptyState";
 
@@ -343,22 +343,6 @@ export default function ProfileScreen() {
       })
       .catch(() => {});
   }, [announceBadges]);
-
-  // Stable references so MovieCard's memo() can skip re-rendering unrelated
-  // cards — a movie can appear in both `movies` and `favoriteMovies`, so both
-  // are patched together rather than refetching either collection.
-  const handleMovieUnwatched = useCallback((id: string) => {
-    profileVersionRef.current++;
-    setMovies((prev) => prev.filter((m) => m.id !== id));
-    setFavoriteMovies((prev) => prev.filter((m) => m.id !== id));
-  }, []);
-  const handleMovieRewatched = useCallback((updated: UserMovie) => {
-    profileVersionRef.current++;
-    setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
-    setFavoriteMovies((prev) =>
-      prev.map((m) => (m.id === updated.id ? updated : m)),
-    );
-  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -666,7 +650,7 @@ export default function ProfileScreen() {
               <Ionicons
                 name="flame"
                 size={20}
-                color={streakData.streakAtRisk ? colors.red : "#ff9f43"}
+                color={streakData.streakAtRisk ? colors.red : colors.streakFlame}
               />
             </View>
             <View style={{ flex: 1 }}>
@@ -875,18 +859,18 @@ export default function ProfileScreen() {
               <Text style={styles.empty}>{t.profile.noFavoriteMovies}</Text>
             ) : (
               favoriteMovies.map((m) => (
-                <View key={m.id} style={styles.movieCardWrap}>
-                  <MovieCard
-                    id={m.id}
-                    title={m.title}
-                    year={m.year}
-                    posterPath={m.poster_path}
-                    watchedAt={m.watched_at ?? m.created_at}
-                    timesWatched={m.times_watched}
-                    onUnwatched={handleMovieUnwatched}
-                    onRewatched={handleMovieRewatched}
-                  />
-                </View>
+                <ShowCard
+                  key={m.id}
+                  // ShowCard's `id` is only ever used for its *default*
+                  // navigation (/show/{id}) — onPress below replaces that
+                  // entirely, so this placeholder is never actually read.
+                  // A movie's own id (m.id) is a uuid, not the number this
+                  // prop expects.
+                  id={0}
+                  name={m.title}
+                  imageUrl={posterUrl(m.poster_path, "w200")}
+                  onPress={() => router.push(`/movie/${m.id}`)}
+                />
               ))
             )}
           </HorizontalScrollRow>
@@ -907,18 +891,13 @@ export default function ProfileScreen() {
               <Text style={styles.empty}>{t.profile.noMovies}</Text>
             ) : (
               movies.slice(0, 20).map((m) => (
-                <View key={m.id} style={styles.movieCardWrap}>
-                  <MovieCard
-                    id={m.id}
-                    title={m.title}
-                    year={m.year}
-                    posterPath={m.poster_path}
-                    watchedAt={m.watched_at ?? m.created_at}
-                    timesWatched={m.times_watched}
-                    onUnwatched={handleMovieUnwatched}
-                    onRewatched={handleMovieRewatched}
-                  />
-                </View>
+                <ShowCard
+                  key={m.id}
+                  id={0} // see the identical favoriteMovies row above
+                  name={m.title}
+                  imageUrl={posterUrl(m.poster_path, "w200")}
+                  onPress={() => router.push(`/movie/${m.id}`)}
+                />
               ))
             )}
           </HorizontalScrollRow>
@@ -1007,7 +986,12 @@ export default function ProfileScreen() {
                 onChangeText={setNewListName}
                 autoFocus
               />
-              <Pressable style={styles.newListBtn} onPress={handleCreateList}>
+              <Pressable
+                style={styles.newListBtn}
+                onPress={handleCreateList}
+                accessibilityRole="button"
+                accessibilityLabel={t.profile.createList}
+              >
                 <Ionicons name="checkmark" size={20} color={colors.onAccent} />
               </Pressable>
             </View>
@@ -1025,6 +1009,16 @@ export default function ProfileScreen() {
                     <Pressable
                       style={styles.listsCardItemHeader}
                       onPress={() => toggleListCollapsed(list.id)}
+                      // No accessibilityRole="button" here — on web that
+                      // renders as a literal <button>, and this row already
+                      // contains two of its own (the "view all" link and the
+                      // "..." menu below), which is invalid HTML (a <button>
+                      // can't contain another <button>) and was breaking
+                      // with a console error. accessibilityState alone still
+                      // carries the expanded/collapsed state for assistive
+                      // tech that reads it off the element regardless of
+                      // role.
+                      accessibilityState={{ expanded: !collapsed }}
                     >
                       <Ionicons
                         name={collapsed ? "chevron-forward" : "chevron-down"}
@@ -1617,10 +1611,6 @@ function createStyles(colors: Colors, isSmallScreen: boolean) {
     },
     createListText: { fontWeight: "700", fontSize: 14, color: colors.accent },
     showsRow: { paddingHorizontal: 16, paddingBottom: 24 },
-    // MovieCard is built for equal-width grid columns (flex:1) — wrapping it in
-    // a fixed-width box here gives it the same kind of bounded parent a grid
-    // column would, so it renders correctly inside this horizontal scroll.
-    movieCardWrap: { width: 110, marginRight: 12 },
     empty: { color: colors.textMuted },
     importRow: {
       flexDirection: "row",

@@ -161,8 +161,12 @@ const en = {
     daysActiveLabel: "days active",
     topShowLabel: "Most watched show",
     // Month mode's ranked list header (Year mode keeps the single
-    // topShowLabel card above instead — see app/recap.tsx).
-    topShowsLabel: "Top 5 shows",
+    // topShowLabel card above instead — see app/recap.tsx). Takes the
+    // *actual* number of shows in the list (1-5, see TOP_SHOWS_DISPLAY in
+    // lib/recap.ts) rather than always saying "Top 5" — a month with only 2
+    // shows watched said "Top 5 shows" over a list of 2, which reads as
+    // either a bug or an empty promise of 3 more entries that don't exist.
+    topShowsLabel: (count: number) => `Top ${count} show${count > 1 ? "s" : ""}`,
     // RecapShareCard's featured-item label when the period's most-watched
     // thing was a movie rather than a show (no episodes watched at all, or
     // just fewer than the movie's own rewatch count — see its own
@@ -505,6 +509,10 @@ const en = {
     addToAList: "Add to a list",
     removeFromList: "Remove from my list",
     newListPlaceholder: "New list",
+    // accessibilityLabel for the icon-only confirm button next to the new-
+    // list text input (see app/show/[id].tsx) — that button has no visible
+    // text of its own, just a checkmark.
+    createList: "Create list",
     cast: "Cast",
     comments: "Comments",
     seasonInProgressTitle: "This season isn't finished yet",
@@ -763,7 +771,7 @@ const fr: typeof en = {
     newShowsLabel: "séries commencées",
     daysActiveLabel: "jours actifs",
     topShowLabel: "Série la plus regardée",
-    topShowsLabel: "Top 5 séries",
+    topShowsLabel: (count: number) => `Top ${count} série${count > 1 ? "s" : ""}`,
     topMovieLabel: "Film le plus regardé",
     topGenreLabel: "Genre préféré",
     modeYear: "Année",
@@ -1091,6 +1099,7 @@ const fr: typeof en = {
     addToAList: "Ajouter à une liste",
     removeFromList: "Retirer de ma liste",
     newListPlaceholder: "Nouvelle liste",
+    createList: "Créer la liste",
     cast: "Acteurs",
     comments: "Commentaires",
     seasonInProgressTitle: "Cette saison n'est pas terminée",

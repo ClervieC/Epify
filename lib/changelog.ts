@@ -15,6 +15,18 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.13",
+    date: "2026-10-13",
+    en: [
+      "On someone else's profile, shows and movies you already have in your list now show a checkmark on the poster (tap it to add/remove, just like on your own \"View all\" pages).",
+      "Movies on your own profile now display the same way as shows — removed the separate watched-checkmark overlay.",
+    ],
+    fr: [
+      "Sur le profil de quelqu'un d'autre, les séries et films déjà dans ta liste affichent maintenant une coche sur le poster (appuie dessus pour ajouter/retirer, comme sur tes pages \"Voir tout\").",
+      "Les films sur ton propre profil s'affichent maintenant comme les séries — suppression de l'overlay \"vu\" séparé.",
+    ],
+  },
+  {
     version: "5.1.12",
     date: "2026-10-12",
     en: [

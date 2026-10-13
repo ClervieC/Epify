@@ -120,7 +120,7 @@ export function ShowCard({
                     e.stopPropagation();
                     onToggleFavorite();
                   }}
-                  hitSlop={4}
+                  hitSlop={6}
                   accessibilityRole="button"
                   accessibilityLabel="Favorite"
                 >
@@ -134,7 +134,7 @@ export function ShowCard({
                     e.stopPropagation();
                     onQuickAdd();
                   }}
-                  hitSlop={4}
+                  hitSlop={6}
                   accessibilityRole="button"
                   accessibilityLabel="Add"
                 >

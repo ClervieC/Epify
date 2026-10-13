@@ -512,6 +512,13 @@ export async function setEpisodeWatched(params: {
   if (!userId) throw new Error("Not authenticated");
 
   if (!params.watched) {
+    // Fired together, not one after the other — different tables, no
+    // dependency between them (the resume doesn't need the delete to have
+    // landed first, or vice versa). Awaiting them back-to-back used to cost
+    // two full network round trips' worth of latency for one user action;
+    // this way it's one, which is most of why this used to feel slow to
+    // actually show back up.
+    const resumePromise = resumeIfNotActivelyWatching(params.tvmaze_show_id);
     const { error } = await supabase
       .from("watched_episodes")
       .delete()
@@ -532,10 +539,15 @@ export async function setEpisodeWatched(params: {
     // the last episode of a finished show left it stuck "Watched" forever:
     // invisible in Watch Next, with no way back onto the Shows tab short of
     // manually changing its status.
-    await resumeIfNotActivelyWatching(params.tvmaze_show_id);
+    await resumePromise;
     return null;
   }
 
+  // Fired alongside the upsert below, not after it — see the identical
+  // comment on this same pattern in the unwatch branch above. This one
+  // doesn't need the upsert's own result (just the show id, already in
+  // hand), so there's no reason to wait for it first.
+  const resumePromise = resumeIfNotActivelyWatching(params.tvmaze_show_id);
   const { data, error } = await supabase
     .from("watched_episodes")
     .upsert(
@@ -557,7 +569,7 @@ export async function setEpisodeWatched(params: {
     ...prev.filter((w) => w.tvmaze_episode_id !== params.tvmaze_episode_id),
     row,
   ]);
-  await resumeIfNotActivelyWatching(params.tvmaze_show_id);
+  await resumePromise;
   checkBadgesNow();
   return row;
 }
@@ -570,6 +582,9 @@ export async function setEpisodesWatched(
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
 
+  // See the identical comment on this same pattern in setEpisodeWatched
+  // above — fired alongside the upsert, not after it.
+  const resumePromise = resumeIfNotActivelyWatching(showId);
   const { data, error } = await supabase
     .from("watched_episodes")
     .upsert(
@@ -588,7 +603,7 @@ export async function setEpisodesWatched(
   const rows = data as WatchedEpisode[];
   const newIds = new Set(rows.map((r) => r.tvmaze_episode_id));
   patchCachedWatchedEpisodes(showId, (prev) => [...prev.filter((w) => !newIds.has(w.tvmaze_episode_id)), ...rows]);
-  await resumeIfNotActivelyWatching(showId);
+  await resumePromise;
   checkBadgesNow();
 }
 
@@ -597,6 +612,9 @@ export async function setEpisodesUnwatched(showId: number, episodeIds: number[])
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
 
+  // See the identical comment on this same pattern in setEpisodeWatched's
+  // own unwatch branch above — fired alongside the delete, not after it.
+  const resumePromise = resumeIfNotActivelyWatching(showId);
   const { error } = await supabase
     .from("watched_episodes")
     .delete()
@@ -605,9 +623,7 @@ export async function setEpisodesUnwatched(showId: number, episodeIds: number[])
   if (error) throw error;
   const removed = new Set(episodeIds);
   patchCachedWatchedEpisodes(showId, (prev) => prev.filter((w) => !removed.has(w.tvmaze_episode_id)));
-  // See the identical call (and comment) in setEpisodeWatched's own unwatch
-  // branch above — same reasoning, just the bulk "unmark a season" path.
-  await resumeIfNotActivelyWatching(showId);
+  await resumePromise;
 }
 
 // Bulk version of incrementRewatch — used to mark a whole season/show as

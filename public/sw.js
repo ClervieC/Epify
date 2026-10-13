@@ -32,21 +32,54 @@
 
 const CACHE_NAME = "epify-shell-v1";
 
-self.addEventListener("install", (event) => {
-  // Take over immediately rather than waiting for every open tab to close
-  // first — this cache only ever fills in as pages are actually visited
-  // (see fetch handler below), so there's nothing to pre-warm here.
-  self.skipWaiting();
-});
+// Self-destruct path for a worker that's already stuck in someone's browser
+// from before public/index.html stopped registering this on localhost (see
+// its own comment on why that happens there) — a machine that already has
+// this installed keeps running the *old* version of this very script
+// (service workers only re-check for updates on navigation, and even then
+// only replace themselves once every open tab/client of the old one closes)
+// until something tells it to leave. This block is that something: once
+// Metro serves this updated file, the browser's routine "is sw.js
+// different?" check (on the next load) sees the byte diff, installs this
+// new version, and its own activate step below wipes every cache this
+// worker ever made, unregisters itself, then reloads whatever tab triggered
+// it — so the very next request is a real network one from a worker-free
+// page, not another round through a service worker that shouldn't exist on
+// a dev server. On the real deployed site this branch never runs — guarded
+// on hostname, not an env flag, since this file isn't passed through a
+// bundler that could inject one.
+const isLocalDev = self.location.hostname === "localhost" || self.location.hostname === "127.0.0.1";
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
-});
+if (isLocalDev) {
+  self.addEventListener("install", () => self.skipWaiting());
+  self.addEventListener("activate", (event) => {
+    event.waitUntil(
+      (async () => {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+        await self.registration.unregister();
+        const clients = await self.clients.matchAll({ type: "window" });
+        for (const client of clients) client.navigate(client.url);
+      })()
+    );
+  });
+} else {
+  self.addEventListener("install", (event) => {
+    // Take over immediately rather than waiting for every open tab to close
+    // first — this cache only ever fills in as pages are actually visited
+    // (see fetch handler below), so there's nothing to pre-warm here.
+    self.skipWaiting();
+  });
+
+  self.addEventListener("activate", (event) => {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+        .then(() => self.clients.claim())
+    );
+  });
+}
 
 // Caches `request` -> `response` without letting the browser tear the
 // service worker down mid-write. Cache Storage writes are async (backed by
@@ -74,6 +107,11 @@ function cacheMatch(request) {
 }
 
 self.addEventListener("fetch", (event) => {
+  // Never intercept anything here while self-destructing (see isLocalDev's
+  // own comment above) — the in-flight reload this triggers on activate
+  // needs to hit the real network, not get served whatever this worker
+  // already has cached.
+  if (isLocalDev) return;
   const request = event.request;
   if (request.method !== "GET") return;
 
