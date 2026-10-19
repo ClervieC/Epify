@@ -201,7 +201,13 @@ export const iconSize = {
 // Matches the pixel sizes every pre-existing hand-rolled avatar circle used
 // (UserRow/notifications: 40px, profile header/cast: 64px, other-user
 // profile: 84px) — don't shrink these without checking every call site.
+// xs is the exception: added for the show detail episode list's "who among
+// your following watched this" row (app/show/[id].tsx), a line already
+// tight enough (13px text, a 26px WatchedCheck) that even "sm" would
+// dominate it — this is for an overlapping stack of avatars sitting
+// alongside other UI, not a standalone identity marker like the rest.
 export const avatarSize = {
+  xs: 18,
   sm: 40,
   md: 64,
   lg: 84,

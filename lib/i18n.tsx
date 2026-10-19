@@ -15,6 +15,7 @@ import {
   setSpoilerMode as persistSpoilerMode,
   setStaleWatchlistMonths as persistStaleWatchlistMonths,
   setShowFeelingPrompt as persistShowFeelingPrompt,
+  setShowWatchActivity as persistShowWatchActivity,
   Language,
   StaleWatchlistMonths,
 } from "./userSettings";
@@ -71,6 +72,11 @@ const en = {
     reminderSixMonths: "Remind me after 6 months",
     reminderOneYear: "Remind me after 1 year",
     reminderNotNow: "Not now",
+    watchActivityTitle: "See what people you follow have watched?",
+    watchActivityBody:
+      "We can show small icons on episodes and shows for the people you follow who've already watched them. You can change this later in Settings.",
+    watchActivityYes: "Yes, show them",
+    watchActivityNo: "No thanks",
   },
   login: {
     tagline: "Track your shows",
@@ -376,6 +382,8 @@ const en = {
       "See other people's comments even on episodes you haven't watched yet.",
     feelingPrompt: "Reaction prompt",
     feelingPromptDesc: "Ask how an episode made you feel right after marking it watched.",
+    watchActivity: "See who's watched what",
+    watchActivityDesc: "Show small icons on episodes and shows for the people you follow who've already watched them.",
     staleWatchlist: "Forgotten shows reminder",
     staleWatchlistSixMonths: "6 months",
     staleWatchlistOneYear: "1 year",
@@ -529,6 +537,7 @@ const en = {
     howDidYouFeel: "How did it make you feel?",
     othersFelt: "How others felt",
     comments: "Comments",
+    watchedBy: "Watched by",
     unwatchedPrompt:
       "Mark this episode as watched to rate it, react, and see comments.",
     addFavorite: "Add to favorite episodes",
@@ -685,6 +694,11 @@ const fr: typeof en = {
     reminderSixMonths: "Me rappeler après 6 mois",
     reminderOneYear: "Me rappeler après 1 an",
     reminderNotNow: "Pas maintenant",
+    watchActivityTitle: "Voir ce que les personnes que tu suis ont regardé ?",
+    watchActivityBody:
+      "On peut afficher de petites icônes sur les épisodes et séries pour les personnes que tu suis qui les ont déjà vus. Modifiable plus tard dans les réglages.",
+    watchActivityYes: "Oui, les afficher",
+    watchActivityNo: "Non merci",
   },
   login: {
     tagline: "Suis tes séries",
@@ -964,6 +978,8 @@ const fr: typeof en = {
       "Voir les commentaires des autres même sur les épisodes que tu n'as pas encore vus.",
     feelingPrompt: "Popup de ressenti",
     feelingPromptDesc: "Demander ce que tu as pensé d'un épisode juste après l'avoir marqué comme vu.",
+    watchActivity: "Voir qui a vu quoi",
+    watchActivityDesc: "Afficher de petites icônes sur les épisodes et séries pour les personnes que tu suis qui les ont déjà vus.",
     staleWatchlist: "Rappel des séries oubliées",
     staleWatchlistSixMonths: "6 mois",
     staleWatchlistOneYear: "1 an",
@@ -1117,6 +1133,7 @@ const fr: typeof en = {
     howDidYouFeel: "Comment tu l'as vécu ?",
     othersFelt: "Le ressenti des autres",
     comments: "Commentaires",
+    watchedBy: "Vu par",
     unwatchedPrompt:
       "Marque l'épisode comme vu pour le noter, réagir et voir les commentaires.",
     addFavorite: "Ajouter aux épisodes favoris",
@@ -1237,6 +1254,12 @@ interface SettingsContextValue {
   setStaleWatchlistMonths: (months: StaleWatchlistMonths) => void;
   showFeelingPrompt: boolean;
   setShowFeelingPrompt: (enabled: boolean) => void;
+  // Collapses the DB's null ("never asked") to false here — this value is
+  // purely "should the app currently fetch/show watch-activity avatars,"
+  // not "has the user been asked." See WatchActivityPrompt/onboarding's
+  // watchActivity step for the null check that decides whether to ask.
+  showWatchActivity: boolean;
+  setShowWatchActivity: (enabled: boolean) => void;
   t: Translations;
 }
 
@@ -1249,6 +1272,8 @@ const SettingsContext = createContext<SettingsContextValue>({
   setStaleWatchlistMonths: () => {},
   showFeelingPrompt: true,
   setShowFeelingPrompt: () => {},
+  showWatchActivity: false,
+  setShowWatchActivity: () => {},
   t: en,
 });
 
@@ -1264,6 +1289,7 @@ export function LanguageProvider({ children }: PropsWithChildren) {
   const [spoilerMode, setSpoilerModeState] = useState(false);
   const [staleWatchlistMonths, setStaleWatchlistMonthsState] = useState<StaleWatchlistMonths>(6);
   const [showFeelingPrompt, setShowFeelingPromptState] = useState(true);
+  const [showWatchActivity, setShowWatchActivityState] = useState(false);
 
   useEffect(() => {
     if (!session) {
@@ -1271,6 +1297,7 @@ export function LanguageProvider({ children }: PropsWithChildren) {
       setSpoilerModeState(false);
       setStaleWatchlistMonthsState(6);
       setShowFeelingPromptState(true);
+      setShowWatchActivityState(false);
       return;
     }
     fetchUserSettings()
@@ -1279,6 +1306,7 @@ export function LanguageProvider({ children }: PropsWithChildren) {
         setSpoilerModeState(settings.spoiler_mode);
         setStaleWatchlistMonthsState(settings.stale_watchlist_months);
         setShowFeelingPromptState(settings.show_feeling_prompt);
+        setShowWatchActivityState(settings.show_watch_activity ?? false);
       })
       .catch(() => {});
   }, [session]);
@@ -1303,6 +1331,11 @@ export function LanguageProvider({ children }: PropsWithChildren) {
     persistShowFeelingPrompt(enabled).catch(() => {});
   }, []);
 
+  const setShowWatchActivity = useCallback((enabled: boolean) => {
+    setShowWatchActivityState(enabled);
+    persistShowWatchActivity(enabled).catch(() => {});
+  }, []);
+
   useEffect(() => {
     setSupabaseAlertLanguage(language);
   }, [language]);
@@ -1317,6 +1350,8 @@ export function LanguageProvider({ children }: PropsWithChildren) {
       setStaleWatchlistMonths,
       showFeelingPrompt,
       setShowFeelingPrompt,
+      showWatchActivity,
+      setShowWatchActivity,
       t: dictionaries[language],
     }),
     [
@@ -1328,6 +1363,8 @@ export function LanguageProvider({ children }: PropsWithChildren) {
       setStaleWatchlistMonths,
       showFeelingPrompt,
       setShowFeelingPrompt,
+      showWatchActivity,
+      setShowWatchActivity,
     ],
   );
 

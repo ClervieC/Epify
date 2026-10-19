@@ -21,6 +21,7 @@ import { AppSplash } from "../components/AppSplash";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { NewMonthRecapToast } from "../components/NewMonthRecapToast";
+import { WatchActivityPrompt } from "../components/WatchActivityPrompt";
 import * as Sentry from '@sentry/react-native';
 
 Sentry.init({
@@ -146,6 +147,12 @@ function RootNavigation() {
           authenticated), burning the "seen" marker before the user had
           even reached any real content. */}
       {!showSplash && session && <NewMonthRecapToast />}
+      {/* Gated on !needsOnboarding, unlike NewMonthRecapToast above — a
+          brand new account gets this exact question as its own onboarding
+          step instead (see app/onboarding.tsx's watchActivity step), and
+          without this guard the two would race/double-ask while session
+          exists but onboarding hasn't finished yet. */}
+      {!showSplash && session && !needsOnboarding && <WatchActivityPrompt />}
     </>
   );
 }

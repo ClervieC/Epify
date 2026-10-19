@@ -32,6 +32,7 @@ import {
 } from "../../lib/showDataCache";
 import {
   fetchEpisodeFeelingCounts,
+  fetchEpisodeWatchersAmongFollowing,
   fetchUserShows,
   getCachedUserShowsFast,
   fetchWatchedEpisodes,
@@ -41,6 +42,7 @@ import {
   setEpisodeFavorite,
   setEpisodeWatched,
   upsertUserShow,
+  EpisodeWatcher,
   UserShow,
   WatchedEpisode,
 } from "../../lib/userShows";
@@ -55,6 +57,7 @@ import {
   NATIVE_DRIVER,
 } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
+import { EpisodeWatchersRow } from "../../components/EpisodeWatchersRow";
 import { CommentsSection } from "../../components/CommentsSection";
 import { CharacterVote } from "../../components/CharacterVote";
 import { ReportModal } from "../../components/ReportModal";
@@ -118,7 +121,7 @@ export default function EpisodeDetailScreen() {
   const finaleToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t, spoilerMode } = useLanguage();
+  const { t, spoilerMode, showWatchActivity } = useLanguage();
   const askAddToList = useAddToListPrompt();
   // A horizontally-paged list with vertical scrolling content nested inside
   // each page is fragile with real touch input — getting a Pan-based swipe
@@ -471,6 +474,7 @@ export default function EpisodeDetailScreen() {
               watched={watchedMap[currentEpisode.id] ?? null}
               remaining={remaining}
               spoilerMode={spoilerMode}
+              showWatchActivity={showWatchActivity}
               isSeriesFinale={isSeriesFinale(currentEpisode)}
               sideInset={SIDE_NAV_INSET}
               onToggleWatched={() => toggleWatched(currentEpisode)}
@@ -580,6 +584,7 @@ export default function EpisodeDetailScreen() {
         watched={watchedMap[currentEpisode.id] ?? null}
         remaining={remaining}
         spoilerMode={spoilerMode}
+        showWatchActivity={showWatchActivity}
         isSeriesFinale={isSeriesFinale(currentEpisode)}
         onToggleWatched={() => toggleWatched(currentEpisode)}
         onRewatch={() => rewatchEpisode(currentEpisode)}
@@ -766,6 +771,7 @@ function EpisodePage({
   watched,
   remaining,
   spoilerMode,
+  showWatchActivity,
   isSeriesFinale,
   sideInset,
   onToggleWatched,
@@ -787,6 +793,7 @@ function EpisodePage({
   watched: WatchedEpisode | null;
   remaining: number | null;
   spoilerMode: boolean;
+  showWatchActivity: boolean;
   isSeriesFinale?: boolean;
   sideInset?: number;
   onToggleWatched: () => void;
@@ -838,6 +845,7 @@ function EpisodePage({
   const [feelingCounts, setFeelingCounts] = useState<Record<string, number>>(
     {},
   );
+  const [watchers, setWatchers] = useState<EpisodeWatcher[]>([]);
   const [voteTally, setVoteTally] = useState<CharacterVoteTally[]>([]);
   const [myCharacterId, setMyCharacterId] = useState<number | null>(null);
   // Tracks the feeling feelingCounts was last reconciled against — either
@@ -867,10 +875,15 @@ function EpisodePage({
       setVoteTally(tally);
       setMyCharacterId(mine);
     });
+    if (showWatchActivity) {
+      fetchEpisodeWatchersAmongFollowing(episode.id).then((data) => {
+        if (isCurrent) setWatchers(data);
+      });
+    }
     return () => {
       isCurrent = false;
     };
-  }, [unlocked, episode.id]);
+  }, [unlocked, episode.id, showWatchActivity]);
 
   // Reflects the user's own feeling toggle in "How others felt" immediately
   // instead of waiting for the next full page load — fetchEpisodeFeelingCounts
@@ -1172,6 +1185,8 @@ function EpisodePage({
               onToggleReaction={handleToggleReaction}
               reportTargetType="comment"
             />
+
+            <EpisodeWatchersRow watchers={watchers} />
           </>
         )}
       </Animated.View>

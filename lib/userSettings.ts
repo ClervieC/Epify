@@ -20,6 +20,10 @@ export interface UserSettings {
   language: Language;
   stale_watchlist_months: StaleWatchlistMonths;
   show_feeling_prompt: boolean;
+  // null = never asked (see app/onboarding.tsx's watchActivity step and
+  // components/WatchActivityPrompt.tsx) — distinct from an explicit false,
+  // which is how callers tell "not yet answered" from "answered no."
+  show_watch_activity: boolean | null;
 }
 
 export async function fetchUserSettings(): Promise<UserSettings> {
@@ -38,6 +42,7 @@ export async function fetchUserSettings(): Promise<UserSettings> {
       language: getDeviceLanguage(),
       stale_watchlist_months: 6,
       show_feeling_prompt: true,
+      show_watch_activity: null,
     }
   );
 }
@@ -79,5 +84,15 @@ export async function setShowFeelingPrompt(enabled: boolean) {
   const { error } = await supabase
     .from("user_settings")
     .upsert({ user_id: userId, show_feeling_prompt: enabled }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
+export async function setShowWatchActivity(enabled: boolean) {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("user_settings")
+    .upsert({ user_id: userId, show_watch_activity: enabled }, { onConflict: "user_id" });
   if (error) throw error;
 }

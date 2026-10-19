@@ -15,6 +15,18 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.1.14",
+    date: "2026-10-19",
+    en: [
+      "Added \"See who's watched what\" — small icons on an episode's page and on a show's episode list for the people you follow who've already watched it, with hover tooltips showing their name on desktop. Off by default; you're asked once (new accounts during sign-up, existing accounts the next time you open the app) and can change it anytime in Settings.",
+      "Fixed scrolling position resetting to the top when rotating your device (portrait/landscape) while browsing someone's full shows/movies list.",
+    ],
+    fr: [
+      "Ajout de \"Voir qui a vu quoi\" — de petites icônes sur la page d'un épisode et sur la liste des épisodes d'une série pour les personnes que tu suis qui les ont déjà vus, avec une infobulle affichant leur nom au survol sur ordinateur. Désactivé par défaut ; on te le demande une fois (à l'inscription pour un nouveau compte, à la prochaine ouverture de l'appli pour un compte existant), modifiable à tout moment dans les réglages.",
+      "Correction du défilement qui revenait en haut de la liste lors d'une rotation de l'appareil (portrait/paysage) en parcourant la liste complète des séries/films de quelqu'un.",
+    ],
+  },
+  {
     version: "5.1.13",
     date: "2026-10-13",
     en: [

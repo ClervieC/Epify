@@ -6,8 +6,8 @@ import { useColors, radius, avatarSize, Colors } from "../lib/theme";
 
 type AvatarSizeToken = keyof typeof avatarSize;
 
-const FONT_SIZES: Record<AvatarSizeToken, number> = { sm: 13, md: 17, lg: 28 };
-const ICON_SIZES: Record<AvatarSizeToken, number> = { sm: 14, md: 20, lg: 32 };
+const FONT_SIZES: Record<AvatarSizeToken, number> = { xs: 9, sm: 13, md: 17, lg: 28 };
+const ICON_SIZES: Record<AvatarSizeToken, number> = { xs: 10, sm: 14, md: 20, lg: 32 };
 
 interface AvatarProps {
   // Either a display name (renders its first letter) or a photo URL — pass

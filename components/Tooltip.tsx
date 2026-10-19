@@ -8,6 +8,17 @@ interface TooltipProps {
   // wrapped in a second touchable layer, which would sit on top of (and
   // steal hover/press events from) the one already there.
   children: ReactElement;
+  // "below" (default): drops the bubble under the trigger, horizontally
+  // centered/edge-aware — right for a lone icon button with open space
+  // beneath it. "above": same horizontal behavior, flipped vertically — for
+  // a trigger sitting at the very bottom of a page's content (episode
+  // detail's "Watched by" row), where "below" has nothing but the viewport
+  // edge/next content to open into and gets clipped or overlaps what comes
+  // after. "left": bubble sits to the trigger's left, vertically centered
+  // instead — for a dense vertical list (show detail's episode rows, one
+  // avatar stack per row with only ~36px between them) where "below" lands
+  // squarely on the next row's own content instead of empty space.
+  placement?: "below" | "above" | "left";
 }
 
 type Align = "center" | "left" | "right";
@@ -26,7 +37,7 @@ const EDGE_MARGIN = 100;
 // button's own accessibilityLabel, but that's silent for a sighted mouse
 // user until they either guess or tap. No-ops everywhere except web: touch
 // devices have no hover state to key off in the first place.
-export function Tooltip({ label, children }: TooltipProps) {
+export function Tooltip({ label, children, placement = "below" }: TooltipProps) {
   const [hovered, setHovered] = useState(false);
   const [align, setAlign] = useState<Align>("center");
   const wrapRef = useRef<View>(null);
@@ -35,16 +46,21 @@ export function Tooltip({ label, children }: TooltipProps) {
   if (Platform.OS !== "web" || !isValidElement(children)) return children;
 
   function handleHoverIn() {
-    // measureInWindow gives the button's actual on-screen position, so this
-    // adapts to wherever it's rendered rather than assuming a fixed layout —
-    // the same Tooltip wraps a report button that's the last item in a
-    // corner on one screen and one of several in a row on another.
-    wrapRef.current?.measureInWindow((x, _y, width) => {
-      const windowWidth = Dimensions.get("window").width;
-      if (windowWidth - (x + width) < EDGE_MARGIN) setAlign("right");
-      else if (x < EDGE_MARGIN) setAlign("left");
-      else setAlign("center");
-    });
+    // Edge-aware centering only matters for "below"/"above" — "left" always
+    // anchors to the trigger's own left edge, nothing to measure.
+    if (placement === "below" || placement === "above") {
+      // measureInWindow gives the button's actual on-screen position, so
+      // this adapts to wherever it's rendered rather than assuming a fixed
+      // layout — the same Tooltip wraps a report button that's the last
+      // item in a corner on one screen and one of several in a row on
+      // another.
+      wrapRef.current?.measureInWindow((x, _y, width) => {
+        const windowWidth = Dimensions.get("window").width;
+        if (windowWidth - (x + width) < EDGE_MARGIN) setAlign("right");
+        else if (x < EDGE_MARGIN) setAlign("left");
+        else setAlign("center");
+      });
+    }
     setHovered(true);
   }
 
@@ -55,7 +71,14 @@ export function Tooltip({ label, children }: TooltipProps) {
         onHoverOut: () => setHovered(false),
       })}
       {hovered && (
-        <View pointerEvents="none" style={[styles.bubbleRow, ALIGN_STYLES[align]]}>
+        <View
+          pointerEvents="none"
+          style={
+            placement === "left"
+              ? styles.bubbleLeftWrap
+              : [placement === "above" ? styles.bubbleRowAbove : styles.bubbleRow, ALIGN_STYLES[align]]
+          }
+        >
           <View style={[styles.bubble, { backgroundColor: colors.text }]}>
             <Text style={[styles.bubbleText, { color: colors.background }]} numberOfLines={1}>
               {label}
@@ -81,6 +104,24 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     marginTop: 6,
+    zIndex: 50,
+  },
+  bubbleRowAbove: {
+    position: "absolute",
+    bottom: "100%",
+    left: 0,
+    right: 0,
+    marginBottom: 6,
+    zIndex: 50,
+  },
+  bubbleLeftWrap: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: "100%",
+    marginRight: 6,
+    alignItems: "flex-end",
+    justifyContent: "center",
     zIndex: 50,
   },
   bubble: {

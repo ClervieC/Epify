@@ -52,6 +52,8 @@ export default function SettingsScreen() {
     setStaleWatchlistMonths,
     showFeelingPrompt,
     setShowFeelingPrompt,
+    showWatchActivity,
+    setShowWatchActivity,
   } = useLanguage();
   const { themeMode, setThemeMode } = useThemeMode();
 
@@ -240,6 +242,21 @@ export default function SettingsScreen() {
         <Switch
           value={showFeelingPrompt}
           onValueChange={setShowFeelingPrompt}
+          trackColor={{ true: colors.accent, false: colors.pillBg }}
+          thumbColor={colors.surface}
+          {...webSwitchProps}
+        />
+      </View>
+
+      <View style={styles.settingRow}>
+        <Ionicons name="people-outline" size={20} color={colors.text} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.importRowTitle}>{t.profile.watchActivity}</Text>
+          <Text style={styles.importRowSubtitle}>{t.profile.watchActivityDesc}</Text>
+        </View>
+        <Switch
+          value={showWatchActivity}
+          onValueChange={setShowWatchActivity}
           trackColor={{ true: colors.accent, false: colors.pillBg }}
           thumbColor={colors.surface}
           {...webSwitchProps}

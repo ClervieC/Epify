@@ -1440,3 +1440,18 @@ create policy "Users manage their own recap cache"
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- ============================================================
+-- Per-user opt-in to seeing "who among your following watched this" avatars
+-- (episode detail's EpisodeWatchersRow and the show detail episode list's
+-- inline avatar stack). Nullable, unlike show_feeling_prompt above — null
+-- means "never asked," not "opted out," and is what both ask-once flows key
+-- off: app/onboarding.tsx's watchActivity step for new accounts, and
+-- components/WatchActivityPrompt.tsx (mounted once at the app root for an
+-- existing session with session && !needsOnboarding) for everyone who
+-- already had an account when this shipped. Both write an explicit
+-- true/false the moment they're answered, so this column only ever reads
+-- null for an account that hasn't been asked yet.
+-- ============================================================
+alter table public.user_settings
+  add column if not exists show_watch_activity boolean;

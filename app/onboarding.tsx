@@ -48,14 +48,14 @@ export default function OnboardingScreen() {
   // instead of a clipped stack.
   const isShort = height < 700;
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t, setStaleWatchlistMonths } = useLanguage();
+  const { t, setStaleWatchlistMonths, setShowWatchActivity } = useLanguage();
   const { setNeedsOnboarding } = useAuth();
   const [index, setIndex] = useState(0);
   // The threshold question is asked once, right before finishing — after the
   // last slide's "Get started" or after "Skip" either way, since it's a
   // single tap and not worth gating behind sitting through the full
   // slideshow. See chooseReminder below for where the answer is persisted.
-  const [step, setStep] = useState<"slides" | "reminder">("slides");
+  const [step, setStep] = useState<"slides" | "reminder" | "watchActivity">("slides");
   const listRef = useRef<FlatList<Slide>>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
 
@@ -102,8 +102,13 @@ export default function OnboardingScreen() {
     setStep("reminder");
   }
 
-  async function chooseReminder(months: StaleWatchlistMonths) {
+  function chooseReminder(months: StaleWatchlistMonths) {
     setStaleWatchlistMonths(months);
+    setStep("watchActivity");
+  }
+
+  async function chooseWatchActivity(enabled: boolean) {
+    setShowWatchActivity(enabled);
     await markOnboardingComplete();
     // Tells app/_layout.tsx's redirect effect directly — markOnboardingComplete()
     // only persists to AsyncStorage, which nothing re-reads on navigation, so
@@ -163,6 +168,38 @@ export default function OnboardingScreen() {
           <Pressable onPress={() => chooseReminder(0)} accessibilityRole="button">
             <Text style={styles.reminderSkip}>{t.onboarding.reminderNotNow}</Text>
           </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  if (step === "watchActivity") {
+    return (
+      <View style={styles.container}>
+        <LinearGradient
+          colors={[`${colors.accent}26`, "transparent"]}
+          style={[styles.glow, { pointerEvents: "none" }]}
+        />
+        <View style={styles.reminderStep}>
+          <Ionicons name="people-outline" size={40} color={colors.accent} style={{ marginBottom: 20 }} />
+          <Text style={styles.title}>{t.onboarding.watchActivityTitle}</Text>
+          <Text style={styles.body}>{t.onboarding.watchActivityBody}</Text>
+          <View style={styles.reminderOptions}>
+            <Pressable
+              style={[styles.reminderOptionBtn, { backgroundColor: colors.accent }]}
+              onPress={() => chooseWatchActivity(true)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.nextBtnText}>{t.onboarding.watchActivityYes}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.reminderOptionBtn, { backgroundColor: colors.pillBg }]}
+              onPress={() => chooseWatchActivity(false)}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.nextBtnText, { color: colors.text }]}>{t.onboarding.watchActivityNo}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     );

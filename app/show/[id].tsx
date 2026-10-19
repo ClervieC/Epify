@@ -48,7 +48,9 @@ import {
   setShowStatus,
   rateShow,
   fetchShowFeelingCounts,
+  fetchShowWatchersAmongFollowing,
   upsertUserShow,
+  EpisodeWatcher,
   ShowList,
   UserShow,
   WatchedEpisode,
@@ -58,6 +60,7 @@ import { useLanguage, Translations } from "../../lib/i18n";
 import { alert } from "../../lib/alert";
 import { useGrowIn, useFadeIn, useScalePress, useMountIn, useSwipeDownToDismiss } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
+import { Avatar } from "../../components/Avatar";
 import { ChoiceDialog } from "../../components/ChoiceDialog";
 import { CommentsSection } from "../../components/CommentsSection";
 import { ReportModal } from "../../components/ReportModal";
@@ -95,6 +98,7 @@ export default function ShowDetailScreen() {
   const [cast, setCast] = useState<CastMember[]>([]);
   const [userShow, setUserShow] = useState<UserShow | null>(null);
   const [watched, setWatched] = useState<WatchedEpisode[]>([]);
+  const [watchersByEpisode, setWatchersByEpisode] = useState<Map<number, EpisodeWatcher[]>>(new Map());
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
   // A season that's only partway watched has no "already watched" state for
   // the rewatch prompt to key off (see handleSeasonCheckPress) — this is its
@@ -143,7 +147,7 @@ export default function ShowDetailScreen() {
   const resolvedRecommendations = useRef<Map<number, number | null>>(new Map());
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t, language } = useLanguage();
+  const { t, language, showWatchActivity } = useLanguage();
   const underlineGrow = useGrowIn(tab);
   const contentFade = useFadeIn(!loading);
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -187,6 +191,9 @@ export default function ShowDetailScreen() {
     }
     getCachedUserShowsFast().then((cached) => cached && applyUserShow(cached));
     fetchUserShows().then(applyUserShow).catch(() => {});
+    if (showWatchActivity) {
+      fetchShowWatchersAmongFollowing(showId).then(setWatchersByEpisode).catch(() => {});
+    }
     // Open the season the viewer has actually reached — the earliest aired
     // episode they haven't watched yet — rather than always landing
     // collapsed on Season 1. If every aired episode is already watched
@@ -226,7 +233,7 @@ export default function ShowDetailScreen() {
         getTvRecommendations(tmdbTvId).then(setRecommendations).catch(() => {});
       });
     }
-  }, [showId, language]);
+  }, [showId, language, showWatchActivity]);
 
   // Resolve-on-tap (not upfront for all ~12 recommendations at once) — same
   // pattern as Explore's own TMDB discover cards (see resolveTvmazeShow in
@@ -944,6 +951,7 @@ export default function ShowDetailScreen() {
                       expanded={expanded}
                       watchedIds={watchedIds}
                       watched={watched}
+                      watchersByEpisode={watchersByEpisode}
                       onToggleExpand={() => setExpandedSeason(expanded ? null : seasonNum)}
                       onSeasonCheckPress={() =>
                         handleSeasonCheckPress(eps, complete, watchedCount, seasonTimesWatched)
@@ -1193,6 +1201,7 @@ function SeasonSection({
   expanded,
   watchedIds,
   watched,
+  watchersByEpisode,
   onToggleExpand,
   onSeasonCheckPress,
   onToggleEpisode,
@@ -1210,6 +1219,7 @@ function SeasonSection({
   expanded: boolean;
   watchedIds: Set<number>;
   watched: WatchedEpisode[];
+  watchersByEpisode: Map<number, EpisodeWatcher[]>;
   onToggleExpand: () => void;
   onSeasonCheckPress: () => void;
   onToggleEpisode: (ep: TVMazeEpisode) => void;
@@ -1265,20 +1275,43 @@ function SeasonSection({
       {expanded &&
         eps.map((ep) => {
           const aired = !!ep.airstamp && new Date(ep.airstamp).getTime() <= Date.now();
+          // Capped at 3 with no "+N" overflow badge, unlike episode detail's
+          // own EpisodeWatchersRow — this row has no space to spare for one
+          // (13px title + a 26px check already), so it's just a quiet "some
+          // of your following have seen this" signal, not the full list.
+          // Tap into the episode itself for that.
+          const episodeWatchers = watchersByEpisode.get(ep.id) ?? [];
           return (
             <Pressable key={ep.id} style={styles.episodeLine} onPress={() => onOpenEpisode(ep)}>
               <Text style={styles.episodeLineText} numberOfLines={1}>
                 E{ep.number} · {ep.name}
               </Text>
               {aired && (
-                <WatchedCheck
-                  watched={watchedIds.has(ep.id)}
-                  timesWatched={watchedTimesById.get(ep.id)}
-                  onToggle={() => onToggleEpisode(ep)}
-                  onRewatch={() => onRewatchEpisode(ep)}
-                  onUndoRewatch={() => onUndoRewatchEpisode(ep)}
-                  size={26}
-                />
+                <View style={styles.episodeTrailing}>
+                  {episodeWatchers.length > 0 && (
+                    <View style={styles.episodeWatcherStack}>
+                      {episodeWatchers.slice(0, 3).map((w, i) => (
+                        <Tooltip key={w.user_id} label={w.username} placement="left">
+                          <Pressable
+                            style={[styles.episodeWatcherItem, i > 0 && styles.episodeWatcherOverlap]}
+                            onPress={() => onOpenEpisode(ep)}
+                            accessibilityLabel={w.username}
+                          >
+                            <Avatar name={w.username} imageUri={w.avatar_url} size="xs" />
+                          </Pressable>
+                        </Tooltip>
+                      ))}
+                    </View>
+                  )}
+                  <WatchedCheck
+                    watched={watchedIds.has(ep.id)}
+                    timesWatched={watchedTimesById.get(ep.id)}
+                    onToggle={() => onToggleEpisode(ep)}
+                    onRewatch={() => onRewatchEpisode(ep)}
+                    onUndoRewatch={() => onUndoRewatchEpisode(ep)}
+                    size={26}
+                  />
+                </View>
               )}
             </Pressable>
           );
@@ -1438,6 +1471,10 @@ function createStyles(colors: Colors) {
     paddingLeft: 8,
   },
   episodeLineText: { flex: 1, color: colors.text, fontSize: 13, marginRight: 10 },
+  episodeTrailing: { flexDirection: "row", alignItems: "center", gap: 6 },
+  episodeWatcherStack: { flexDirection: "row" },
+  episodeWatcherItem: { borderRadius: radius.pill, borderWidth: 1.5, borderColor: colors.background },
+  episodeWatcherOverlap: { marginLeft: -8 },
   menuSheetTitle: { fontSize: type.subtitle, fontWeight: "800", color: colors.text, marginBottom: 8 },
   menuItem: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 14 },
   menuItemText: { fontSize: type.body, fontWeight: "600", color: colors.text },

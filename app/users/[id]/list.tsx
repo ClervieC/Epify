@@ -265,6 +265,26 @@ export default function UserListScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheKey]);
 
+  // numColumns changes on rotation (it's derived from windowWidth), which
+  // forces the FlatList below to remount (see its key={`grid-${numColumns}`}
+  // — RN doesn't support changing numColumns on a live FlatList). A remount
+  // starts a fresh list at scroll offset 0, and unlike a cacheKey change,
+  // nothing else re-applies the saved position afterward — so without this,
+  // rotating the device silently threw away where you were scrolled to.
+  const isFirstNumColumns = useRef(true);
+  useEffect(() => {
+    if (isFirstNumColumns.current) {
+      isFirstNumColumns.current = false;
+      return;
+    }
+    const entry = userListCache.get(cacheKey);
+    if (!entry) return;
+    requestAnimationFrame(() => {
+      showsListRef.current?.scrollToOffset({ offset: entry.scrollOffset, animated: false });
+      moviesListRef.current?.scrollToOffset({ offset: entry.scrollOffset, animated: false });
+    });
+  }, [numColumns, cacheKey]);
+
   // See app/browse.tsx's identical navigatingAwayRef for why this exists —
   // the native touch on a card fires a spurious scroll-to-0 event before
   // navigation, which without this guard clobbers the real scroll offset

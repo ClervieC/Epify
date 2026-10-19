@@ -2,6 +2,7 @@ import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
 import { patchCachedWatchedEpisodes } from "./showDataCache";
 import { checkBadgesNow } from "./badgeNotify";
+import { fetchFollowingIdsCached } from "./follows";
 
 // Persisted fallback for fetchUserShows() below — every show/episode detail
 // screen calls it (alongside the TVmaze data, which is already cached and
@@ -796,6 +797,80 @@ export async function fetchEpisodeFeelingCounts(episodeId: number): Promise<Reco
     counts[row.feeling] = (counts[row.feeling] ?? 0) + 1;
   }
   return counts;
+}
+
+export interface EpisodeWatcher {
+  user_id: string;
+  username: string;
+  avatar_url: string | null;
+}
+
+// Unlike fetchEpisodeFeelingCounts above, this one does carry user_id — but
+// only for people the caller already follows (and already has visibility
+// into via their public profile), scoped with a second query rather than a
+// PostgREST embed since watched_episodes has no FK to profiles (both only
+// FK to auth.users).
+export async function fetchEpisodeWatchersAmongFollowing(episodeId: number): Promise<EpisodeWatcher[]> {
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+  const followingIds = await fetchFollowingIdsCached(userId);
+  if (followingIds.length === 0) return [];
+
+  const { data: watched, error } = await supabase
+    .from("watched_episodes")
+    .select("user_id")
+    .eq("tvmaze_episode_id", episodeId)
+    .in("user_id", followingIds);
+  if (error) throw error;
+  const watcherIds = [...new Set((watched as { user_id: string }[]).map((w) => w.user_id))];
+  if (watcherIds.length === 0) return [];
+
+  const { data: profiles, error: profilesError } = await supabase
+    .from("profiles")
+    .select("user_id, username, avatar_url")
+    .in("user_id", watcherIds);
+  if (profilesError) throw profilesError;
+  return profiles as EpisodeWatcher[];
+}
+
+// Same idea as fetchEpisodeWatchersAmongFollowing, but for every episode of
+// a show in one round trip — the show detail screen's episode list (app/
+// show/[id].tsx) needs this per row, and firing one query per visible
+// episode there would mean a season's worth of requests just to expand a
+// season. Two queries total regardless of episode count: one scoped by
+// show+follows, one for the profiles of whoever that turned up.
+export async function fetchShowWatchersAmongFollowing(showTvmazeId: number): Promise<Map<number, EpisodeWatcher[]>> {
+  const userId = await getCurrentUserId();
+  if (!userId) return new Map();
+  const followingIds = await fetchFollowingIdsCached(userId);
+  if (followingIds.length === 0) return new Map();
+
+  const { data: watched, error } = await supabase
+    .from("watched_episodes")
+    .select("user_id, tvmaze_episode_id")
+    .eq("tvmaze_show_id", showTvmazeId)
+    .in("user_id", followingIds);
+  if (error) throw error;
+  const rows = watched as { user_id: string; tvmaze_episode_id: number }[];
+  if (rows.length === 0) return new Map();
+
+  const watcherIds = [...new Set(rows.map((r) => r.user_id))];
+  const { data: profiles, error: profilesError } = await supabase
+    .from("profiles")
+    .select("user_id, username, avatar_url")
+    .in("user_id", watcherIds);
+  if (profilesError) throw profilesError;
+  const profileById = new Map((profiles as EpisodeWatcher[]).map((p) => [p.user_id, p]));
+
+  const byEpisode = new Map<number, EpisodeWatcher[]>();
+  for (const row of rows) {
+    const profile = profileById.get(row.user_id);
+    if (!profile) continue;
+    const list = byEpisode.get(row.tvmaze_episode_id);
+    if (list) list.push(profile);
+    else byEpisode.set(row.tvmaze_episode_id, [profile]);
+  }
+  return byEpisode;
 }
 
 export async function incrementRewatch(tvmazeEpisodeId: number, currentTimesWatched: number) {
