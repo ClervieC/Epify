@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.2.1",
+    date: "2026-10-20",
+    en: [
+      "Fixed a blank strip of empty space at the bottom of the screen on an iPhone opened from its Home Screen bookmark (standalone mode) — the page could render taller than the actual visible screen there, pushing the bottom tab bar up off the true edge.",
+    ],
+    fr: [
+      "Correction d'une bande vide en bas de l'écran sur un iPhone ouvert depuis son raccourci à l'écran d'accueil (mode autonome) — la page pouvait s'afficher plus haute que l'écran réellement visible, décalant la barre d'onglets du bas par rapport au vrai bord de l'écran.",
+    ],
+  },
+  {
     version: "5.2.0",
     date: "2026-10-20",
     en: [

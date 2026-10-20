@@ -43,6 +43,20 @@
       html,
       body {
         height: 100%;
+        /* 100% alone resolves against the *layout* viewport, which on iOS
+           Safari (including standalone/home-screen mode) can report taller
+           than what's actually drawn on screen — a long-documented iOS quirk
+           with 100%/100vh in general, not specific to viewport-fit=cover.
+           100dvh ("dynamic viewport height") is the unit iOS 15.4+ added
+           specifically to report the *real* visible height instead; without
+           it here, html/body/#root below could end up sized taller than the
+           true screen, leaving whatever's flex-laid-out inside (the tab bar
+           included) sitting above a dead strip of the body's own background
+           at the bottom rather than flush with the real bottom edge. Kept
+           as a second declaration (not a replacement) so a browser that
+           doesn't understand 100dvh still gets 100% rather than nothing.
+         */
+        height: 100dvh;
       }
       /* These styles disable body scrolling if you are using <ScrollView> */
       body {
@@ -52,6 +66,7 @@
       #root {
         display: flex;
         height: 100%;
+        height: 100dvh;
         flex: 1;
       }
     </style>
