@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Tabs, useFocusEffect } from "expo-router";
-import { View, Text, Pressable, Platform, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { AdBanner } from "../../components/AdBanner";
@@ -48,19 +48,21 @@ function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAd
   return (
     <View>
       <AdBanner />
-      {/* paddingBottom is 20 (room for the tap targets) plus the home-
-          indicator inset, not just 20 — viewport-fit=cover in public/
-          index.html (see its own comment) now extends the page's
-          rendering into that inset area on iOS standalone/home-screen
-          mode instead of the OS reserving it outside the page, so without
-          adding it here this bar's own background stopped short of the
-          bottom edge, leaving a blank strip of the page's body background
-          exposed below it — found live on a phone, the same root cause as
-          the Sheet.tsx safe-area fix, just on the tab bar instead of a
-          sheet. insets.bottom is 0 anywhere this doesn't apply (web tab,
-          Android, a device with no home indicator), so this is a no-op
-          there. */}
-      <View style={[styles.bar, { paddingBottom: 20 + insets.bottom }]}>
+      {/* paddingBottom is the LARGER of 20 (room for the tap targets, the
+          original fixed value on any screen with no home-indicator inset to
+          worry about) and the inset itself — NOT the sum of both. Summing
+          them (an earlier version of this fix) double-counted: a standard
+          iOS tab bar's own clearance below its labels already *is* the
+          home-indicator inset, not that inset stacked on top of its own
+          separate padding, and stacking both measured out to a visibly
+          oversized blank strip below the bar on a real phone (confirmed
+          live via a temporary on-screen diagnostic overlay: #root's own
+          rendered height exactly matched the screen, so the page itself
+          was never the wrong size — this padding was just larger than it
+          needed to be). insets.bottom is 0 anywhere a home indicator isn't
+          in play (web tab, Android, older iPhones), where this is just 20,
+          unchanged from before. */}
+      <View style={[styles.bar, { paddingBottom: Math.max(20, insets.bottom) }]}>
         {state.routes.map((route, index) => {
           const focused = state.index === index;
           const color = focused ? colors.accent : colors.textFaint;
@@ -152,90 +154,23 @@ export default function TabsLayout() {
   );
 
   return (
-    <>
-      <Tabs
-        screenOptions={{ headerShown: false }}
-        tabBar={(props) => (
-          <CustomTabBar
-            {...(props as any)}
-            unreadCount={unreadCount}
-            hasUnseenActivity={hasUnseenActivity}
-            hasAdminAlerts={hasAdminAlerts}
-          />
-        )}
-      >
-        <Tabs.Screen name="index" options={{ title: t.tabs.shows }} />
-        <Tabs.Screen name="movies" options={{ title: t.tabs.movies }} />
-        <Tabs.Screen name="explore" options={{ title: t.tabs.explore }} />
-        <Tabs.Screen name="activity" options={{ title: t.tabs.activity }} />
-        <Tabs.Screen name="profile" options={{ title: t.tabs.profile }} />
-      </Tabs>
-      {/* TEMPORARY — diagnosing the standalone-PWA bottom-gap bug (see
-          CustomTabBar's own paddingBottom comment above) blind, from two
-          fixes that didn't resolve it on the real device, isn't working.
-          This reads out the actual measurements on whoever's screen it's
-          showing on, to pin down the real discrepancy instead of guessing a
-          third CSS fix. Remove once that's done. */}
-      <DebugOverlay />
-    </>
-  );
-}
-
-function DebugOverlay() {
-  const insets = useSafeAreaInsets();
-  const [lines, setLines] = useState<string[]>(["measuring…"]);
-
-  useEffect(() => {
-    if (Platform.OS !== "web" || typeof window === "undefined") return;
-    function measure() {
-      const root = document.getElementById("root");
-      const rootRect = root?.getBoundingClientRect();
-      const bodyRect = document.body.getBoundingClientRect();
-      setLines([
-        `innerHeight: ${window.innerHeight}`,
-        `clientHeight: ${document.documentElement.clientHeight}`,
-        `visualViewport.h: ${window.visualViewport?.height ?? "n/a"}`,
-        `visualViewport.offsetTop: ${window.visualViewport?.offsetTop ?? "n/a"}`,
-        `screen.height: ${window.screen?.height ?? "n/a"}`,
-        `devicePixelRatio: ${window.devicePixelRatio}`,
-        `navigator.standalone: ${String((navigator as any).standalone)}`,
-        `body rect h: ${Math.round(bodyRect.height)}`,
-        `#root rect h: ${rootRect ? Math.round(rootRect.height) : "n/a"}`,
-        `#root rect bottom: ${rootRect ? Math.round(rootRect.bottom) : "n/a"}`,
-        `insets top/bottom: ${insets.top}/${insets.bottom}`,
-      ]);
-    }
-    measure();
-    window.addEventListener("resize", measure);
-    window.visualViewport?.addEventListener("resize", measure);
-    const t = setTimeout(measure, 1500); // catch late standalone-mode layout settling
-    return () => {
-      window.removeEventListener("resize", measure);
-      window.visualViewport?.removeEventListener("resize", measure);
-      clearTimeout(t);
-    };
-  }, [insets.top, insets.bottom]);
-
-  if (Platform.OS !== "web") return null;
-
-  return (
-    <View
-      style={{
-        position: "fixed" as any,
-        top: 4,
-        left: 4,
-        backgroundColor: "rgba(220,0,0,0.92)",
-        padding: 6,
-        borderRadius: 6,
-        zIndex: 99999,
-      }}
+    <Tabs
+      screenOptions={{ headerShown: false }}
+      tabBar={(props) => (
+        <CustomTabBar
+          {...(props as any)}
+          unreadCount={unreadCount}
+          hasUnseenActivity={hasUnseenActivity}
+          hasAdminAlerts={hasAdminAlerts}
+        />
+      )}
     >
-      {lines.map((line, i) => (
-        <Text key={i} style={{ color: "white", fontSize: 10, lineHeight: 13 }}>
-          {line}
-        </Text>
-      ))}
-    </View>
+      <Tabs.Screen name="index" options={{ title: t.tabs.shows }} />
+      <Tabs.Screen name="movies" options={{ title: t.tabs.movies }} />
+      <Tabs.Screen name="explore" options={{ title: t.tabs.explore }} />
+      <Tabs.Screen name="activity" options={{ title: t.tabs.activity }} />
+      <Tabs.Screen name="profile" options={{ title: t.tabs.profile }} />
+    </Tabs>
   );
 }
 

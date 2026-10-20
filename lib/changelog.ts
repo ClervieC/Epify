@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.2.3",
+    date: "2026-10-20",
+    en: [
+      "Fixed the bottom tab bar having too much empty space below its labels on an iPhone opened from its Home Screen bookmark — it was padded for both its own spacing and the home-indicator clearance stacked together, instead of just the larger of the two.",
+    ],
+    fr: [
+      "Correction d'un espace vide trop important sous les onglets du bas sur un iPhone ouvert depuis son raccourci à l'écran d'accueil — l'espacement propre à la barre et la marge de la home indicator s'additionnaient au lieu de ne garder que la plus grande des deux.",
+    ],
+  },
+  {
     version: "5.2.2",
     date: "2026-10-20",
     en: [

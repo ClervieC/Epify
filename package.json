@@ -1,6 +1,6 @@
 {
   "name": "epify",
-  "version": "5.2.2",
+  "version": "5.2.3",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
