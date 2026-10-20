@@ -3,7 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <!--
+      viewport-fit=cover is what actually makes `useSafeAreaInsets()` (react-
+      native-safe-area-context's web shim reads CSS env(safe-area-inset-*))
+      return real non-zero values here instead of silently 0 — found live:
+      every Sheet's home-indicator padding fix (see components/Sheet.tsx)
+      quietly did nothing specifically when the site is opened from an iOS
+      "Add to Home Screen" bookmark (standalone display mode, see apple-
+      mobile-web-app-capable below), because without this the page never
+      extends into the safe-area regions in the first place, so there's
+      nothing for env() to report. A normal Safari tab never showed the bug
+      at all — Safari's own chrome already sits in that space regardless.
+      black-translucent (below) specifically depends on this too: a
+      translucent status bar only makes sense once the page knows to draw
+      content behind it rather than under it.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
     <title>%WEB_TITLE%</title>
 
     <!--

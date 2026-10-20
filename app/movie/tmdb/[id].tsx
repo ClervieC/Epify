@@ -24,8 +24,10 @@ import {
   setMovieFavorite,
   rateMovie,
   fetchMovieFeelingCounts,
+  markMovieWatchedForRoom,
   UserMovie,
 } from "../../../lib/userMovies";
+import { fetchShareableRoomsCached, ShareableRoom } from "../../../lib/rooms";
 import { useLanguage } from "../../../lib/i18n";
 import { getCurrentUserId } from "../../../lib/supabase";
 import {
@@ -63,6 +65,7 @@ export default function TmdbMovieDetailScreen() {
   const [trailerUrl, setTrailerUrl] = useState<string | null>(null);
   const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
   const [recommendations, setRecommendations] = useState<TMDBSearchResult[]>([]);
+  const [rooms, setRooms] = useState<ShareableRoom[]>([]);
   // Bumped by every write to `userRow` — this reload and every mutation
   // handler below (handleRewatch, handleToggleFavorite, ...) — so a reload
   // already in flight when a mutation lands can tell its own fetch predates
@@ -145,6 +148,14 @@ export default function TmdbMovieDetailScreen() {
     };
   }, [unlocked, tmdbId]);
 
+  useEffect(() => {
+    let active = true;
+    fetchShareableRoomsCached().then((r) => active && setRooms(r));
+    return () => {
+      active = false;
+    };
+  }, []);
+
   if (!tmdb && !tmdbNotFound) return <MovieDetailLoading onBack={goBack} />;
 
   const title = tmdb?.title ?? "";
@@ -206,6 +217,9 @@ export default function TmdbMovieDetailScreen() {
     const updated = await rateMovie(userRow.id, userRow.rating, next);
     userRowVersionRef.current++;
     setUserRow(updated);
+  }
+  async function handleShareRoom(roomIds: string[], userIds: string[]) {
+    await markMovieWatchedForRoom(roomIds, userIds, tmdbId, title, year, tmdb?.poster_path).catch(() => {});
   }
   async function handlePostComment(body: string, parentId?: string) {
     await postMovieComment(tmdbId, body, parentId);
@@ -304,6 +318,8 @@ export default function TmdbMovieDetailScreen() {
           onRate={handleRate}
           onFeeling={handleFeeling}
           feelingCounts={feelingCounts}
+          rooms={rooms}
+          onShareRoom={handleShareRoom}
           comments={comments}
           commentsLoading={commentsLoading}
           myUserId={myUserId}

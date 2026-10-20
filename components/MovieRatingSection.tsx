@@ -5,7 +5,9 @@ import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useScalePress } from "../lib/animations";
 import { FEELING_EMOJIS } from "../lib/feelings";
+import { ShareableRoom } from "../lib/rooms";
 import { CommentsSection, CommentLike } from "./CommentsSection";
+import { RoommateShareRow } from "./RoommateShareRow";
 
 interface MovieRatingSectionProps {
   // Whether the current user has actually watched this movie — rating/
@@ -19,6 +21,8 @@ interface MovieRatingSectionProps {
   onRate: (value: number) => void;
   onFeeling: (key: string) => void;
   feelingCounts: Record<string, number>;
+  rooms: ShareableRoom[];
+  onShareRoom: (roomIds: string[], userIds: string[]) => void;
   comments: CommentLike[];
   commentsLoading: boolean;
   myUserId: string | null;
@@ -38,6 +42,8 @@ export function MovieRatingSection({
   onRate,
   onFeeling,
   feelingCounts,
+  rooms,
+  onShareRoom,
   comments,
   commentsLoading,
   myUserId,
@@ -93,6 +99,8 @@ export function MovieRatingSection({
               />
             ))}
           </View>
+
+          <RoommateShareRow rooms={rooms} onShare={onShareRoom} />
         </>
       )}
 

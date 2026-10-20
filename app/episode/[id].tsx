@@ -38,6 +38,7 @@ import {
   fetchWatchedEpisodes,
   decrementRewatch,
   incrementRewatch,
+  markEpisodeWatchedForRoom,
   rateEpisode,
   setEpisodeFavorite,
   setEpisodeWatched,
@@ -58,6 +59,8 @@ import {
 } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { EpisodeWatchersRow } from "../../components/EpisodeWatchersRow";
+import { RoommateShareRow } from "../../components/RoommateShareRow";
+import { fetchShareableRoomsCached, ShareableRoom } from "../../lib/rooms";
 import { CommentsSection } from "../../components/CommentsSection";
 import { CharacterVote } from "../../components/CharacterVote";
 import { ReportModal } from "../../components/ReportModal";
@@ -123,6 +126,19 @@ export default function EpisodeDetailScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, spoilerMode, showWatchActivity } = useLanguage();
   const askAddToList = useAddToListPrompt();
+  // Always-visible "share with room" block under the feeling picker (see
+  // components/RoommateShareRow.tsx) — unlike Watch Next/show detail's
+  // FeelingSheet popup, this page's reaction section isn't a one-shot
+  // prompt, so the room list just needs fetching once, no trigger/
+  // visibility decision.
+  const [rooms, setRooms] = useState<ShareableRoom[]>([]);
+  useEffect(() => {
+    let active = true;
+    fetchShareableRoomsCached().then((r) => active && setRooms(r));
+    return () => {
+      active = false;
+    };
+  }, []);
   // A horizontally-paged list with vertical scrolling content nested inside
   // each page is fragile with real touch input — getting a Pan-based swipe
   // gesture, a nested scroll view, and a native horizontal pager to all
@@ -366,6 +382,10 @@ export default function EpisodeDetailScreen() {
     }));
   }
 
+  async function shareRoomForEpisode(episode: TVMazeEpisode, roomIds: string[], userIds: string[]) {
+    await markEpisodeWatchedForRoom(roomIds, userIds, showIdNum, episode.id, episode.season, episode.number).catch(() => {});
+  }
+
   const watchedCount = Object.values(watchedMap).filter(Boolean).length;
   const remaining = episodes.length > 0 ? episodes.length - watchedCount : null;
 
@@ -475,6 +495,7 @@ export default function EpisodeDetailScreen() {
               remaining={remaining}
               spoilerMode={spoilerMode}
               showWatchActivity={showWatchActivity}
+              rooms={rooms}
               isSeriesFinale={isSeriesFinale(currentEpisode)}
               sideInset={SIDE_NAV_INSET}
               onToggleWatched={() => toggleWatched(currentEpisode)}
@@ -482,6 +503,7 @@ export default function EpisodeDetailScreen() {
               onUndoRewatch={() => undoRewatchEpisode(currentEpisode)}
               onRate={(n) => setRating(currentEpisode, n)}
               onFeeling={(key) => setFeeling(currentEpisode, key)}
+              onShareRoom={(roomIds, userIds) => shareRoomForEpisode(currentEpisode, roomIds, userIds)}
               onToggleFavorite={() => toggleFavorite(currentEpisode)}
               colors={colors}
               styles={styles}
@@ -585,12 +607,14 @@ export default function EpisodeDetailScreen() {
         remaining={remaining}
         spoilerMode={spoilerMode}
         showWatchActivity={showWatchActivity}
+        rooms={rooms}
         isSeriesFinale={isSeriesFinale(currentEpisode)}
         onToggleWatched={() => toggleWatched(currentEpisode)}
         onRewatch={() => rewatchEpisode(currentEpisode)}
         onUndoRewatch={() => undoRewatchEpisode(currentEpisode)}
         onRate={(n) => setRating(currentEpisode, n)}
         onFeeling={(key) => setFeeling(currentEpisode, key)}
+        onShareRoom={(roomIds, userIds) => shareRoomForEpisode(currentEpisode, roomIds, userIds)}
         onToggleFavorite={() => toggleFavorite(currentEpisode)}
         onSwipeNext={() => goToIndex(currentIndex + 1)}
         onSwipePrev={() => goToIndex(currentIndex - 1)}
@@ -772,6 +796,7 @@ function EpisodePage({
   remaining,
   spoilerMode,
   showWatchActivity,
+  rooms,
   isSeriesFinale,
   sideInset,
   onToggleWatched,
@@ -780,6 +805,7 @@ function EpisodePage({
   onRate,
   onFeeling,
   onToggleFavorite,
+  onShareRoom,
   onSwipeNext,
   onSwipePrev,
   colors,
@@ -794,6 +820,7 @@ function EpisodePage({
   remaining: number | null;
   spoilerMode: boolean;
   showWatchActivity: boolean;
+  rooms: ShareableRoom[];
   isSeriesFinale?: boolean;
   sideInset?: number;
   onToggleWatched: () => void;
@@ -802,6 +829,7 @@ function EpisodePage({
   onRate: (value: number) => void;
   onFeeling: (key: string) => void;
   onToggleFavorite: () => void;
+  onShareRoom: (roomIds: string[], userIds: string[]) => void;
   onSwipeNext?: () => void;
   onSwipePrev?: () => void;
   colors: Colors;
@@ -1135,6 +1163,8 @@ function EpisodePage({
                 />
               ))}
             </View>
+
+            <RoommateShareRow rooms={rooms} onShare={onShareRoom} />
           </>
         )}
 

@@ -15,6 +15,22 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.2.0",
+    date: "2026-10-20",
+    en: [
+      "New: Rooms — create a small group to watch shows and movies together, found via the \"Rooms\" button on the Social tab. Invite people, and the next time you mark an episode or movie watched, you can share it with the room so it shows up for everyone in it.",
+      "Rooms can get an optional icon, and you can link one to a show to see everyone's watching progress side by side.",
+      "You're notified when someone shares something with a room you're in — a whole season shared at once is a single notification, not one per episode.",
+      "A room's creator can edit it (name, icon, end date, linked show) or remove a member. Any member can also log something the room already watched together directly from the room screen, without needing to find it on its own page first.",
+    ],
+    fr: [
+      "Nouveau : les Rooms — crée un petit groupe pour regarder des séries et films ensemble, accessible via le bouton \"Rooms\" de l'onglet Social. Invite des personnes, et la prochaine fois que tu marques un épisode ou un film comme vu, tu peux le partager avec la room pour qu'il apparaisse chez tout le monde.",
+      "Une room peut avoir une icône optionnelle, et tu peux la lier à une série pour voir la progression de chacun côte à côte.",
+      "Tu es notifié(e) quand quelqu'un partage quelque chose avec une room dont tu fais partie — une saison entière partagée d'un coup donne une seule notification, pas une par épisode.",
+      "Le créateur d'une room peut la modifier (nom, icône, date de fin, série liée) ou retirer un membre. N'importe quel membre peut aussi ajouter directement depuis la room quelque chose déjà regardé ensemble, sans avoir à le retrouver sur sa propre page.",
+    ],
+  },
+  {
     version: "5.1.14",
     date: "2026-10-19",
     en: [

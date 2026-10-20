@@ -313,6 +313,33 @@ export async function setMovieWatched(
   return data as UserMovie;
 }
 
+// Fans out "I watched this" to chosen room-mates — see
+// mark_movie_watched_for_room in supabase/schema.sql, which re-validates
+// that every target is actually an accepted, non-expired room-mate of the
+// caller server-side. Only ever called from an explicit "share with room"
+// confirm, never automatically. Matches setMovieWatched's own upsert
+// target (user_id, title, year) above, not tmdb_id. roomIds scopes the
+// write to exactly the selected rooms — see markEpisodeWatchedForRoom's
+// identical comment in lib/userShows.ts.
+export async function markMovieWatchedForRoom(
+  roomIds: string[],
+  targetUserIds: string[],
+  tmdbId: number | undefined,
+  title: string,
+  year: number | null,
+  posterPath?: string | null,
+) {
+  const { error } = await supabase.rpc("mark_movie_watched_for_room", {
+    p_room_ids: roomIds,
+    p_target_user_ids: targetUserIds,
+    p_tmdb_id: tmdbId ?? null,
+    p_title: title,
+    p_year: year,
+    p_poster_path: posterPath ?? null,
+  });
+  if (error) throw error;
+}
+
 export async function incrementMovieRewatch(id: string, currentTimesWatched: number): Promise<UserMovie> {
   const { data, error } = await supabase
     .from("user_movies")

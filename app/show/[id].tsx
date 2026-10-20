@@ -40,6 +40,9 @@ import {
   fetchWatchedEpisodes,
   decrementRewatch,
   incrementRewatch,
+  markEpisodeWatchedForRoom,
+  markEpisodesWatchedForRoom,
+  rateEpisode,
   removeUserShow,
   setEpisodeWatched,
   setEpisodesUnwatched,
@@ -67,11 +70,14 @@ import { ReportModal } from "../../components/ReportModal";
 import { Tooltip } from "../../components/Tooltip";
 import { DetailErrorState } from "../../components/DetailErrorState";
 import { Sheet } from "../../components/Sheet";
+import { FeelingSheet } from "../../components/FeelingSheet";
+import { RoomSharePicker } from "../../components/RoomSharePicker";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
 import { useRewatchPrompt } from "../../context/RewatchPromptContext";
 import { useAddToListPrompt } from "../../context/AddToListPromptContext";
 import { getCurrentUserId } from "../../lib/supabase";
 import { useGoBack } from "../../lib/useGoBack";
+import { useWatchedFeelingPrompt } from "../../lib/useWatchedFeelingPrompt";
 import { FEELING_EMOJIS } from "../../lib/feelings";
 import {
   deleteComment,
@@ -106,6 +112,10 @@ export default function ShowDetailScreen() {
   // marking the rest, rather than tapping the checkmark just silently
   // completing it with no way to say "actually, undo what I've done so far."
   const [seasonPartialConfirm, setSeasonPartialConfirm] = useState<TVMazeEpisode[] | null>(null);
+  // The episodes a just-completed markSeasonWatched() actually marked —
+  // non-null while the room-share Sheet for them is open (see
+  // handleSeasonShareRoom below).
+  const [seasonShareEpisodes, setSeasonShareEpisodes] = useState<TVMazeEpisode[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -154,6 +164,10 @@ export default function ShowDetailScreen() {
   const askPreviousEpisodes = usePreviousEpisodesPrompt();
   const askRewatch = useRewatchPrompt();
   const askAddToList = useAddToListPrompt();
+  // Same "share with room"/feeling-reaction popup as Watch Next's own tap
+  // (app/(tabs)/index.tsx) — this screen's per-episode row had no feeling
+  // UI at all before rooms; see lib/useWatchedFeelingPrompt.ts.
+  const feelingPrompt = useWatchedFeelingPrompt<TVMazeEpisode>();
   const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(goBack);
 
   const load = useCallback(async () => {
@@ -554,8 +568,28 @@ export default function ShowDetailScreen() {
     // ensureInList() only applies when marking watched (an untracked show
     // can't have a watched episode to un-mark in the first place) —
     // resumeUserShowIfNeeded() applies either way (see its own comment).
-    if (!isWatched) await ensureInList();
+    if (!isWatched) {
+      await ensureInList();
+      // Only the single-episode path above, never the bulk earlierUnwatched
+      // branch (which already returned) — a 10-episode bulk mark offering
+      // this per episode would be noisy, see lib/useWatchedFeelingPrompt.ts.
+      feelingPrompt.trigger(ep);
+    }
     resumeUserShowIfNeeded();
+  }
+
+  async function handleEpisodeQuickFeeling(feelingKey: string) {
+    const ep = feelingPrompt.promptItem;
+    feelingPrompt.close();
+    if (!ep) return;
+    await rateEpisode(showId, ep.id, null, feelingKey);
+  }
+
+  async function handleEpisodeShareRoom(roomIds: string[], userIds: string[]) {
+    const ep = feelingPrompt.promptItem;
+    feelingPrompt.close();
+    if (!ep) return;
+    await markEpisodeWatchedForRoom(roomIds, userIds, showId, ep.id, ep.season, ep.number).catch(() => {});
   }
 
   async function rewatchEpisode(ep: TVMazeEpisode) {
@@ -592,6 +626,26 @@ export default function ShowDetailScreen() {
     ]);
     await ensureInList();
     resumeUserShowIfNeeded();
+    // Offers the room-share choice for the whole season in one go, not once
+    // per episode — see markEpisodesWatchedForRoom/mark_episodes_watched_
+    // for_room, the batched sibling of the single-episode RPC used
+    // elsewhere on this page. No feeling-reaction picker here (unlike
+    // FeelingSheet's single-episode flow) — "how did a whole season make
+    // you feel" doesn't map the same way a single episode's reaction does,
+    // so this is just the room picker on its own.
+    if (feelingPrompt.rooms.length > 0) setSeasonShareEpisodes(unwatched);
+  }
+
+  async function handleSeasonShareRoom(roomIds: string[], userIds: string[]) {
+    const eps = seasonShareEpisodes;
+    setSeasonShareEpisodes(null);
+    if (!eps) return;
+    await markEpisodesWatchedForRoom(
+      roomIds,
+      userIds,
+      showId,
+      eps.map((e) => ({ id: e.id, season: e.season, number: e.number })),
+    ).catch(() => {});
   }
 
   async function unmarkSeasonWatched(eps: TVMazeEpisode[]) {
@@ -1069,6 +1123,18 @@ export default function ShowDetailScreen() {
         onChoose={chooseSeasonPartial}
         onDismiss={() => chooseSeasonPartial("cancel")}
       />
+
+      <FeelingSheet
+        visible={!!feelingPrompt.promptItem}
+        onClose={feelingPrompt.close}
+        onSelect={handleEpisodeQuickFeeling}
+        rooms={feelingPrompt.rooms}
+        onShareRoom={handleEpisodeShareRoom}
+      />
+
+      <Sheet visible={!!seasonShareEpisodes} onClose={() => setSeasonShareEpisodes(null)}>
+        <RoomSharePicker rooms={feelingPrompt.rooms} onShare={handleSeasonShareRoom} defaultExpanded />
+      </Sheet>
 
       <Sheet visible={listPickerOpen} onClose={() => setListPickerOpen(false)}>
         <Text style={styles.menuSheetTitle}>{t.showDetail.addToAList}</Text>

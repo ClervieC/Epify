@@ -723,7 +723,18 @@ async function getNewlyAlmostUnlocked(userId: string, badges: Badge[]): Promise<
   if (fresh.length === 0) return [];
 
   for (const b of fresh) alreadyNotified.add(b.id);
-  AsyncStorage.setItem(almostUnlockedKey(userId), JSON.stringify([...alreadyNotified])).catch(() => {});
+  // Awaited, not fire-and-forget — the caller only shows the toast after
+  // this resolves (see computeStreakData's `await getNewlyAlmostUnlocked`),
+  // so the write to disk always lands before the user could possibly close
+  // the app/tab in reaction to seeing it. Fire-and-forget here left exactly
+  // that window open: on a page the OS can suspend without warning (an iOS
+  // "Add to Home Screen" PWA, in particular — see public/index.html's own
+  // viewport-fit comment for another bug that setup exposed), a user who
+  // saw the toast and immediately closed the app could beat the untracked
+  // write, so the "already notified" flag never actually landed and the
+  // exact same badge nagged again next launch — this is the live bug report
+  // behind this change, not a theoretical one.
+  await AsyncStorage.setItem(almostUnlockedKey(userId), JSON.stringify([...alreadyNotified])).catch(() => {});
   return fresh;
 }
 

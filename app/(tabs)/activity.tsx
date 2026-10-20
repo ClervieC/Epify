@@ -634,7 +634,17 @@ export default function ActivityScreen() {
     <View style={styles.container}>
       <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} />
       <View style={styles.headerBlock}>
-        <Text style={styles.header}>{t.activity.title}</Text>
+        <View style={styles.headerTitleRow}>
+          <Text style={styles.header}>{t.activity.title}</Text>
+          <Pressable
+            onPress={() => router.push("/rooms")}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t.rooms.title}
+          >
+            <Ionicons name="people-circle-outline" size={28} color={colors.accent} />
+          </Pressable>
+        </View>
         {tab === "activity" && !loading && items.length > 0 && <Text style={styles.subtitle}>{t.activity.subtitle}</Text>}
         {tab === "suggested" && <Text style={styles.subtitle}>{t.activity.suggestedSubtitle}</Text>}
       </View>
@@ -806,6 +816,7 @@ function createStyles(colors: Colors) {
     container: { flex: 1, backgroundColor: colors.background },
     headerGlow: { position: "absolute", top: 0, left: 0, right: 0, height: 140, pointerEvents: "none" },
     headerBlock: { padding: 16, paddingBottom: 12 },
+    headerTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
     header: { fontSize: type.title, fontWeight: "800", color: colors.text },
     subtitle: { fontSize: type.bodySm, color: colors.textMuted, marginTop: 2 },
     tabsRow: {

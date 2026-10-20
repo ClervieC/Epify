@@ -91,6 +91,11 @@ export default function OnboardingScreen() {
       body: t.onboarding.slide6Body,
     },
     {
+      image: require("../assets/onboarding/rooms.png"),
+      title: t.onboarding.slide8Title,
+      body: t.onboarding.slide8Body,
+    },
+    {
       image: require("../assets/onboarding/profile.png"),
       title: t.onboarding.slide7Title,
       body: t.onboarding.slide7Body,

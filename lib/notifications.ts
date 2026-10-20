@@ -1,5 +1,8 @@
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchProfiles, Profile } from "./profiles";
+import { fetchRoomWatchLogEntriesByIds, RoomWatchLogEntry } from "./rooms";
+import { getCachedShow } from "./showDataCache";
+import { getShow } from "./tvmaze";
 import { createShortCache } from "./shortCache";
 
 // NotificationsContext's own focus-triggered poll already throttles to once
@@ -26,12 +29,32 @@ export interface AppNotification {
   tvmaze_show_id: number | null;
   show_name: string | null;
   show_image: string | null;
+  // Set for type === "room_invite" (see notify_on_room_invite in supabase/
+  // schema.sql) and type === "room_share" (notify_on_room_watch_log) — null
+  // for every other type, same sparse-column convention as tvmaze_show_id/
+  // show_name above.
+  room_id: string | null;
+  room_name: string | null;
+  // Only set for type === "room_share" — which share this notification is
+  // about (see notify_on_room_watch_log in supabase/schema.sql). When the
+  // underlying share covered more than one episode (a season marked watched
+  // in one go), room_watch_log_id points at just one representative row of
+  // the group — room_watch_episode_count is what tells the UI this was a
+  // season, not a single episode, and to word/link it accordingly.
+  room_watch_log_id: string | null;
+  room_watch_episode_count: number;
   read: boolean;
   created_at: string;
 }
 
 export interface EnrichedNotification extends AppNotification {
   actor: Profile | null;
+  roomWatchLog: RoomWatchLogEntry | null;
+  // Resolved only for an episode-type roomWatchLog — the log itself only
+  // stores tvmaze_show_id (see its own comment in supabase/schema.sql), so
+  // rendering "X marked [Show] S1E2 watched" needs this looked up, same
+  // shared cache every other screen already reads the show's name from.
+  roomWatchLogShowName: string | null;
 }
 
 export async function fetchNotifications(): Promise<EnrichedNotification[]> {
@@ -47,10 +70,27 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
   if (error) throw error;
 
   const actorIds = [...new Set(data.map((n) => n.actor_id).filter((id): id is string => !!id))];
-  const actors = await fetchProfiles(actorIds);
+  const logIds = [...new Set(data.map((n) => n.room_watch_log_id).filter((id): id is string => !!id))];
+  const [actors, logById] = await Promise.all([fetchProfiles(actorIds), fetchRoomWatchLogEntriesByIds(logIds)]);
   const actorById = new Map(actors.map((a) => [a.user_id, a]));
 
-  return data.map((n) => ({ ...n, actor: n.actor_id ? actorById.get(n.actor_id) ?? null : null }));
+  const episodeShowIds = [
+    ...new Set(
+      [...logById.values()].filter((e) => e.content_type === "episode" && e.tvmaze_show_id != null).map((e) => e.tvmaze_show_id!)
+    ),
+  ];
+  const shows = await Promise.all(episodeShowIds.map((id) => getCachedShow(id, () => getShow(id)).catch(() => null)));
+  const showNameById = new Map(episodeShowIds.map((id, i) => [id, shows[i]?.name ?? null]));
+
+  return data.map((n) => {
+    const log = n.room_watch_log_id ? logById.get(n.room_watch_log_id) ?? null : null;
+    return {
+      ...n,
+      actor: n.actor_id ? actorById.get(n.actor_id) ?? null : null,
+      roomWatchLog: log,
+      roomWatchLogShowName: log?.tvmaze_show_id != null ? showNameById.get(log.tvmaze_show_id) ?? null : null,
+    };
+  });
 }
 
 export async function fetchUnreadNotificationCount(): Promise<number> {

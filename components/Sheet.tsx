@@ -1,5 +1,6 @@
 import { ReactNode, useMemo } from "react";
-import { Animated, Platform, Pressable, StyleSheet, useWindowDimensions, ViewStyle } from "react-native";
+import { createPortal } from "react-dom";
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors, radius, dropShadow, Colors } from "../lib/theme";
 import { useSheetTransition } from "../lib/animations";
@@ -20,7 +21,7 @@ interface SheetProps {
 // so it becomes a centered dialog that scales in instead. Content is up to
 // the caller.
 export function Sheet({ visible, onClose, children }: SheetProps) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -32,7 +33,7 @@ export function Sheet({ visible, onClose, children }: SheetProps) {
   const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [40, 0] });
   const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] });
 
-  return (
+  const content = (
     <AnimatedPressable
       style={[styles.backdrop, isWide && styles.backdropWide, { opacity: progress }]}
       onPress={onClose}
@@ -51,13 +52,43 @@ export function Sheet({ visible, onClose, children }: SheetProps) {
           // an opaque id (not a plain object) on native.
           !isWide && { paddingBottom: 32 + insets.bottom },
           isWide && styles.sheetWide,
+          // A cap, not a fixed height — short content still only takes the
+          // room it needs (ScrollView below doesn't force-fill this). Found
+          // live: a FeelingSheet with both the full emoji grid and a room-
+          // share block (see components/FeelingSheet.tsx) pushed its own
+          // "Share" button entirely off-screen with nothing to scroll it
+          // into view — every Sheet caller gets this ceiling now instead of
+          // each one having to notice and fix it individually.
+          // overflow:hidden is what actually makes the cap bite on web — RNW
+          // compiles this to real CSS flexbox, where a nested flex chain's
+          // default min-height:auto lets a child grow past its ancestor's
+          // max-height instead of triggering the ScrollView's own scroll,
+          // unless something in the chain clips. Native Yoga doesn't share
+          // this quirk, but setting it here costs nothing there either.
+          { maxHeight: height * 0.85, overflow: "hidden" },
           { transform: [isWide ? { scale } : { translateY }] },
         ]}
       >
-        <Pressable onPress={(e) => e.stopPropagation()}>{children}</Pressable>
+        <Pressable onPress={(e) => e.stopPropagation()} style={styles.scrollWrap}>
+          <ScrollView showsVerticalScrollIndicator={false}>{children}</ScrollView>
+        </Pressable>
       </Animated.View>
     </AnimatedPressable>
   );
+
+  // Web only: portal straight to document.body so this backdrop's
+  // position:fixed escapes every ancestor's CSS containing block. A
+  // transformed ancestor anywhere up the tree (any Animated.View mid-
+  // animation, common throughout this app) otherwise traps "fixed"
+  // elements inside its own box instead of the real viewport — found live
+  // as a tall FeelingSheet (full emoji grid + a room-share block, see
+  // components/FeelingSheet.tsx) rendering *behind* the persistent bottom
+  // tab bar on a tab screen, with its lower buttons genuinely unclickable
+  // despite this component's own zIndex:1000, because the tab bar is its
+  // own separate DOM subtree the trapped backdrop could never out-stack.
+  // Native has no DOM/portal concept the same way; RN's own overlay
+  // rendering doesn't share this CSS-specific escape-hatch requirement.
+  return Platform.OS === "web" ? createPortal(content, document.body) : content;
 }
 
 function createStyles(colors: Colors) {
@@ -110,6 +141,11 @@ function createStyles(colors: Colors) {
       paddingBottom: 32,
       gap: 4,
     },
+    // flexShrink lets this actually shrink below its content's natural
+    // size when the sheet's own maxHeight clamps it — minHeight:0 overrides
+    // the web flexbox default (min-height:auto) that would otherwise block
+    // that shrink and silently defeat the overflow:hidden above.
+    scrollWrap: { flexShrink: 1, minHeight: 0 },
     sheetWide: {
       width: "100%",
       maxWidth: 420,

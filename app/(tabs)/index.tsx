@@ -24,11 +24,13 @@ import {
   fetchWatchedEpisodesForShows,
   fetchWatchedEpisodesPage,
   incrementRewatch,
+  markEpisodeWatchedForRoom,
   rateEpisode,
   setEpisodeWatched,
   UserShow,
   WatchedEpisode,
 } from "../../lib/userShows";
+import { useWatchedFeelingPrompt } from "../../lib/useWatchedFeelingPrompt";
 import {
   getCachedShow,
   getCachedEpisodes,
@@ -609,15 +611,16 @@ export default function ShowsScreen() {
       };
     }, [])
   );
-  // Set right after marking an episode watched (never on unwatch) — opens
-  // the quick feeling picker for that specific episode. Tapping outside
-  // (Sheet's backdrop) or picking nothing just closes it without saving.
-  const [feelingPromptItem, setFeelingPromptItem] =
-    useState<EnrichedEpisode | null>(null);
+  // Opens the quick feeling picker (and/or the "share with room" block)
+  // right after marking an episode watched (never on unwatch). Tapping
+  // outside (Sheet's backdrop) or picking nothing just closes it without
+  // saving — see lib/useWatchedFeelingPrompt.ts for the show_feeling_prompt
+  // / roommates visibility decision.
+  const feelingPrompt = useWatchedFeelingPrompt<EnrichedEpisode>();
   // Freezes Watch Next on the episode just marked watched, same idea as
-  // feelingPromptItem above but unconditional — with the feeling-prompt
-  // setting OFF, feelingPromptItem never gets set at all, so the row used to
-  // jump straight to the show's *next* unwatched episode the instant the
+  // feelingPrompt.promptItem above but unconditional — with the feeling
+  // prompt never showing (setting off, no rooms), the row used to jump
+  // straight to the show's *next* unwatched episode the instant the
   // checkmark landed. That next episode is, correctly, unwatched — but
   // showing up in the exact spot the just-watched one occupied a moment ago
   // reads as "the episode I just checked is still unwatched," when it's
@@ -688,15 +691,7 @@ export default function ShowsScreen() {
   const upcomingCacheRef = useRef(new Map<number, EnrichedEpisode>());
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t, language, showFeelingPrompt } = useLanguage();
-  // toggleWatched below is a stable (empty-deps) useCallback other code
-  // relies on for referential stability (see WatchListEpisodeRow's own
-  // comment) — a ref lets it read the current setting without becoming
-  // unstable every time the user flips it in Settings.
-  const showFeelingPromptRef = useRef(showFeelingPrompt);
-  useEffect(() => {
-    showFeelingPromptRef.current = showFeelingPrompt;
-  }, [showFeelingPrompt]);
+  const { t, language } = useLanguage();
   const { setDataReady } = useAuth();
   const underlineGrow = useGrowIn(tab);
   const contentFade = useFadeIn(!loading);
@@ -1464,12 +1459,13 @@ export default function ShowsScreen() {
       if (item.isSeriesFinale) finaleToast.show(item.show.show_name);
       if (justWatchedTimer.current) clearTimeout(justWatchedTimer.current);
       setJustWatchedItem(item);
-      if (showFeelingPromptRef.current) {
-        // The feeling sheet's own onClose/onSelect clears justWatchedItem
-        // once it's actually dismissed (see below) — no timer needed here,
-        // the sheet itself is the "beat" the user needs to see the check.
-        setFeelingPromptItem(item);
-      } else {
+      // The feeling sheet's own onClose/onSelect/onShareRoom clears
+      // justWatchedItem once it's actually dismissed (see below) — no timer
+      // needed when it's shown, the sheet itself is the "beat" the user
+      // needs to see the check. trigger() returns false when neither the
+      // feeling prompt nor any room applies, in which case the timer below
+      // is what clears the frozen row instead.
+      if (!feelingPrompt.trigger(item)) {
         justWatchedTimer.current = setTimeout(() => setJustWatchedItem(null), 1200);
       }
     }
@@ -1477,8 +1473,8 @@ export default function ShowsScreen() {
 
   const handleQuickFeeling = useCallback(
     async (feelingKey: string) => {
-      const item = feelingPromptItem;
-      setFeelingPromptItem(null);
+      const item = feelingPrompt.promptItem;
+      feelingPrompt.close();
       setJustWatchedItem(null);
       if (!item) return;
       locallyEditedRef.current.add(item.show.tvmaze_id);
@@ -1498,7 +1494,25 @@ export default function ShowsScreen() {
         ),
       );
     },
-    [feelingPromptItem],
+    [feelingPrompt],
+  );
+
+  const handleShareRoom = useCallback(
+    async (roomIds: string[], userIds: string[]) => {
+      const item = feelingPrompt.promptItem;
+      feelingPrompt.close();
+      setJustWatchedItem(null);
+      if (!item) return;
+      await markEpisodeWatchedForRoom(
+        roomIds,
+        userIds,
+        item.show.tvmaze_id,
+        item.episode.id,
+        item.episode.season,
+        item.episode.number,
+      ).catch(() => {});
+    },
+    [feelingPrompt],
   );
 
   const rewatchEpisode = useCallback(async (item: EnrichedEpisode) => {
@@ -2066,12 +2080,14 @@ export default function ShowsScreen() {
       )}
 
       <FeelingSheet
-        visible={!!feelingPromptItem}
+        visible={!!feelingPrompt.promptItem}
         onClose={() => {
-          setFeelingPromptItem(null);
+          feelingPrompt.close();
           setJustWatchedItem(null);
         }}
         onSelect={handleQuickFeeling}
+        rooms={feelingPrompt.rooms}
+        onShareRoom={handleShareRoom}
       />
       {finaleToast.visible && (
         <FinaleToast showName={finaleToast.showName} translateY={finaleToast.translateY} />

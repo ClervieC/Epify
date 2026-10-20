@@ -1455,3 +1455,471 @@ create policy "Users manage their own recap cache"
 -- ============================================================
 alter table public.user_settings
   add column if not exists show_watch_activity boolean;
+
+-- ============================================================
+-- Watch rooms — a small group you invite people into so that marking a
+-- specific episode/movie watched can offer "also mark this watched for
+-- [roommates]?" (see components/FeelingSheet.tsx's roommates prop and
+-- components/RoommateShareRow.tsx). Deliberately NOT a blanket "everything
+-- I watch is shared with this person" relationship — the share only ever
+-- happens on explicit per-action confirmation, never automatically, so a
+-- member can keep watching unrelated things solo without it leaking into
+-- anyone else's list. Unlike `follows`, membership has no mutual-follow
+-- precondition; a room is its own lightweight relationship.
+-- ============================================================
+create table public.rooms (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  -- Null = no end date (permanent until deleted). Set once at creation from
+  -- the create-room flow (no end date / in N days) and never recomputed
+  -- afterward.
+  expires_at timestamptz,
+  -- Set independently of expires_at, via the create-room flow's optional
+  -- "link to a show" search — powers the room detail screen's "Currently
+  -- watching" section (see fetchLinkedShowProgress in lib/rooms.ts). Used to
+  -- also drive expires_at (a room linked to an already-ended show expired
+  -- the instant it was created, since its "latest known episode" air date
+  -- was already in the past) — no longer does.
+  linked_tvmaze_show_id int
+);
+
+create table public.room_members (
+  room_id uuid not null references public.rooms (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  status text not null default 'invited' check (status in ('invited', 'accepted')),
+  invited_at timestamptz not null default now(),
+  joined_at timestamptz,
+  primary key (room_id, user_id)
+);
+
+alter table public.rooms enable row level security;
+alter table public.room_members enable row level security;
+
+-- A room_members SELECT policy that checks "is the caller a member of this
+-- room" by querying room_members itself (a raw EXISTS subquery) recurses:
+-- Postgres re-evaluates that same policy for the subquery's own scan of the
+-- table, forever ("infinite recursion detected in policy for relation
+-- room_members" — hit this live, SSH+psql against production, before
+-- landing on this fix). A security definer function's body runs outside
+-- the caller's RLS context, so the identical query inside it doesn't
+-- re-trigger the policy that calls it. Both policies below (and any future
+-- one needing "is this room, for this user" without the recursion problem)
+-- should go through this rather than a direct room_members subquery.
+create or replace function public.is_room_member(p_room_id uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (select 1 from public.room_members rm where rm.room_id = p_room_id and rm.user_id = auth.uid());
+$$;
+
+create policy "Members see their rooms"
+  on public.rooms
+  for select
+  using (auth.uid() = owner_id or public.is_room_member(id));
+
+create policy "Users create rooms they own"
+  on public.rooms
+  for insert
+  with check (auth.uid() = owner_id);
+
+create policy "Owners update or delete their rooms"
+  on public.rooms
+  for update
+  using (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);
+
+create policy "Owners delete their rooms"
+  on public.rooms
+  for delete
+  using (auth.uid() = owner_id);
+
+create policy "Members see their room's membership"
+  on public.room_members
+  for select
+  using (auth.uid() = user_id or public.is_room_member(room_id));
+
+create policy "Owners invite into their rooms"
+  on public.room_members
+  for insert
+  with check (auth.uid() = (select owner_id from public.rooms r where r.id = room_id));
+
+create policy "Members accept their own invite"
+  on public.room_members
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Members leave or owners remove members"
+  on public.room_members
+  for delete
+  using (
+    auth.uid() = user_id
+    or auth.uid() = (select owner_id from public.rooms r where r.id = room_id)
+  );
+
+-- The owner is a full (accepted) member from the start, not just the row
+-- that owns the room — fetchAcceptedRoommatesCached() and the propagation
+-- RPCs below both key off room_members, so without this the creator's own
+-- episodes would never see a "share with room" option in their own room.
+create or replace function public.room_owner_auto_join()
+returns trigger as $$
+begin
+  insert into public.room_members (room_id, user_id, status, joined_at)
+  values (new.id, new.owner_id, 'accepted', now());
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+create trigger rooms_owner_auto_join
+  after insert on public.rooms
+  for each row
+  execute function public.room_owner_auto_join();
+
+-- Room invites ride the existing notifications table rather than a new one
+-- — room_id/room_name mirror the existing tvmaze_show_id/show_name columns,
+-- which are already null for every notification type except stale_watchlist.
+alter table public.notifications
+  add column if not exists room_id uuid references public.rooms (id) on delete cascade,
+  add column if not exists room_name text;
+
+create or replace function public.notify_on_room_invite()
+returns trigger as $$
+begin
+  if new.status = 'invited' then
+    insert into public.notifications (user_id, type, actor_id, room_id, room_name)
+    select new.user_id, 'room_invite', r.owner_id, r.id, r.name
+    from public.rooms r
+    where r.id = new.room_id;
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+create trigger room_members_notify
+  after insert on public.room_members
+  for each row
+  execute function public.notify_on_room_invite();
+
+-- One row per (room, content) a share actually touched — not per target
+-- member, since "this room watched episode X together" is the room-level
+-- fact app/rooms/[id].tsx's "Watched together" section wants, regardless of
+-- how many of that room's members were checked in the share dialog.
+-- Episode/movie display names aren't stored here (unlike user_movies, which
+-- already keeps its own title/year/poster_path) — episodes are resolved
+-- client-side through the existing shared show cache (getCachedShow) when
+-- grouping the log by show for display, the same data every other screen
+-- already fetches, so there's nothing new to keep in sync by duplicating it
+-- here.
+create table public.room_watch_log (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.rooms (id) on delete cascade,
+  shared_by uuid not null references auth.users (id) on delete cascade,
+  content_type text not null check (content_type in ('episode', 'movie')),
+  tvmaze_show_id int,
+  tvmaze_episode_id int,
+  season int,
+  number int,
+  tmdb_id int,
+  movie_title text,
+  movie_year int,
+  movie_poster_path text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.room_watch_log enable row level security;
+
+create policy "Members see their room's watch log"
+  on public.room_watch_log
+  for select
+  using (public.is_room_member(room_id));
+
+-- No insert policy for regular users — rows only ever come from the two
+-- security definer RPCs below, same convention as public.notifications.
+
+-- Propagation — only ever called from the explicit "share with room"
+-- confirm (never a trigger/automatic), and re-validates membership itself
+-- so a client can't pass an arbitrary target id: p_target_user_ids is
+-- intersected with the caller's own accepted, non-expired room-mates
+-- server-side regardless of what's passed in.
+create or replace function public.mark_episode_watched_for_room(
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_tvmaze_episode_id int,
+  p_season int,
+  p_number int
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  -- distinct: a target who shares more than one room with the caller (the
+  -- whole point of the room-based picker now letting several rooms be
+  -- checked at once — see components/RoomSharePicker.tsx) otherwise
+  -- matches this join once per shared room, handing the INSERT the same
+  -- (user_id, tvmaze_episode_id) twice — which ON CONFLICT DO UPDATE
+  -- rejects outright ("cannot affect row a second time"), found live the
+  -- first time a real multi-room share actually happened.
+  insert into public.watched_episodes (user_id, tvmaze_show_id, tvmaze_episode_id, season, number, watched)
+  select distinct rm2.user_id, p_tvmaze_show_id, p_tvmaze_episode_id, p_season, p_number, true
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  on conflict (user_id, tvmaze_episode_id) do update set watched = true, watched_at = now();
+
+  insert into public.room_watch_log (room_id, shared_by, content_type, tvmaze_show_id, tvmaze_episode_id, season, number)
+  select distinct rm1.room_id, auth.uid(), 'episode', p_tvmaze_show_id, p_tvmaze_episode_id, p_season, p_number
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+end;
+$$;
+
+create or replace function public.mark_movie_watched_for_room(
+  p_target_user_ids uuid[],
+  p_tmdb_id int,
+  p_title text,
+  p_year int,
+  p_poster_path text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  -- distinct: same reasoning as mark_episode_watched_for_room above — a
+  -- target in more than one of the caller's shared rooms must only ever
+  -- appear once in this INSERT's rows.
+  insert into public.user_movies (user_id, tmdb_id, title, year, poster_path, status, watched_at)
+  select distinct rm2.user_id, p_tmdb_id, p_title, p_year, p_poster_path, 'watched', now()
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  on conflict (user_id, title, year) do update set status = 'watched', watched_at = now();
+
+  insert into public.room_watch_log (room_id, shared_by, content_type, tmdb_id, movie_title, movie_year, movie_poster_path)
+  select distinct rm1.room_id, auth.uid(), 'movie', p_tmdb_id, p_title, p_year, p_poster_path
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+end;
+$$;
+
+-- ============================================================
+-- Four room improvements, all additive:
+--
+-- 1. A room gets an optional single-character emoji (picked from a small
+--    curated set client-side, see components/RoomSharePicker.tsx and
+--    app/rooms/index.tsx) so it has some visual identity beyond its name —
+--    falls back to the name's first letter when unset, same as a person's
+--    Avatar does for no photo.
+--
+-- 2. notify_on_room_watch_log fires a notification to every OTHER accepted
+--    member of a room whenever a room_watch_log row lands — reusing that
+--    table (rather than teaching the RPCs to also write notifications
+--    directly) means every share, from either RPC below or the new batched
+--    one, notifies for free. room_watch_log_id lets the notification screen
+--    resolve exactly what was shared without duplicating show/episode/movie
+--    columns onto notifications itself.
+--
+-- 3. mark_episodes_watched_for_room is mark_episode_watched_for_room's
+--    batched sibling — a season-level "mark all watched" shouldn't cost one
+--    network round trip (and one popup) per episode. p_episodes is a jsonb
+--    array of {id, season, number} objects rather than three parallel
+--    arrays, both because Postgres has no array-of-row literal that's
+--    pleasant to build from JS and because it reads directly as the shape
+--    the client already has each episode in.
+-- ============================================================
+alter table public.rooms add column if not exists emoji text;
+
+alter table public.notifications
+  add column if not exists room_watch_log_id uuid references public.room_watch_log (id) on delete cascade;
+
+-- Statement-level (not row-level) — a season shared in one go lands as N
+-- room_watch_log rows from a single INSERT (see mark_episodes_watched_for_
+-- room's cross join below), and a row-level trigger fired once per episode,
+-- which meant a 13-episode season produced 13 separate notifications to
+-- the same person for the same action. Grouping by (room, sharer, show,
+-- season) within the statement's new rows collapses that into one
+-- notification per actual share action — a single episode (or a movie,
+-- which has no season) just forms its own group of one, so this needs no
+-- separate code path for the non-batched RPCs.
+alter table public.notifications
+  add column if not exists room_watch_episode_count int not null default 1;
+
+create or replace function public.notify_on_room_watch_log()
+returns trigger as $$
+begin
+  insert into public.notifications (user_id, type, actor_id, room_id, room_name, room_watch_log_id, room_watch_episode_count)
+  select rm.user_id, 'room_share', g.shared_by, g.room_id, r.name, g.rep_id, g.episode_count
+  from (
+    -- min(id::text)::uuid, not min(id) — Postgres has no built-in min/max
+    -- aggregate for uuid (found live: "function min(uuid) does not exist").
+    select room_id, shared_by, min(id::text)::uuid as rep_id, count(*) as episode_count
+    from new_table
+    where content_type = 'episode' and season is not null
+    group by room_id, shared_by, tvmaze_show_id, season
+    union all
+    select room_id, shared_by, id as rep_id, 1 as episode_count
+    from new_table
+    where not (content_type = 'episode' and season is not null)
+  ) g
+  join public.rooms r on r.id = g.room_id
+  join public.room_members rm on rm.room_id = g.room_id
+  where rm.status = 'accepted' and rm.user_id != g.shared_by;
+  return null;
+end;
+$$ language plpgsql security definer set search_path = public;
+
+create trigger room_watch_log_notify
+  after insert on public.room_watch_log
+  referencing new table as new_table
+  for each statement
+  execute function public.notify_on_room_watch_log();
+
+create or replace function public.mark_episodes_watched_for_room(
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_episodes jsonb
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.watched_episodes (user_id, tvmaze_show_id, tvmaze_episode_id, season, number, watched)
+  select distinct rm2.user_id, p_tvmaze_show_id, (e->>'id')::int, (e->>'season')::int, (e->>'number')::int, true
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  cross join jsonb_array_elements(p_episodes) as e
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  on conflict (user_id, tvmaze_episode_id) do update set watched = true, watched_at = now();
+
+  insert into public.room_watch_log (room_id, shared_by, content_type, tvmaze_show_id, tvmaze_episode_id, season, number)
+  select distinct rm1.room_id, auth.uid(), 'episode', p_tvmaze_show_id, (e->>'id')::int, (e->>'season')::int, (e->>'number')::int
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  cross join jsonb_array_elements(p_episodes) as e
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+end;
+$$;
+
+-- ============================================================
+-- Room-scoped propagation — the three RPCs above inferred "which room is
+-- this share for" purely from p_target_user_ids: any room where both
+-- caller and target are accepted members. That's wrong the moment two
+-- people share more than one room — picking only one of those rooms in
+-- components/RoomSharePicker.tsx still wrote to every room they have in
+-- common, since the target id alone can't tell the RPC which one was
+-- actually selected. Adding p_room_ids (the exact rooms picked
+-- client-side) and requiring rm1.room_id = any(p_room_ids) fixes that
+-- scoping. Surfaced while building a room-detail "add directly to this
+-- room" entry point (app/rooms/[id].tsx) — a flow that, by construction,
+-- only ever means one specific room, which made the old inference-based
+-- scoping actively wrong rather than just imprecise.
+-- ============================================================
+drop function if exists public.mark_episode_watched_for_room(uuid[], int, int, int, int);
+drop function if exists public.mark_movie_watched_for_room(uuid[], int, text, int, text);
+drop function if exists public.mark_episodes_watched_for_room(uuid[], int, jsonb);
+
+create or replace function public.mark_episode_watched_for_room(
+  p_room_ids uuid[],
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_tvmaze_episode_id int,
+  p_season int,
+  p_number int
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.watched_episodes (user_id, tvmaze_show_id, tvmaze_episode_id, season, number, watched)
+  select distinct rm2.user_id, p_tvmaze_show_id, p_tvmaze_episode_id, p_season, p_number, true
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  on conflict (user_id, tvmaze_episode_id) do update set watched = true, watched_at = now();
+
+  insert into public.room_watch_log (room_id, shared_by, content_type, tvmaze_show_id, tvmaze_episode_id, season, number)
+  select distinct rm1.room_id, auth.uid(), 'episode', p_tvmaze_show_id, p_tvmaze_episode_id, p_season, p_number
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+end;
+$$;
+
+create or replace function public.mark_movie_watched_for_room(
+  p_room_ids uuid[],
+  p_target_user_ids uuid[],
+  p_tmdb_id int,
+  p_title text,
+  p_year int,
+  p_poster_path text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.user_movies (user_id, tmdb_id, title, year, poster_path, status, watched_at)
+  select distinct rm2.user_id, p_tmdb_id, p_title, p_year, p_poster_path, 'watched', now()
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  on conflict (user_id, title, year) do update set status = 'watched', watched_at = now();
+
+  insert into public.room_watch_log (room_id, shared_by, content_type, tmdb_id, movie_title, movie_year, movie_poster_path)
+  select distinct rm1.room_id, auth.uid(), 'movie', p_tmdb_id, p_title, p_year, p_poster_path
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+end;
+$$;
+
+create or replace function public.mark_episodes_watched_for_room(
+  p_room_ids uuid[],
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_episodes jsonb
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.watched_episodes (user_id, tvmaze_show_id, tvmaze_episode_id, season, number, watched)
+  select distinct rm2.user_id, p_tvmaze_show_id, (e->>'id')::int, (e->>'season')::int, (e->>'number')::int, true
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  cross join jsonb_array_elements(p_episodes) as e
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  on conflict (user_id, tvmaze_episode_id) do update set watched = true, watched_at = now();
+
+  insert into public.room_watch_log (room_id, shared_by, content_type, tvmaze_show_id, tvmaze_episode_id, season, number)
+  select distinct rm1.room_id, auth.uid(), 'episode', p_tvmaze_show_id, (e->>'id')::int, (e->>'season')::int, (e->>'number')::int
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  cross join jsonb_array_elements(p_episodes) as e
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+end;
+$$;

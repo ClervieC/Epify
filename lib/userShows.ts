@@ -904,3 +904,54 @@ export async function decrementRewatch(tvmazeEpisodeId: number, currentTimesWatc
   patchCachedWatchedEpisodes(row.tvmaze_show_id, (prev) => prev.map((w) => (w.tvmaze_episode_id === tvmazeEpisodeId ? row : w)));
   return row;
 }
+
+// Fans out "I watched this" to chosen room-mates — see
+// mark_episode_watched_for_room in supabase/schema.sql, which re-validates
+// that every target is actually an accepted, non-expired room-mate of the
+// caller server-side (targetUserIds here is just a UI selection, not
+// trusted). Only ever called from an explicit "share with room" confirm,
+// never automatically.
+// p_room_ids scopes the RPC to exactly the rooms the caller picked — see
+// mark_episode_watched_for_room's own comment in supabase/schema.sql for
+// why that can't be inferred from p_target_user_ids alone (a target who
+// shares more than one room with the caller would otherwise get the share
+// attributed to every shared room, not just the one(s) actually selected).
+export async function markEpisodeWatchedForRoom(
+  roomIds: string[],
+  targetUserIds: string[],
+  tvmazeShowId: number,
+  tvmazeEpisodeId: number,
+  season: number,
+  episodeNumber: number,
+) {
+  const { error } = await supabase.rpc("mark_episode_watched_for_room", {
+    p_room_ids: roomIds,
+    p_target_user_ids: targetUserIds,
+    p_tvmaze_show_id: tvmazeShowId,
+    p_tvmaze_episode_id: tvmazeEpisodeId,
+    p_season: season,
+    p_number: episodeNumber,
+  });
+  if (error) throw error;
+}
+
+// Batched sibling of markEpisodeWatchedForRoom above — one network round
+// trip (and, server-side, one room_watch_log row per episode, not per
+// request) for a whole season's worth of episodes, instead of calling the
+// single-episode RPC once per episode. See mark_episodes_watched_for_room
+// in supabase/schema.sql for why episodes travel as jsonb rather than
+// parallel arrays.
+export async function markEpisodesWatchedForRoom(
+  roomIds: string[],
+  targetUserIds: string[],
+  tvmazeShowId: number,
+  episodes: { id: number; season: number; number: number }[],
+) {
+  const { error } = await supabase.rpc("mark_episodes_watched_for_room", {
+    p_room_ids: roomIds,
+    p_target_user_ids: targetUserIds,
+    p_tvmaze_show_id: tvmazeShowId,
+    p_episodes: episodes,
+  });
+  if (error) throw error;
+}

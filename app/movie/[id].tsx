@@ -9,8 +9,10 @@ import {
   setMovieFavorite,
   rateMovie,
   fetchMovieFeelingCounts,
+  markMovieWatchedForRoom,
   UserMovie,
 } from "../../lib/userMovies";
+import { fetchShareableRoomsCached, ShareableRoom } from "../../lib/rooms";
 import {
   searchMovie,
   getMovieDetails,
@@ -56,6 +58,7 @@ export default function MovieDetailScreen() {
   const { t, language, spoilerMode } = useLanguage();
 
   const [movie, setMovie] = useState<UserMovie | null>(null);
+  const [rooms, setRooms] = useState<ShareableRoom[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [tmdb, setTmdb] = useState<TMDBMovieDetails | null>(null);
@@ -160,6 +163,14 @@ export default function MovieDetailScreen() {
     };
   }, [unlocked, commentTmdbId]);
 
+  useEffect(() => {
+    let active = true;
+    fetchShareableRoomsCached().then((r) => active && setRooms(r));
+    return () => {
+      active = false;
+    };
+  }, []);
+
   if (loadError) return <DetailErrorState onBack={goBack} />;
   if (loading || !movie) return <MovieDetailLoading onBack={goBack} />;
 
@@ -216,6 +227,11 @@ export default function MovieDetailScreen() {
     const updated = await rateMovie(movie!.id, movie!.rating, next);
     movieVersionRef.current++;
     setMovie(updated);
+  }
+  async function handleShareRoom(roomIds: string[], userIds: string[]) {
+    await markMovieWatchedForRoom(roomIds, userIds, movie!.tmdb_id ?? undefined, movie!.title, movie!.year, movie!.poster_path).catch(
+      () => {},
+    );
   }
   async function handlePostComment(body: string, parentId?: string) {
     if (!commentTmdbId) return;
@@ -306,6 +322,8 @@ export default function MovieDetailScreen() {
           onRate={handleRate}
           onFeeling={handleFeeling}
           feelingCounts={feelingCounts}
+          rooms={rooms}
+          onShareRoom={handleShareRoom}
           comments={comments}
           commentsLoading={commentsLoading}
           myUserId={myUserId}

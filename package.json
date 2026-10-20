@@ -1,6 +1,6 @@
 {
   "name": "epify",
-  "version": "5.1.14",
+  "version": "5.2.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -39,6 +39,7 @@
     "@playwright/test": "^1.61.1",
     "@types/node": "^26.1.1",
     "@types/react": "~19.2.2",
+    "@types/react-dom": "~19.2.2",
     "typescript": "~6.0.3"
   },
   "scripts": {

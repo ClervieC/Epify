@@ -14,6 +14,7 @@ import { clearUserShowsCache } from "../lib/userShows";
 import { clearUnreadNotificationCountCache } from "../lib/notifications";
 import { clearLatestActivityAtCache } from "../lib/activity";
 import { clearFollowingIdsCache } from "../lib/follows";
+import { clearShareableRoomsCache } from "../lib/rooms";
 import { clearMyProfileCache } from "../lib/profiles";
 import { clearOpenReportCountCache } from "../lib/reports";
 import { clearSupportNeedsResponseCountCache } from "../lib/support";
@@ -39,6 +40,7 @@ function clearUserScopedCaches() {
   clearUnreadNotificationCountCache();
   clearLatestActivityAtCache();
   clearFollowingIdsCache();
+  clearShareableRoomsCache();
   clearMyProfileCache();
   clearOpenReportCountCache();
   clearSupportNeedsResponseCountCache();
