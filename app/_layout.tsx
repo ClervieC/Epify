@@ -6,7 +6,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { initAds } from "../lib/adsInit";
 import { startVersionCheck } from "../lib/versionCheck";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { NotificationsProvider } from "../context/NotificationsContext";
 import { ActivityProvider } from "../context/ActivityContext";
@@ -54,6 +54,7 @@ function RootNavigation() {
   const segments = useSegments();
   const router = useRouter();
   const nativeSplashHidden = useRef(false);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (loading) return;
@@ -106,12 +107,34 @@ function RootNavigation() {
 
   return (
     <>
-      <Stack screenOptions={{ headerShown: false }}>
+      {/* contentStyle's paddingTop is the same fix as (tabs)/_layout.tsx's
+          own sceneStyle one, applied here for every OTHER screen — almost
+          none of them use useSafeAreaInsets for their own top padding
+          either, each just had a small fixed value tuned for when the OS
+          reserved the status bar outside the page entirely. viewport-fit=
+          cover (public/index.html) now extends every screen's rendering
+          behind the status bar/Dynamic Island on iOS standalone, so
+          without this their title/content rendered straight under it
+          instead of below it (found live, on Profile first, but it was
+          never specific to Profile). (tabs) is excluded — it already
+          applies insets.top itself, once, across all 5 tabs; applying it
+          here too would double it. The four screens with a full-bleed
+          hero image behind their own back button (show/episode/movie
+          detail) are also excluded — that image is *meant* to extend
+          behind the status bar, so they get insets.top added to their own
+          back-button/title row's position instead (see each one's own
+          heroTopRow/loadingBackBtn style), not to the whole screen. */}
+      <Stack screenOptions={{ headerShown: false, contentStyle: { paddingTop: insets.top } }}>
         <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="(tabs)" options={{ contentStyle: { paddingTop: 0 } }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
-        <Stack.Screen name="show/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="episode/[id]" options={{ headerShown: false, presentation: "modal" }} />
+        <Stack.Screen name="show/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
+        <Stack.Screen
+          name="episode/[id]"
+          options={{ headerShown: false, presentation: "modal", contentStyle: { paddingTop: 0 } }}
+        />
+        <Stack.Screen name="movie/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
+        <Stack.Screen name="movie/tmdb/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
         <Stack.Screen name="users/search" options={{ headerShown: false }} />
         <Stack.Screen name="users/[id]/index" options={{ headerShown: false }} />
         <Stack.Screen name="users/[id]/list" options={{ headerShown: false }} />

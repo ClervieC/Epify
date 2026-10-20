@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.2.4",
+    date: "2026-10-20",
+    en: [
+      "Fixed title/content sitting behind the status bar on nearly every screen on an iPhone opened from its Home Screen bookmark — most noticeable on Profile, where the username and email overlapped the time/battery icons.",
+    ],
+    fr: [
+      "Correction du titre/contenu qui s'affichait derrière la barre de statut sur presque tous les écrans, sur un iPhone ouvert depuis son raccourci à l'écran d'accueil — le plus visible sur le Profil, où le pseudo et l'e-mail chevauchaient l'heure/la batterie.",
+    ],
+  },
+  {
     version: "5.2.3",
     date: "2026-10-20",
     en: [

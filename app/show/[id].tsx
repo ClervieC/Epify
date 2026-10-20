@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getShow, getShowCast, getShowEpisodes, CastMember, TVMazeShow, TVMazeEpisode } from "../../lib/tvmaze";
 import { getCachedEpisodes, getCachedShow, getCachedWatchedEpisodes } from "../../lib/showDataCache";
 import {
@@ -97,6 +98,11 @@ export default function ShowDetailScreen() {
   const router = useRouter();
   const goBack = useGoBack("/(tabs)");
   const showId = Number(id);
+  // This screen's own hero image is kept full-bleed behind the status bar
+  // on purpose (see app/_layout.tsx's contentStyle override for why it's
+  // excluded from the app-wide top-padding fix) — only the back button/
+  // title row riding on top of it needs to clear the status bar itself.
+  const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState<"about" | "episodes">("episodes");
   const [show, setShow] = useState<TVMazeShow | null>(null);
@@ -740,7 +746,7 @@ export default function ShowDetailScreen() {
             the real header's back button below, just styled for a plain
             background instead of sitting over the hero image. */}
         <Pressable
-          style={styles.loadingBackBtn}
+          style={[styles.loadingBackBtn, { top: 16 + insets.top }]}
           onPress={goBack}
           accessibilityRole="button"
           accessibilityLabel="Back"
@@ -761,7 +767,7 @@ export default function ShowDetailScreen() {
           <Reanimated.View style={[styles.hero, swipeDownStyle]}>
             {show.image && <Image source={{ uri: show.image.original }} style={styles.heroImage} contentFit="cover" />}
             <LinearGradient colors={["transparent", colors.background]} style={[styles.heroGradient, { pointerEvents: "none" }]} />
-            <View style={styles.heroTopRow}>
+            <View style={[styles.heroTopRow, { top: 16 + insets.top }]}>
               <Pressable
                 style={styles.iconBtn}
                 onPress={goBack}

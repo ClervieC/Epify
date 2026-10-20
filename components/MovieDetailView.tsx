@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import Reanimated from "react-native-reanimated";
 import { GestureDetector } from "react-native-gesture-handler";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   backdropUrl,
   posterUrl,
@@ -78,6 +79,11 @@ export function MovieDetailView({
   const posterHue = colors[hueForTitle(title)];
   const styles = useMemo(() => createStyles(colors, posterHue), [colors, posterHue]);
   const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(onBack);
+  // Full-bleed hero image stays behind the status bar on purpose (see
+  // app/_layout.tsx's contentStyle override for movie/[id] and movie/tmdb/
+  // [id], both of which render this) — only the back-button row on top of
+  // it needs to clear it.
+  const insets = useSafeAreaInsets();
   const [reporting, setReporting] = useState(false);
 
   const heroImage = tmdb && (backdropUrl(tmdb.backdrop_path) ?? posterUrl(tmdb.poster_path, "w500"));
@@ -110,7 +116,7 @@ export function MovieDetailView({
             ) : (
               <Text style={styles.heroPlaceholder}>{title[0]?.toUpperCase()}</Text>
             )}
-            <View style={styles.heroTopRow}>
+            <View style={[styles.heroTopRow, { top: 16 + insets.top }]}>
               <Pressable
                 style={styles.iconBtn}
                 onPress={onBack}
@@ -221,13 +227,14 @@ interface MovieDetailLoadingProps {
 
 export function MovieDetailLoading({ onBack }: MovieDetailLoadingProps) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background }}>
       {onBack && (
         <Pressable
           style={{
             position: "absolute",
-            top: 16,
+            top: 16 + insets.top,
             left: 16,
             width: 36,
             height: 36,

@@ -110,6 +110,7 @@ const MIN_REFETCH_INTERVAL_MS = 10_000;
 
 export default function TabsLayout() {
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const { unreadCount, refresh } = useNotifications();
   const { hasUnseen: hasUnseenActivity, refresh: refreshActivity } = useActivityUnseen();
   const [hasAdminAlerts, setHasAdminAlerts] = useState(false);
@@ -155,7 +156,22 @@ export default function TabsLayout() {
 
   return (
     <Tabs
-      screenOptions={{ headerShown: false }}
+      // None of the 5 tab screens use useSafeAreaInsets for their own top
+      // padding — each just has a small fixed paddingTop (10-24px) tuned
+      // for when the OS reserved the status bar area outside the page
+      // entirely. viewport-fit=cover (public/index.html) now extends the
+      // page's own rendering behind the status bar/Dynamic Island on iOS
+      // standalone, same root cause as the tab bar's own bottom padding
+      // fix above — except here nothing was compensating at all, so a
+      // screen's title/avatar/content rendered straight under the status
+      // bar instead of below it (found live: Profile's username and email
+      // sitting behind the time/battery icons). sceneStyle wraps every tab
+      // screen's content in one shared container, so this one `insets.top`
+      // fixes all 5 without touching each screen's own layout — their
+      // existing small paddingTop stays underneath it as the original
+      // "a bit of breathing room" margin, now measured from below the
+      // status bar instead of from the physical top edge.
+      screenOptions={{ headerShown: false, sceneStyle: { paddingTop: insets.top } }}
       tabBar={(props) => (
         <CustomTabBar
           {...(props as any)}

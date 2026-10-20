@@ -17,6 +17,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Gesture, GestureDetector, ScrollView as GestureScrollView } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getShow,
   getShowCast,
@@ -103,6 +104,10 @@ export default function EpisodeDetailScreen() {
   const { width } = useWindowDimensions();
   const showIdNum = Number(showId);
   const initialEpisodeId = Number(id);
+  // Full-bleed hero image stays behind the status bar on purpose (see
+  // app/_layout.tsx's contentStyle override) — only the overlay row riding
+  // on top of it needs to clear it.
+  const insets = useSafeAreaInsets();
 
   const [show, setShow] = useState<TVMazeShow | null>(null);
   const [episodes, setEpisodes] = useState<TVMazeEpisode[]>([]);
@@ -413,7 +418,7 @@ export default function EpisodeDetailScreen() {
     return (
       <View style={styles.container}>
         <View style={[styles.overlay, { right: SIDEBAR_WIDTH, pointerEvents: "box-none" }]}>
-          <View style={styles.overlayTopRow}>
+          <View style={[styles.overlayTopRow, { paddingTop: 16 + insets.top }]}>
             <Pressable
               style={styles.iconBtn}
               onPress={goBack}
@@ -546,7 +551,7 @@ export default function EpisodeDetailScreen() {
   return (
     <View style={styles.container}>
       <View style={[styles.overlay, { pointerEvents: "box-none" }]}>
-        <View style={styles.overlayTopRow}>
+        <View style={[styles.overlayTopRow, { paddingTop: 16 + insets.top }]}>
           <Pressable
             style={styles.iconBtn}
             onPress={goBack}
