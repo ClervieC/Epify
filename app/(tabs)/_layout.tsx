@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Tabs, useFocusEffect } from "expo-router";
 import { View, Text, Pressable, StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { AdBanner } from "../../components/AdBanner";
 import { useColors, Colors } from "../../lib/theme";
@@ -39,6 +40,7 @@ function tabLabels(t: Translations): Record<string, string> {
 
 function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAdminAlerts }: TabBarProps) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
   const labels = tabLabels(t);
@@ -46,7 +48,19 @@ function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAd
   return (
     <View>
       <AdBanner />
-      <View style={styles.bar}>
+      {/* paddingBottom is 20 (room for the tap targets) plus the home-
+          indicator inset, not just 20 — viewport-fit=cover in public/
+          index.html (see its own comment) now extends the page's
+          rendering into that inset area on iOS standalone/home-screen
+          mode instead of the OS reserving it outside the page, so without
+          adding it here this bar's own background stopped short of the
+          bottom edge, leaving a blank strip of the page's body background
+          exposed below it — found live on a phone, the same root cause as
+          the Sheet.tsx safe-area fix, just on the tab bar instead of a
+          sheet. insets.bottom is 0 anywhere this doesn't apply (web tab,
+          Android, a device with no home indicator), so this is a no-op
+          there. */}
+      <View style={[styles.bar, { paddingBottom: 20 + insets.bottom }]}>
         {state.routes.map((route, index) => {
           const focused = state.index === index;
           const color = focused ? colors.accent : colors.textFaint;
@@ -166,7 +180,6 @@ function createStyles(colors: Colors) {
       borderTopWidth: 1,
       borderTopColor: colors.border,
       paddingTop: 8,
-      paddingBottom: 20,
     },
     item: {
       flex: 1,
