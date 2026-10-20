@@ -574,18 +574,6 @@ export default function ShowsScreen() {
     };
   }, [announceBadges]);
 
-  // Same "wait for loadData() to say it's done" pattern as the streak
-  // refresh above, for History's own first page (see loadMoreHistory below
-  // for the fuller reasoning) — kept up to date every render (no deps
-  // array) so it always calls the current loadMoreHistory closure rather
-  // than a stale one captured back when loadData() was first created.
-  const runHistoryLoadRef = useRef<() => void>(() => {});
-  useEffect(() => {
-    runHistoryLoadRef.current = () => {
-      if (historyItems.length === 0 && hasMoreHistory) loadMoreHistory();
-    };
-  });
-
   // Surfaces the streak here (see the pill above the tabs row) so it reads
   // as a small game rather than something buried in Profile, with a tap
   // through to the full streaks/badges page.
@@ -1001,9 +989,6 @@ export default function ShowsScreen() {
       // runStreakRefreshRef's own comment above for why this isn't done in
       // parallel with everything above instead.
       runStreakRefreshRef.current();
-      // Same reasoning for History's first page — see loadMoreHistory and
-      // runHistoryLoadRef's own comments.
-      runHistoryLoadRef.current();
     }
   }, []);
 
@@ -1091,10 +1076,12 @@ export default function ShowsScreen() {
     // progressively flushes Watch Next/Not Started rows in, well before the
     // user has actually scrolled anywhere. Without this, History's own
     // Supabase round trip used to fire right alongside that, competing for
-    // bandwidth with the two sections that actually matter first. Not a
-    // dead end for the very first page though — runHistoryLoadRef calls
-    // this again once loadData() signals it's actually settled, so History
-    // still fills in on its own without the user needing to scroll for it.
+    // bandwidth with the two sections that actually matter first. History
+    // used to also load its first page automatically the moment loadData()
+    // settled, with no scroll at all — explicitly removed by request: a
+    // whole section materializing unprompted read as "just touching the
+    // screen reveals history," when it should only ever load on a real
+    // pull-up gesture (see onWatchListScroll's own comment below).
     if (!followedShowsSettled) return;
     if (Date.now() - lastHistoryLoadAt.current < HISTORY_LOAD_COOLDOWN_MS)
       return;
@@ -1164,7 +1151,15 @@ export default function ShowsScreen() {
     // through this same threshold zone as actually pulling up toward the
     // top for older history — only the latter (offset decreasing) means it.
     const isMovingTowardTop = newY <= previousY;
-    if (isScrollable && isMovingTowardTop && newY <= HISTORY_LOAD_THRESHOLD) {
+    // newY must go *negative* past the threshold, not just land near 0 —
+    // merely being at/near the top (newY <= HISTORY_LOAD_THRESHOLD, true the
+    // instant the list settles at offset 0 from any ordinary scroll, even a
+    // light touch) used to fire this on its own, with no real "pull" at all.
+    // A genuine pull-past-the-top gesture is what actually drives contentOffset
+    // negative during iOS's elastic overscroll — requiring that distinguishes
+    // "I deliberately kept pulling up past the boundary" from "I'm just at
+    // the top," by explicit request.
+    if (isScrollable && isMovingTowardTop && newY <= -HISTORY_LOAD_THRESHOLD) {
       loadMoreHistory();
     }
   }

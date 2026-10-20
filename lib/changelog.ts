@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.2.2",
+    date: "2026-10-20",
+    en: [
+      "History on the Shows tab no longer loads itself the moment the screen finishes loading — it now only appears once you actually pull up past the top of the list for it, like it was meant to.",
+    ],
+    fr: [
+      "L'historique de l'onglet Séries ne se charge plus tout seul dès que l'écran a fini de charger — il n'apparaît désormais que si tu tires vraiment vers le haut, au-delà du sommet de la liste.",
+    ],
+  },
+  {
     version: "5.2.1",
     date: "2026-10-20",
     en: [
