@@ -1,7 +1,6 @@
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchProfiles, Profile } from "./profiles";
 import { fetchRoomWatchLogEntriesByIds, RoomWatchLogEntry } from "./rooms";
-import { fetchReportsByIds } from "./reports";
 import { getCachedShow } from "./showDataCache";
 import { getShow } from "./tvmaze";
 import { createShortCache } from "./shortCache";
@@ -50,6 +49,14 @@ export interface AppNotification {
   // tvmaze_show_id columns above.
   report_id: string | null;
   report_message: string | null;
+  // Set for type === "room_rewatch_confirm" (see confirm_room_rewatch in
+  // supabase/schema.sql) — someone shared an episode to the room that the
+  // recipient already has marked watched, asking them to confirm it's a
+  // genuine rewatch before their count bumps. tvmaze_show_id (above) is
+  // reused for which show; these two are the episode within it.
+  rewatch_confirmation_id: string | null;
+  rewatch_season: number | null;
+  rewatch_number: number | null;
   read: boolean;
   created_at: string;
 }
@@ -62,12 +69,11 @@ export interface EnrichedNotification extends AppNotification {
   // rendering "X marked [Show] S1E2 watched" needs this looked up, same
   // shared cache every other screen already reads the show's name from.
   roomWatchLogShowName: string | null;
-  // Only set for type === "report_response" — the original report's own
-  // reason text, so a reply reads as "Reply to your report ('the app
-  // crashes when...'): fixed!" instead of just the reply on its own with
-  // nothing saying which report it was about. null if the report was
-  // since deleted (report_id cascades) or hasn't resolved yet.
-  reportReason: string | null;
+  // Resolved for type === "room_rewatch_confirm", same lookup as
+  // roomWatchLogShowName above but keyed off the notification's own
+  // tvmaze_show_id directly (there's no room_watch_log row for an
+  // unconfirmed rewatch — see confirm_room_rewatch's own comment).
+  rewatchShowName: string | null;
 }
 
 export async function fetchNotifications(): Promise<EnrichedNotification[]> {
@@ -84,19 +90,14 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
 
   const actorIds = [...new Set(data.map((n) => n.actor_id).filter((id): id is string => !!id))];
   const logIds = [...new Set(data.map((n) => n.room_watch_log_id).filter((id): id is string => !!id))];
-  const reportIds = [...new Set(data.map((n) => n.report_id).filter((id): id is string => !!id))];
-  const [actors, logById, reports] = await Promise.all([
-    fetchProfiles(actorIds),
-    fetchRoomWatchLogEntriesByIds(logIds),
-    fetchReportsByIds(reportIds),
-  ]);
+  const [actors, logById] = await Promise.all([fetchProfiles(actorIds), fetchRoomWatchLogEntriesByIds(logIds)]);
   const actorById = new Map(actors.map((a) => [a.user_id, a]));
-  const reportById = new Map(reports.map((r) => [r.id, r]));
 
   const episodeShowIds = [
-    ...new Set(
-      [...logById.values()].filter((e) => e.content_type === "episode" && e.tvmaze_show_id != null).map((e) => e.tvmaze_show_id!)
-    ),
+    ...new Set([
+      ...[...logById.values()].filter((e) => e.content_type === "episode" && e.tvmaze_show_id != null).map((e) => e.tvmaze_show_id!),
+      ...data.filter((n) => n.type === "room_rewatch_confirm" && n.tvmaze_show_id != null).map((n) => n.tvmaze_show_id as number),
+    ]),
   ];
   const shows = await Promise.all(episodeShowIds.map((id) => getCachedShow(id, () => getShow(id)).catch(() => null)));
   const showNameById = new Map(episodeShowIds.map((id, i) => [id, shows[i]?.name ?? null]));
@@ -108,7 +109,7 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
       actor: n.actor_id ? actorById.get(n.actor_id) ?? null : null,
       roomWatchLog: log,
       roomWatchLogShowName: log?.tvmaze_show_id != null ? showNameById.get(log.tvmaze_show_id) ?? null : null,
-      reportReason: n.report_id ? reportById.get(n.report_id)?.reason ?? null : null,
+      rewatchShowName: n.tvmaze_show_id != null ? showNameById.get(n.tvmaze_show_id) ?? null : null,
     };
   });
 }

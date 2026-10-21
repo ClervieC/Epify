@@ -7,19 +7,11 @@ import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { fetchNotifications, EnrichedNotification } from "../lib/notifications";
 import { useNotifications } from "../context/NotificationsContext";
-import { acceptRoomInvite, declineRoomInvite } from "../lib/rooms";
+import { acceptRoomInvite, declineRoomInvite, respondToRewatchConfirm } from "../lib/rooms";
 import { shortDate } from "../lib/dates";
 import { Avatar } from "../components/Avatar";
 import { EmptyState } from "../components/EmptyState";
 import { useGoBack } from "../lib/useGoBack";
-
-// Mirrors app/admin/index.tsx's own report-reason truncation — long enough
-// to recognize which report this was (the reporter's own words), short
-// enough not to dominate a one-line notification row.
-function truncateReason(reason: string | null): string {
-  if (!reason) return "";
-  return reason.length > 60 ? `${reason.slice(0, 60)}…` : reason;
-}
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -40,6 +32,12 @@ export default function NotificationsScreen() {
     } else {
       await declineRoomInvite(item.room_id);
     }
+  }
+
+  async function respondToRewatch(item: EnrichedNotification, confirmed: boolean) {
+    if (!item.rewatch_confirmation_id) return;
+    setNotifications((prev) => prev.filter((n) => n.id !== item.id));
+    await respondToRewatchConfirm(item.rewatch_confirmation_id, confirmed);
   }
 
   function roomShareText(item: EnrichedNotification): string {
@@ -140,19 +138,58 @@ export default function NotificationsScreen() {
                   <Text style={styles.inviteAcceptText}>{t.rooms.accept}</Text>
                 </Pressable>
               </View>
-            ) : item.type === "report_response" ? (
+            ) : item.type === "room_rewatch_confirm" ? (
               <View style={styles.row}>
-                <View style={[styles.showThumb, styles.showThumbPlaceholder]}>
-                  <Ionicons name="flag-outline" size={18} color={colors.textFaint} />
+                <View style={[styles.showThumb, styles.showThumbPlaceholder, styles.reportThumb]}>
+                  <Ionicons name="refresh" size={16} color={colors.accent} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.text}>
-                    {t.report.replyNotification(truncateReason(item.reportReason), item.report_message ?? "")}
+                    <Text style={styles.bold}>{item.actor?.username ?? "?"}</Text>{" "}
+                    {t.rooms.rewatchConfirmText(
+                      item.rewatchShowName ?? "",
+                      item.rewatch_season != null && item.rewatch_number != null ? `S${item.rewatch_season}E${item.rewatch_number}` : ""
+                    )}
+                  </Text>
+                  <Text style={styles.date}>{shortDate(item.created_at)}</Text>
+                </View>
+                <Pressable
+                  style={styles.inviteDecline}
+                  onPress={() => respondToRewatch(item, false)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.rooms.decline}
+                >
+                  <Text style={styles.inviteDeclineText}>{t.rooms.decline}</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.inviteAccept}
+                  onPress={() => respondToRewatch(item, true)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t.rooms.accept}
+                >
+                  <Text style={styles.inviteAcceptText}>{t.rooms.accept}</Text>
+                </Pressable>
+              </View>
+            ) : item.type === "report_response" ? (
+              <Pressable
+                style={styles.row}
+                onPress={() => item.report_id && router.push(`/reports/${item.report_id}`)}
+              >
+                <View style={[styles.showThumb, styles.showThumbPlaceholder, styles.reportThumb]}>
+                  <Ionicons name="flag" size={16} color={colors.accent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.text}>
+                    <Text style={styles.bold}>{t.report.replyNotificationTitle}</Text>
+                  </Text>
+                  <Text style={styles.reportPreview} numberOfLines={2}>
+                    {item.report_message}
                   </Text>
                   <Text style={styles.date}>{shortDate(item.created_at)}</Text>
                 </View>
                 {!item.read && <View style={styles.unreadDot} />}
-              </View>
+                <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+              </Pressable>
             ) : item.type === "stale_watchlist" ? (
               <Pressable
                 style={styles.row}
@@ -217,6 +254,8 @@ function createStyles(colors: Colors) {
     bold: { fontWeight: "800" },
     showThumb: { width: 40, height: 56, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
     showThumbPlaceholder: { alignItems: "center", justifyContent: "center" },
+    reportThumb: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.accentSoft },
+    reportPreview: { fontSize: type.caption, color: colors.textMuted, marginTop: 1 },
     date: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
     unreadDot: { width: 8, height: 8, borderRadius: 999, backgroundColor: colors.accent },
     inviteDecline: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.pillBg },

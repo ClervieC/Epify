@@ -135,6 +135,16 @@ export async function fetchReportsByIds(ids: string[]): Promise<Report[]> {
   return data as Report[];
 }
 
+// For app/reports/[id].tsx — a reporter viewing their own filed report in
+// full (reason, photos, status, admin_reply), reached by tapping a
+// report_response notification. Same RLS as fetchReportsByIds above: only
+// ever returns a row the caller themselves filed, or an admin's own.
+export async function fetchReportById(id: string): Promise<Report | null> {
+  const { data, error } = await supabase.from("reports").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data as Report | null;
+}
+
 export async function resolveReport(id: string, note: string | null): Promise<void> {
   const adminId = await getCurrentUserId();
   const { error } = await supabase

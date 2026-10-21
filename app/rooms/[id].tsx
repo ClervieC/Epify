@@ -16,8 +16,11 @@ import {
   fetchLinkedShowProgress,
   fetchRoomWatchlist,
   removeFromRoomWatchlist,
+  unmarkWatchGroupForRoom,
+  unmarkEpisodeFromRoom,
   RoomWithMembers,
   RoomWatchGroup,
+  RoomWatchLogEntry,
   RoomWatchlistEntry,
   LinkedShowProgress,
   RoomExpiry,
@@ -64,6 +67,14 @@ export default function RoomDetailScreen() {
   const [editSelectedShow, setEditSelectedShow] = useState<LinkedShowChoice | null>(null);
   const [saving, setSaving] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  // Movies have no sub-items to expand into (no "episodes"), so they keep
+  // the simple whole-group undo. Shows expand into their individual
+  // episodes instead (expandedShows) — unwatchTarget here is only ever a
+  // movie group now; see unwatchEntryTarget below for a show's per-episode
+  // undo.
+  const [unwatchTarget, setUnwatchTarget] = useState<RoomWatchGroup | null>(null);
+  const [expandedShows, setExpandedShows] = useState<Set<string>>(new Set());
+  const [unwatchEntryTarget, setUnwatchEntryTarget] = useState<RoomWatchLogEntry | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -89,6 +100,39 @@ export default function RoomDetailScreen() {
   async function handleRemoveFromWatchlist(entryId: string) {
     setWatchlist((prev) => prev.filter((e) => e.id !== entryId));
     await removeFromRoomWatchlist(entryId).catch(() => refreshWatchlist());
+  }
+
+  async function handleUnwatchGroup() {
+    if (!unwatchTarget) return;
+    const target = unwatchTarget;
+    setUnwatchTarget(null);
+    setWatchLog((prev) => prev.filter((g) => g.key !== target.key));
+    await unmarkWatchGroupForRoom(id, target).catch(() => fetchGroupedRoomWatchLog(id).then(setWatchLog));
+    // Progress shown in "Currently watching" reads from watched_episodes
+    // too — stale otherwise if the undone show is the room's linked one.
+    if (room) fetchLinkedShowProgress(room).then(setLinkedProgress);
+  }
+
+  function toggleShowExpanded(key: string) {
+    setExpandedShows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function handleUnwatchEntry() {
+    if (!unwatchEntryTarget) return;
+    const entry = unwatchEntryTarget;
+    setUnwatchEntryTarget(null);
+    setWatchLog((prev) =>
+      prev
+        .map((g) => (g.key === `show:${entry.tvmaze_show_id}` ? { ...g, entries: g.entries.filter((e) => e.id !== entry.id), episodeCount: g.episodeCount - 1 } : g))
+        .filter((g) => g.episodeCount > 0)
+    );
+    await unmarkEpisodeFromRoom(id, entry.tvmaze_episode_id!).catch(() => fetchGroupedRoomWatchLog(id).then(setWatchLog));
+    if (room) fetchLinkedShowProgress(room).then(setLinkedProgress);
   }
 
   function onInviteQueryChange(text: string) {
@@ -344,29 +388,91 @@ export default function RoomDetailScreen() {
             {watchLog.length === 0 ? (
               <Text style={styles.emptyText}>{t.rooms.noWatchedTogether}</Text>
             ) : (
-              watchLog.map((g) => (
-                <Pressable
-                  key={g.key}
-                  style={styles.watchRow}
-                  onPress={() => router.push(g.kind === "show" ? `/show/${g.tvmazeShowId}` : `/movie/tmdb/${g.tmdbId}`)}
-                >
-                  {g.imageUrl ? (
-                    <Image source={{ uri: g.imageUrl }} style={styles.watchThumb} />
-                  ) : (
-                    <View style={[styles.watchThumb, styles.watchThumbPlaceholder]}>
-                      <Ionicons name={g.kind === "show" ? "tv-outline" : "film-outline"} size={18} color={colors.textFaint} />
-                    </View>
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.watchTitle} numberOfLines={1}>
-                      {g.title}
-                    </Text>
-                    <Text style={styles.watchSubtitle}>
-                      {g.kind === "show" ? t.rooms.episodesTogetherCount(g.episodeCount) : t.rooms.movieTogetherCount(g.episodeCount)}
-                    </Text>
+              watchLog.map((g) => {
+                // Movies have no sub-items — tapping opens the movie, with
+                // the whole-group undo still next to it. Shows expand into
+                // their individual episodes instead; tapping the row
+                // toggles that instead of navigating, since there's
+                // several possible destinations (the show itself, or any
+                // one episode) once expanded.
+                if (g.kind === "movie") {
+                  return (
+                    <Pressable key={g.key} style={styles.watchRow} onPress={() => router.push(`/movie/tmdb/${g.tmdbId}`)}>
+                      {g.imageUrl ? (
+                        <Image source={{ uri: g.imageUrl }} style={styles.watchThumb} />
+                      ) : (
+                        <View style={[styles.watchThumb, styles.watchThumbPlaceholder]}>
+                          <Ionicons name="film-outline" size={18} color={colors.textFaint} />
+                        </View>
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.watchTitle} numberOfLines={1}>
+                          {g.title}
+                        </Text>
+                        <Text style={styles.watchSubtitle}>{t.rooms.movieTogetherCount(g.episodeCount)}</Text>
+                      </View>
+                      <Pressable
+                        onPress={() => setUnwatchTarget(g)}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        accessibilityLabel={t.rooms.unwatchTogether}
+                      >
+                        <Ionicons name="arrow-undo-outline" size={18} color={colors.textFaint} />
+                      </Pressable>
+                    </Pressable>
+                  );
+                }
+
+                const expanded = expandedShows.has(g.key);
+                return (
+                  <View key={g.key}>
+                    <Pressable style={styles.watchRow} onPress={() => toggleShowExpanded(g.key)}>
+                      {g.imageUrl ? (
+                        <Image source={{ uri: g.imageUrl }} style={styles.watchThumb} />
+                      ) : (
+                        <View style={[styles.watchThumb, styles.watchThumbPlaceholder]}>
+                          <Ionicons name="tv-outline" size={18} color={colors.textFaint} />
+                        </View>
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.watchTitle} numberOfLines={1}>
+                          {g.title}
+                        </Text>
+                        <Text style={styles.watchSubtitle}>{t.rooms.episodesTogetherCount(g.episodeCount)}</Text>
+                      </View>
+                      <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={colors.textFaint} />
+                    </Pressable>
+                    {expanded && (
+                      <View style={styles.episodeList}>
+                        {g.entries.map((e) => (
+                          <Pressable
+                            key={e.id}
+                            style={styles.episodeRow}
+                            onPress={() =>
+                              router.push({
+                                pathname: "/episode/[id]",
+                                params: { id: String(e.tvmaze_episode_id), showId: String(e.tvmaze_show_id) },
+                              })
+                            }
+                          >
+                            <Text style={styles.episodeText}>
+                              S{e.season}E{e.number}
+                            </Text>
+                            <Pressable
+                              onPress={() => setUnwatchEntryTarget(e)}
+                              hitSlop={10}
+                              accessibilityRole="button"
+                              accessibilityLabel={t.rooms.unwatchTogether}
+                            >
+                              <Ionicons name="arrow-undo-outline" size={16} color={colors.textFaint} />
+                            </Pressable>
+                          </Pressable>
+                        ))}
+                      </View>
+                    )}
                   </View>
-                </Pressable>
-              ))
+                );
+              })
             )}
           </View>
 
@@ -493,6 +599,30 @@ export default function RoomDetailScreen() {
         onChoose={(v) => (v === "remove" ? handleRemoveMember() : setRemoveTarget(null))}
         onDismiss={() => setRemoveTarget(null)}
       />
+      <ChoiceDialog
+        visible={!!unwatchTarget}
+        title={t.rooms.unwatchTogether}
+        subtitle={t.rooms.unwatchTogetherConfirm(unwatchTarget?.title ?? "")}
+        options={[
+          { value: "cancel", label: t.rooms.decline },
+          { value: "unwatch", label: t.rooms.unwatchTogether, primary: true },
+        ]}
+        onChoose={(v) => (v === "unwatch" ? handleUnwatchGroup() : setUnwatchTarget(null))}
+        onDismiss={() => setUnwatchTarget(null)}
+      />
+      <ChoiceDialog
+        visible={!!unwatchEntryTarget}
+        title={t.rooms.unwatchTogether}
+        subtitle={t.rooms.unwatchTogetherConfirm(
+          unwatchEntryTarget ? `S${unwatchEntryTarget.season}E${unwatchEntryTarget.number}` : ""
+        )}
+        options={[
+          { value: "cancel", label: t.rooms.decline },
+          { value: "unwatch", label: t.rooms.unwatchTogether, primary: true },
+        ]}
+        onChoose={(v) => (v === "unwatch" ? handleUnwatchEntry() : setUnwatchEntryTarget(null))}
+        onDismiss={() => setUnwatchEntryTarget(null)}
+      />
 
       <Sheet visible={editOpen} onClose={() => setEditOpen(false)}>
         <Text style={styles.sheetTitle}>{t.rooms.editRoom}</Text>
@@ -575,6 +705,16 @@ function createStyles(colors: Colors) {
     watchThumbPlaceholder: { alignItems: "center", justifyContent: "center" },
     watchTitle: { fontWeight: "700", fontSize: type.body, color: colors.text },
     watchSubtitle: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
+    episodeList: { paddingLeft: 52, paddingBottom: 4 },
+    episodeRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingVertical: 7,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+    },
+    episodeText: { fontSize: type.bodySm, fontWeight: "700", color: colors.textMuted },
     progressRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
     progressNameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
     progressName: { flex: 1, fontWeight: "700", fontSize: type.body, color: colors.text },

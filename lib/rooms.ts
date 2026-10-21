@@ -370,6 +370,11 @@ export interface RoomWatchGroup {
   tmdbId?: number;
   episodeCount: number;
   lastWatchedAt: string;
+  // The individual log rows behind this group's count, oldest first — a
+  // show's row expands to show exactly which episodes (app/rooms/[id].tsx),
+  // each independently undoable. Not populated for movie groups — a movie
+  // doesn't have sub-items the way a show's episodes do.
+  entries: RoomWatchLogEntry[];
 }
 
 // Groups the flat log by show/movie — a binge session otherwise reads as a
@@ -400,6 +405,7 @@ export async function fetchGroupedRoomWatchLog(roomId: string): Promise<RoomWatc
     if (existing) {
       existing.episodeCount += 1;
       if (e.created_at > existing.lastWatchedAt) existing.lastWatchedAt = e.created_at;
+      existing.entries.push(e);
       continue;
     }
     if (e.content_type === "episode") {
@@ -412,6 +418,7 @@ export async function fetchGroupedRoomWatchLog(roomId: string): Promise<RoomWatc
         tvmazeShowId: e.tvmaze_show_id!,
         episodeCount: 1,
         lastWatchedAt: e.created_at,
+        entries: [e],
       });
     } else {
       groups.set(key, {
@@ -422,8 +429,12 @@ export async function fetchGroupedRoomWatchLog(roomId: string): Promise<RoomWatc
         tmdbId: e.tmdb_id!,
         episodeCount: 1,
         lastWatchedAt: e.created_at,
+        entries: [e],
       });
     }
+  }
+  for (const g of groups.values()) {
+    g.entries.sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.number ?? 0) - (b.number ?? 0));
   }
   return [...groups.values()].sort((a, b) => (a.lastWatchedAt < b.lastWatchedAt ? 1 : -1));
 }
@@ -521,5 +532,52 @@ export async function addMovieToRoomWatchlist(roomId: string, movie: TMDBSearchR
 
 export async function removeFromRoomWatchlist(entryId: string): Promise<void> {
   const { error } = await supabase.from("room_watchlist").delete().eq("id", entryId);
+  if (error) throw error;
+}
+
+// Undoes a "watched together" share — in case someone tapped it by
+// mistake (see unmark_episodes_watched_for_room/unmark_movie_watched_
+// for_room's own comment in supabase/schema.sql). Un-marks the whole
+// group (every episode logged for this show in this room, not just the
+// most recent share) as watched for every currently-accepted member, not
+// just the caller — this is "undo what the room did," not a personal
+// unwatch.
+export async function unmarkWatchGroupForRoom(roomId: string, group: RoomWatchGroup): Promise<void> {
+  if (group.kind === "show") {
+    const { error } = await supabase.rpc("unmark_episodes_watched_for_room", {
+      p_room_id: roomId,
+      p_tvmaze_show_id: group.tvmazeShowId,
+    });
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.rpc("unmark_movie_watched_for_room", {
+      p_room_id: roomId,
+      p_tmdb_id: group.tmdbId,
+    });
+    if (error) throw error;
+  }
+}
+
+// Per-episode undo — narrower than unmarkWatchGroupForRoom above (which
+// undoes every episode of a show at once); the room page's expanded
+// per-episode list undoes one row at a time (see unmark_episode_watched_
+// for_room's own comment in supabase/schema.sql).
+export async function unmarkEpisodeFromRoom(roomId: string, tvmazeEpisodeId: number): Promise<void> {
+  const { error } = await supabase.rpc("unmark_episode_watched_for_room", {
+    p_room_id: roomId,
+    p_tvmaze_episode_id: tvmazeEpisodeId,
+  });
+  if (error) throw error;
+}
+
+// Resolves a pending "did you rewatch this too?" notification (see
+// confirm_room_rewatch's own comment in supabase/schema.sql) — surfaced
+// when sharing an episode to the room that a target member already has
+// marked watched, instead of silently bumping their count.
+export async function respondToRewatchConfirm(confirmationId: string, confirmed: boolean): Promise<void> {
+  const { error } = await supabase.rpc("confirm_room_rewatch", {
+    p_confirmation_id: confirmationId,
+    p_confirmed: confirmed,
+  });
   if (error) throw error;
 }

@@ -143,6 +143,7 @@ function RootNavigation() {
         <Stack.Screen name="notifications" options={{ headerShown: false }} />
         <Stack.Screen name="rooms/index" options={{ headerShown: false }} />
         <Stack.Screen name="rooms/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="reports/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="legal/terms" options={{ headerShown: false }} />
         <Stack.Screen name="legal/privacy" options={{ headerShown: false }} />
         <Stack.Screen name="admin/index" options={{ headerShown: false }} />

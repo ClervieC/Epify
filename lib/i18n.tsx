@@ -452,8 +452,11 @@ const en = {
     removePhoto: "Remove photo",
     photoUploadFailedTitle: "Couldn't attach photo",
     photoUploadFailedMessage: "Check your connection and try again.",
-    replyNotification: (reason: string, message: string) =>
-      reason ? `Reply to your report ("${reason}"): ${message}` : `Reply to your report: "${message}"`,
+    replyNotificationTitle: "Reply to your report",
+    notFound: "This report couldn't be found.",
+    replyLabel: "Reply",
+    noReplyYet: "No reply yet.",
+    closePhoto: "Close photo",
   },
   support: {
     title: "Contact us",
@@ -713,6 +716,10 @@ const en = {
     addWatchedMoviePlaceholder: "Search a movie",
     episodesTogetherCount: (n: number) => `${n} episode${n > 1 ? "s" : ""} together`,
     movieTogetherCount: (n: number) => (n > 1 ? `Watched together (x${n})` : "Watched together"),
+    unwatchTogether: "Unwatch together",
+    unwatchTogetherConfirm: (title: string) =>
+      `Undo "${title}" being watched together? This removes it from everyone's watched list in this room.`,
+    rewatchConfirmText: (show: string, code: string) => `marked ${show} ${code} watched again — did you rewatch it together?`,
   },
 };
 
@@ -1119,8 +1126,11 @@ const fr: typeof en = {
     removePhoto: "Retirer la photo",
     photoUploadFailedTitle: "Échec de l'ajout de la photo",
     photoUploadFailedMessage: "Vérifie ta connexion et réessaie.",
-    replyNotification: (reason: string, message: string) =>
-      reason ? `Réponse à ton signalement ("${reason}") : ${message}` : `Réponse à ton signalement : "${message}"`,
+    replyNotificationTitle: "Réponse à ton signalement",
+    notFound: "Ce signalement est introuvable.",
+    replyLabel: "Réponse",
+    noReplyYet: "Pas encore de réponse.",
+    closePhoto: "Fermer la photo",
   },
   support: {
     title: "Nous contacter",
@@ -1380,6 +1390,10 @@ const fr: typeof en = {
     addWatchedMoviePlaceholder: "Chercher un film",
     episodesTogetherCount: (n: number) => `${n} épisode${n > 1 ? "s" : ""} ensemble`,
     movieTogetherCount: (n: number) => (n > 1 ? `Vu ensemble (x${n})` : "Vu ensemble"),
+    unwatchTogether: "Annuler le visionnage",
+    unwatchTogetherConfirm: (title: string) =>
+      `Annuler "${title}" comme vu ensemble ? Ça le retire de la liste vue de tout le monde dans cette room.`,
+    rewatchConfirmText: (show: string, code: string) => `a remarqué ${show} ${code} comme vu — tu l'as revu avec le groupe ?`,
   },
 };
 

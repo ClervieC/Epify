@@ -620,6 +620,8 @@ function ReportCard({
           style={[styles.replySendBtn, (!reply.trim() || replying) && styles.actionBtnDisabled]}
           onPress={sendReply}
           disabled={!reply.trim() || replying}
+          accessibilityRole="button"
+          accessibilityLabel={t.admin.sendReply}
         >
           <Ionicons name={replySent ? "checkmark" : "send"} size={14} color="#fff" />
         </Pressable>

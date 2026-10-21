@@ -2190,3 +2190,284 @@ $$;
 
 grant execute on function public.add_show_to_watchlist_for_room(uuid, int, text, text) to authenticated;
 grant execute on function public.add_movie_to_watchlist_for_room(uuid, int, text, int, text) to authenticated;
+
+-- ============================================================
+-- Undo a "watched together" share — in case a room member tapped it by
+-- mistake. Reverses mark_episode(s)_watched_for_room/mark_movie_watched_
+-- for_room's effect: deletes the matching room_watch_log rows for this
+-- room+show/movie (all of them, not just the latest one — the room page
+-- groups by show/movie, so "undo" at that granularity means the whole
+-- group) and un-marks those specific episodes/that movie as watched for
+-- every currently-accepted room member, same membership bar as creating
+-- the share in the first place (any accepted member, not just the owner
+-- or original sharer — this is meant as an easy "oops, undo that" safety
+-- net, not a moderation action).
+-- ============================================================
+create or replace function public.unmark_episodes_watched_for_room(
+  p_room_id uuid, p_tvmaze_show_id int
+) returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_episode_ids int[];
+begin
+  if not exists (
+    select 1 from public.room_members me
+    where me.room_id = p_room_id and me.user_id = auth.uid() and me.status = 'accepted'
+  ) then
+    raise exception 'not a member of this room';
+  end if;
+
+  select array_agg(distinct tvmaze_episode_id) into v_episode_ids
+  from public.room_watch_log
+  where room_id = p_room_id and content_type = 'episode' and tvmaze_show_id = p_tvmaze_show_id;
+
+  if v_episode_ids is null then
+    return;
+  end if;
+
+  delete from public.watched_episodes
+  where tvmaze_episode_id = any(v_episode_ids)
+    and user_id in (select rm.user_id from public.room_members rm where rm.room_id = p_room_id and rm.status = 'accepted');
+
+  delete from public.room_watch_log
+  where room_id = p_room_id and content_type = 'episode' and tvmaze_show_id = p_tvmaze_show_id;
+end;
+$$;
+
+create or replace function public.unmark_movie_watched_for_room(
+  p_room_id uuid, p_tmdb_id int
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (
+    select 1 from public.room_members me
+    where me.room_id = p_room_id and me.user_id = auth.uid() and me.status = 'accepted'
+  ) then
+    raise exception 'not a member of this room';
+  end if;
+
+  delete from public.user_movies
+  where tmdb_id = p_tmdb_id
+    and user_id in (select rm.user_id from public.room_members rm where rm.room_id = p_room_id and rm.status = 'accepted');
+
+  delete from public.room_watch_log
+  where room_id = p_room_id and content_type = 'movie' and tmdb_id = p_tmdb_id;
+end;
+$$;
+
+grant execute on function public.unmark_episodes_watched_for_room(uuid, int) to authenticated;
+grant execute on function public.unmark_movie_watched_for_room(uuid, int) to authenticated;
+
+-- ============================================================
+-- Rewatching an episode together, when a target member already has it
+-- marked watched, now asks them to confirm first instead of silently
+-- bumping their count — a notification with Yes/No (room_rewatch_confirm),
+-- resolved by confirm_room_rewatch below. A target who *doesn't* already
+-- have the episode watched is unaffected: marked watched immediately, same
+-- as before. Scoped to episodes only (not movies) — mark_movie_watched_
+-- for_room's existing x2/x3 "Watched together" count stays direct-increment.
+--
+-- NOTE on applying this: mark_episode_watched_for_room/mark_episodes_
+-- watched_for_room below are CREATE OR REPLACE of functions that already
+-- existed, owned by supabase_storage_admin's sibling supabase_admin (not
+-- postgres) on this instance — same "must be owner" issue the storage
+-- grants fix above hit. Run those two specifically as supabase_admin, not
+-- postgres; everything else here (new table/columns/functions) postgres
+-- owns fine since it's creating them fresh.
+-- ============================================================
+create table if not exists public.room_rewatch_confirmations (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.rooms (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  requested_by uuid not null references auth.users (id) on delete cascade,
+  tvmaze_show_id integer not null,
+  tvmaze_episode_id integer not null,
+  season integer not null,
+  number integer not null,
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'declined')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+alter table public.room_rewatch_confirmations enable row level security;
+
+create policy "Users see their own rewatch confirmations"
+  on public.room_rewatch_confirmations
+  for select
+  using (auth.uid() = user_id or auth.uid() = requested_by);
+
+alter table public.notifications
+  add column if not exists rewatch_confirmation_id uuid references public.room_rewatch_confirmations (id) on delete cascade,
+  add column if not exists rewatch_season integer,
+  add column if not exists rewatch_number integer;
+
+create or replace function public.mark_episode_watched_for_room(
+  p_room_ids uuid[],
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_tvmaze_episode_id int,
+  p_season int,
+  p_number int
+) returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_pair record;
+  v_confirmation_id uuid;
+begin
+  insert into public.room_watch_log (room_id, shared_by, content_type, tvmaze_show_id, tvmaze_episode_id, season, number)
+  select distinct rm1.room_id, auth.uid(), 'episode', p_tvmaze_show_id, p_tvmaze_episode_id, p_season, p_number
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+
+  create temporary table _already_watched on commit drop as
+  select we.user_id from public.watched_episodes we
+  where we.tvmaze_episode_id = p_tvmaze_episode_id and we.watched;
+
+  for v_pair in
+    select distinct rm1.room_id, rm2.user_id
+    from public.room_members rm1
+    join public.room_members rm2 on rm1.room_id = rm2.room_id
+    join public.rooms r on r.id = rm1.room_id
+    where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+      and rm1.room_id = any(p_room_ids)
+      and (r.expires_at is null or r.expires_at > now())
+      and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  loop
+    if exists (select 1 from _already_watched aw where aw.user_id = v_pair.user_id) then
+      insert into public.room_rewatch_confirmations (room_id, user_id, requested_by, tvmaze_show_id, tvmaze_episode_id, season, number)
+      values (v_pair.room_id, v_pair.user_id, auth.uid(), p_tvmaze_show_id, p_tvmaze_episode_id, p_season, p_number)
+      returning id into v_confirmation_id;
+
+      insert into public.notifications (user_id, type, actor_id, room_id, rewatch_confirmation_id, tvmaze_show_id, rewatch_season, rewatch_number)
+      values (v_pair.user_id, 'room_rewatch_confirm', auth.uid(), v_pair.room_id, v_confirmation_id, p_tvmaze_show_id, p_season, p_number);
+    else
+      insert into public.watched_episodes (user_id, tvmaze_show_id, tvmaze_episode_id, season, number, watched)
+      values (v_pair.user_id, p_tvmaze_show_id, p_tvmaze_episode_id, p_season, p_number, true)
+      on conflict (user_id, tvmaze_episode_id) do update set watched = true, watched_at = now();
+    end if;
+  end loop;
+end;
+$$;
+
+create or replace function public.mark_episodes_watched_for_room(
+  p_room_ids uuid[],
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_episodes jsonb
+) returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_pair record;
+  v_episode record;
+  v_confirmation_id uuid;
+begin
+  insert into public.room_watch_log (room_id, shared_by, content_type, tvmaze_show_id, tvmaze_episode_id, season, number)
+  select distinct rm1.room_id, auth.uid(), 'episode', p_tvmaze_show_id, (e->>'id')::int, (e->>'season')::int, (e->>'number')::int
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  cross join jsonb_array_elements(p_episodes) as e
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+
+  create temporary table _already_watched_batch on commit drop as
+  select we.user_id, we.tvmaze_episode_id from public.watched_episodes we
+  where we.watched and we.tvmaze_episode_id in (
+    select (e->>'id')::int from jsonb_array_elements(p_episodes) as e
+  );
+
+  for v_pair in
+    select distinct rm1.room_id, rm2.user_id
+    from public.room_members rm1
+    join public.room_members rm2 on rm1.room_id = rm2.room_id
+    join public.rooms r on r.id = rm1.room_id
+    where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+      and rm1.room_id = any(p_room_ids)
+      and (r.expires_at is null or r.expires_at > now())
+      and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  loop
+    for v_episode in select e from jsonb_array_elements(p_episodes) as e loop
+      if exists (
+        select 1 from _already_watched_batch aw
+        where aw.user_id = v_pair.user_id and aw.tvmaze_episode_id = (v_episode.e->>'id')::int
+      ) then
+        insert into public.room_rewatch_confirmations (room_id, user_id, requested_by, tvmaze_show_id, tvmaze_episode_id, season, number)
+        values (
+          v_pair.room_id, v_pair.user_id, auth.uid(), p_tvmaze_show_id,
+          (v_episode.e->>'id')::int, (v_episode.e->>'season')::int, (v_episode.e->>'number')::int
+        )
+        returning id into v_confirmation_id;
+
+        insert into public.notifications (user_id, type, actor_id, room_id, rewatch_confirmation_id, tvmaze_show_id, rewatch_season, rewatch_number)
+        values (
+          v_pair.user_id, 'room_rewatch_confirm', auth.uid(), v_pair.room_id, v_confirmation_id,
+          p_tvmaze_show_id, (v_episode.e->>'season')::int, (v_episode.e->>'number')::int
+        );
+      else
+        insert into public.watched_episodes (user_id, tvmaze_show_id, tvmaze_episode_id, season, number, watched)
+        values (
+          v_pair.user_id, p_tvmaze_show_id, (v_episode.e->>'id')::int,
+          (v_episode.e->>'season')::int, (v_episode.e->>'number')::int, true
+        )
+        on conflict (user_id, tvmaze_episode_id) do update set watched = true, watched_at = now();
+      end if;
+    end loop;
+  end loop;
+end;
+$$;
+
+create or replace function public.confirm_room_rewatch(p_confirmation_id uuid, p_confirmed boolean)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_row public.room_rewatch_confirmations%rowtype;
+begin
+  select * into v_row from public.room_rewatch_confirmations where id = p_confirmation_id and user_id = auth.uid();
+  if not found then
+    raise exception 'confirmation not found';
+  end if;
+  if v_row.status != 'pending' then
+    return;
+  end if;
+
+  if p_confirmed then
+    update public.watched_episodes
+    set times_watched = times_watched + 1, watched_at = now()
+    where user_id = v_row.user_id and tvmaze_episode_id = v_row.tvmaze_episode_id;
+    update public.room_rewatch_confirmations set status = 'confirmed', resolved_at = now() where id = p_confirmation_id;
+  else
+    update public.room_rewatch_confirmations set status = 'declined', resolved_at = now() where id = p_confirmation_id;
+  end if;
+
+  delete from public.notifications where rewatch_confirmation_id = p_confirmation_id;
+end;
+$$;
+
+grant execute on function public.confirm_room_rewatch(uuid, boolean) to authenticated;
+
+-- Per-episode undo (narrower than unmark_episodes_watched_for_room above,
+-- which undoes every episode of a show at once) — app/rooms/[id].tsx's
+-- per-episode expanded list undoes one row at a time.
+create or replace function public.unmark_episode_watched_for_room(
+  p_room_id uuid, p_tvmaze_episode_id int
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (
+    select 1 from public.room_members me
+    where me.room_id = p_room_id and me.user_id = auth.uid() and me.status = 'accepted'
+  ) then
+    raise exception 'not a member of this room';
+  end if;
+
+  delete from public.watched_episodes
+  where tvmaze_episode_id = p_tvmaze_episode_id
+    and user_id in (select rm.user_id from public.room_members rm where rm.room_id = p_room_id and rm.status = 'accepted');
+
+  delete from public.room_watch_log
+  where room_id = p_room_id and content_type = 'episode' and tvmaze_episode_id = p_tvmaze_episode_id;
+end;
+$$;
+
+grant execute on function public.unmark_episode_watched_for_room(uuid, int) to authenticated;
