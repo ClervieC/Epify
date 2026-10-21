@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.3",
+    date: "2026-10-21",
+    en: [
+      "The diagnostics confirmed our layout was never actually wrong — the extra space below the bottom tab bar right after opening the app from the Home Screen icon comes from iOS itself briefly reporting a taller screen height than it settles on moments later. Added a best-effort nudge on launch to make it settle immediately instead of waiting.",
+    ],
+    fr: [
+      "Le diagnostic a confirmé que notre mise en page n'a jamais été fausse — l'espace en trop sous la barre d'onglets juste après l'ouverture depuis l'icône de l'écran d'accueil vient d'iOS lui-même, qui annonce brièvement une hauteur d'écran plus grande que celle sur laquelle il se stabilise peu après. Ajout d'un correctif au lancement pour forcer cette stabilisation immédiatement plutôt que d'attendre.",
+    ],
+  },
+  {
     version: "5.3.2",
     date: "2026-10-21",
     en: ["Debug build — moved the temporary diagnostic overlay (5.3.1 placed it incorrectly, cut off at the bottom of the screen)."],

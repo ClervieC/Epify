@@ -109,5 +109,41 @@
         });
       }
     </script>
+
+    <script>
+      // iOS standalone PWA quirk, confirmed live via a temporary on-screen
+      // diagnostic overlay: right after a cold launch from the Home Screen
+      // icon, window.innerHeight (and therefore the 100dvh the #root style
+      // above uses) can briefly report a taller value than the one iOS
+      // settles on moments later — observed as 852pt vs. 809pt on the same
+      // phone/launch, a ~43pt gap that showed up as extra blank space below
+      // the bottom tab bar until it self-corrected. #root was never the
+      // wrong size for whatever height iOS was reporting at the time — iOS
+      // itself was reporting the wrong height initially. This nudges the
+      // viewport (toggling scrollability and scrolling by a sub-pixel
+      // amount, a common trick for forcing WebKit to recompute its viewport
+      // measurement) shortly after load so it settles immediately instead
+      // of waiting for the user's first scroll/interaction. Best-effort —
+      // this works around an engine timing quirk, not a bug in our own
+      // layout, so it isn't guaranteed to eliminate every case.
+      if (window.navigator.standalone) {
+        function nudgeViewport() {
+          try {
+            // body's own overflow:hidden (see the #expo-reset style above)
+            // is what actually blocks scrollTo from doing anything — toggle
+            // that, not html's, or this silently no-ops.
+            const prevOverflow = document.body.style.overflow;
+            document.body.style.overflow = "auto";
+            window.scrollTo(0, 1);
+            requestAnimationFrame(() => {
+              window.scrollTo(0, 0);
+              document.body.style.overflow = prevOverflow;
+            });
+          } catch (e) {}
+        }
+        window.addEventListener("load", () => requestAnimationFrame(nudgeViewport));
+        window.addEventListener("pageshow", nudgeViewport);
+      }
+    </script>
   </body>
 </html>

@@ -62,11 +62,7 @@ function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAd
           needed to be). insets.bottom is 0 anywhere a home indicator isn't
           in play (web tab, Android, older iPhones), where this is just 20,
           unchanged from before. */}
-      {/* nativeID (not a ref) so app/_layout.tsx's temporary diagnostic
-          overlay — which lives outside this bottom-docked component, see
-          its own comment — can measure this bar's real bottom edge via
-          document.getElementById on web. */}
-      <View nativeID="debug-tab-bar" style={[styles.bar, { paddingBottom: Math.max(20, insets.bottom) }]}>
+      <View style={[styles.bar, { paddingBottom: Math.max(20, insets.bottom) }]}>
         {state.routes.map((route, index) => {
           const focused = state.index === index;
           const color = focused ? colors.accent : colors.textFaint;
