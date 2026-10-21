@@ -466,6 +466,13 @@ export async function fetchRoomWatchlist(roomId: string): Promise<RoomWatchlistE
 // Catching the resulting unique-violation (23505) here instead — already
 // on the list, nothing to do — gets the same "add or no-op" behavior a
 // working upsert would have.
+// Also queues the show on every accepted member's own personal watchlist
+// (add_show_to_watchlist_for_room — a plain "insert if missing," so anyone
+// who already has this show in their list in any status, including
+// already watched, is left untouched). Run after the room_watchlist insert
+// itself succeeds/no-ops, not in parallel — no point fanning out to every
+// member's list for something that turned out to already be on the room's
+// own list and wasn't really just added.
 export async function addShowToRoomWatchlist(roomId: string, show: TVMazeShow): Promise<void> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
@@ -478,6 +485,14 @@ export async function addShowToRoomWatchlist(roomId: string, show: TVMazeShow): 
     image_url: show.image?.medium ?? null,
   });
   if (error && error.code !== "23505") throw error;
+
+  const { error: fanoutError } = await supabase.rpc("add_show_to_watchlist_for_room", {
+    p_room_id: roomId,
+    p_tvmaze_show_id: show.id,
+    p_show_name: show.name,
+    p_show_image: show.image?.medium ?? null,
+  });
+  if (fanoutError) throw fanoutError;
 }
 
 export async function addMovieToRoomWatchlist(roomId: string, movie: TMDBSearchResult): Promise<void> {
@@ -492,6 +507,16 @@ export async function addMovieToRoomWatchlist(roomId: string, movie: TMDBSearchR
     image_url: movie.poster_path,
   });
   if (error && error.code !== "23505") throw error;
+
+  const year = movie.release_date ? Number(movie.release_date.slice(0, 4)) : null;
+  const { error: fanoutError } = await supabase.rpc("add_movie_to_watchlist_for_room", {
+    p_room_id: roomId,
+    p_tmdb_id: movie.id,
+    p_title: movie.title,
+    p_year: year,
+    p_poster_path: movie.poster_path,
+  });
+  if (fanoutError) throw fanoutError;
 }
 
 export async function removeFromRoomWatchlist(entryId: string): Promise<void> {

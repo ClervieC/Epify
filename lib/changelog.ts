@@ -15,6 +15,28 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.9",
+    date: "2026-10-21",
+    en: [
+      "Adding a show or movie to a room's \"want to watch together\" list now also adds it to every member's own personal watchlist — if it's already on someone's list in any status (including already watched), it's left untouched.",
+    ],
+    fr: [
+      "Ajouter une série ou un film à la liste \"à regarder ensemble\" d'une room l'ajoute maintenant aussi à la liste personnelle de chaque membre — si c'est déjà dans la liste de quelqu'un, peu importe le statut (même déjà vu), rien n'est modifié.",
+    ],
+  },
+  {
+    version: "5.3.8",
+    date: "2026-10-21",
+    en: [
+      "Actually fixed photo uploads (reports, avatar) this time — the real cause was a missing server-side permission on file storage, not the app itself, confirmed by capturing the real failure live.",
+      "A room invite notification now clears itself automatically once it's accepted or declined, no matter which screen you did it from.",
+    ],
+    fr: [
+      "Vraiment corrigé l'ajout de photos (signalements, avatar) cette fois — la vraie cause était une permission serveur manquante sur le stockage de fichiers, pas l'app elle-même, confirmé en capturant l'échec réel en direct.",
+      "Une notification d'invitation à une room disparaît maintenant automatiquement une fois acceptée ou refusée, peu importe l'écran utilisé.",
+    ],
+  },
+  {
     version: "5.3.7",
     date: "2026-10-21",
     en: [

@@ -2081,3 +2081,112 @@ create unique index if not exists room_watchlist_show_unique
   on public.room_watchlist (room_id, tvmaze_show_id) where content_type = 'show';
 create unique index if not exists room_watchlist_movie_unique
   on public.room_watchlist (room_id, tmdb_id) where content_type = 'movie';
+
+-- ============================================================
+-- Clear a room_invite notification the moment the underlying invite is
+-- resolved, regardless of which screen resolved it (app/rooms/index.tsx's
+-- own accept/decline, app/notifications.tsx's, or a future third one) —
+-- a single trigger here instead of duplicating "also delete the
+-- notification" in every client call site, which is exactly what let this
+-- drift: accepting from the Rooms list left the notification itself
+-- untouched server-side, so it reappeared on the next fetch even though
+-- the room_members row really was 'accepted'. Purely additive — safe to
+-- run once.
+-- ============================================================
+create or replace function public.clear_room_invite_notification()
+returns trigger as $$
+begin
+  if TG_OP = 'UPDATE' and OLD.status = 'invited' and NEW.status = 'accepted' then
+    delete from public.notifications
+    where type = 'room_invite' and room_id = NEW.room_id and user_id = NEW.user_id;
+  elsif TG_OP = 'DELETE' and OLD.status = 'invited' then
+    -- A decline (lib/rooms.ts's declineRoomInvite deletes the row outright)
+    -- — not every room_members delete is a decline (leaving an already-
+    -- accepted room, or the owner removing a member, both delete too), so
+    -- this only fires for a row that was still pending.
+    delete from public.notifications
+    where type = 'room_invite' and room_id = OLD.room_id and user_id = OLD.user_id;
+  end if;
+  return coalesce(NEW, OLD);
+end;
+$$ language plpgsql security definer set search_path = public;
+
+create trigger room_members_clear_invite_notification
+  after update or delete on public.room_members
+  for each row
+  execute function public.clear_room_invite_notification();
+
+-- ============================================================
+-- Fixes every file upload in the app (report photos, avatars — anything
+-- going through supabase.storage) failing with a raw Postgres "permission
+-- denied for table buckets"/"for table objects" (confirmed live via a
+-- captured network response, not a guess). storage.buckets and storage.
+-- objects are owned by supabase_storage_admin, and on this instance had
+-- NO grants at all to anon/authenticated/service_role — not even SELECT —
+-- so every storage-api request made on a logged-in user's behalf (which
+-- runs as one of those roles, not the table owner) was rejected before
+-- the RLS policies below it (e.g. "Report images are publicly readable",
+-- "Users upload their own report images") ever got a chance to evaluate.
+-- This restores the standard Supabase baseline grant; RLS stays the real
+-- access boundary exactly as already configured.
+--
+-- Must run as a true superuser (supabase_admin on this instance) — running
+-- it as the `postgres` role itself silently no-ops ("WARNING: no
+-- privileges were granted") because postgres holds these same privileges
+-- without GRANT OPTION, so it can't re-grant them to anyone else; hit this
+-- live before switching to supabase_admin. Purely additive — safe to run
+-- once.
+-- ============================================================
+grant select, insert, update, delete on storage.buckets to anon, authenticated, service_role;
+grant select, insert, update, delete on storage.objects to anon, authenticated, service_role;
+
+-- ============================================================
+-- Adding something to a room's watchlist (public.room_watchlist above)
+-- also queues it on every accepted member's own personal watchlist —
+-- "want to watch together" should actually show up where each person
+-- already tracks what they want to watch, not just inside the room. Does
+-- nothing to a member who already has this show/movie in their list in
+-- ANY status (including already watched) — "on conflict do nothing", not
+-- an upsert, specifically so this can never silently reset someone's
+-- already-watched movie back to want_to_watch.
+-- ============================================================
+create or replace function public.add_show_to_watchlist_for_room(
+  p_room_id uuid, p_tvmaze_show_id int, p_show_name text, p_show_image text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (
+    select 1 from public.room_members me
+    where me.room_id = p_room_id and me.user_id = auth.uid() and me.status = 'accepted'
+  ) then
+    raise exception 'not a member of this room';
+  end if;
+
+  insert into public.user_shows (user_id, tvmaze_id, show_name, show_image, status)
+  select rm.user_id, p_tvmaze_show_id, p_show_name, p_show_image, 'want_to_watch'
+  from public.room_members rm
+  where rm.room_id = p_room_id and rm.status = 'accepted'
+  on conflict (user_id, tvmaze_id) do nothing;
+end;
+$$;
+
+create or replace function public.add_movie_to_watchlist_for_room(
+  p_room_id uuid, p_tmdb_id int, p_title text, p_year int, p_poster_path text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (
+    select 1 from public.room_members me
+    where me.room_id = p_room_id and me.user_id = auth.uid() and me.status = 'accepted'
+  ) then
+    raise exception 'not a member of this room';
+  end if;
+
+  insert into public.user_movies (user_id, tmdb_id, title, year, poster_path, status, watched_at, times_watched)
+  select rm.user_id, p_tmdb_id, p_title, p_year, p_poster_path, 'want_to_watch', null, 0
+  from public.room_members rm
+  where rm.room_id = p_room_id and rm.status = 'accepted'
+  on conflict (user_id, title, year) do nothing;
+end;
+$$;
+
+grant execute on function public.add_show_to_watchlist_for_room(uuid, int, text, text) to authenticated;
+grant execute on function public.add_movie_to_watchlist_for_room(uuid, int, text, int, text) to authenticated;
