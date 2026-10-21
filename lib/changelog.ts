@@ -15,6 +15,24 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.10",
+    date: "2026-10-21",
+    en: [
+      "Profile photo: tap it to choose a new one, reposition it, or remove it. A new photo now opens a move-and-zoom step first, so your face ends up inside the circle instead of wherever the middle of the picture happened to be.",
+      "In a room, tap a show under \"Watched together\" to see exactly which episodes you watched together — and undo a single episode from there if it was marked by mistake.",
+      "Sharing an episode to a room that someone already watched now asks them to confirm they really rewatched it before it counts again.",
+      "Tapping a reply to one of your reports now opens the full conversation.",
+      "Fixed a browser autofill popup covering the search results when adding something to a room.",
+    ],
+    fr: [
+      "Photo de profil : touche-la pour en choisir une nouvelle, la recadrer ou la supprimer. Une nouvelle photo passe d'abord par une étape pour la déplacer et zoomer, pour que ton visage tombe bien dans le cercle.",
+      "Dans une room, touche une série sous \"Vu ensemble\" pour voir exactement quels épisodes vous avez regardés ensemble — et annuler un seul épisode depuis là s'il a été marqué par erreur.",
+      "Partager dans une room un épisode que quelqu'un a déjà vu lui demande maintenant de confirmer qu'il l'a vraiment revu avant que ça compte à nouveau.",
+      "Toucher une réponse à un de tes signalements ouvre maintenant toute la conversation.",
+      "Corrigé une suggestion de remplissage automatique du navigateur qui cachait les résultats de recherche quand on ajoute quelque chose à une room.",
+    ],
+  },
+  {
     version: "5.3.9",
     date: "2026-10-21",
     en: [

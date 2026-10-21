@@ -114,6 +114,9 @@ export function RoomFormFields({
       <TextInput
         style={styles.nameInput}
         placeholder={t.rooms.linkShowPlaceholder}
+        textContentType="none"
+        autoComplete="off"
+        importantForAutofill="no"
         placeholderTextColor={colors.textFaint}
         value={showQuery}
         onChangeText={(text) => {

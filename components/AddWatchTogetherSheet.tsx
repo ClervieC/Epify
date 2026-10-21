@@ -192,6 +192,11 @@ export function AddWatchTogetherSheet({ roomId, otherMemberUserIds, onAdded, onC
             <TextInput
               style={styles.searchInput}
               placeholder={t.rooms.addWatchedShowPlaceholder}
+              // Same as app/users/search.tsx — keeps the browser/password manager
+              // from attaching an autofill dropdown that covers the results below.
+              textContentType="none"
+              autoComplete="off"
+              importantForAutofill="no"
               placeholderTextColor={colors.textFaint}
               value={showQuery}
               onChangeText={onShowQueryChange}
@@ -211,6 +216,9 @@ export function AddWatchTogetherSheet({ roomId, otherMemberUserIds, onAdded, onC
           <TextInput
             style={styles.searchInput}
             placeholder={t.rooms.addWatchedMoviePlaceholder}
+            textContentType="none"
+            autoComplete="off"
+            importantForAutofill="no"
             placeholderTextColor={colors.textFaint}
             value={movieQuery}
             onChangeText={onMovieQueryChange}

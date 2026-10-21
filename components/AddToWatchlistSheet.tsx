@@ -98,6 +98,9 @@ export function AddToWatchlistSheet({ roomId, onAdded, onClose }: AddToWatchlist
           <TextInput
             style={styles.searchInput}
             placeholder={t.rooms.addWatchedShowPlaceholder}
+            textContentType="none"
+            autoComplete="off"
+            importantForAutofill="no"
             placeholderTextColor={colors.textFaint}
             value={showQuery}
             onChangeText={onShowQueryChange}
@@ -116,6 +119,9 @@ export function AddToWatchlistSheet({ roomId, onAdded, onClose }: AddToWatchlist
           <TextInput
             style={styles.searchInput}
             placeholder={t.rooms.addWatchedMoviePlaceholder}
+            textContentType="none"
+            autoComplete="off"
+            importantForAutofill="no"
             placeholderTextColor={colors.textFaint}
             value={movieQuery}
             onChangeText={onMovieQueryChange}

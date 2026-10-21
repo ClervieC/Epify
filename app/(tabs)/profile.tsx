@@ -21,7 +21,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useMountIn } from "../../lib/animations";
-import { pickImages } from "../../lib/pickImages";
+import { pickImages, PickedImageFile } from "../../lib/pickImages";
 import { useAuth } from "../../context/AuthContext";
 import {
   createList,
@@ -49,7 +49,7 @@ import {
 import { posterUrl } from "../../lib/tmdb";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
-import { fetchMyProfile, uploadAvatar, Profile } from "../../lib/profiles";
+import { fetchMyProfile, uploadAvatar, removeAvatar, fetchAvatarOriginalUrl, Profile } from "../../lib/profiles";
 import { fetchFollowCounts } from "../../lib/follows";
 import { fetchOpenReportCount } from "../../lib/reports";
 import { fetchSupportNeedsResponseCount } from "../../lib/support";
@@ -75,6 +75,8 @@ import { loadCollapsedProfileState, saveCollapsedProfileState } from "../../lib/
 import { ShowCard } from "../../components/ShowCard";
 import { HorizontalScrollRow } from "../../components/HorizontalScrollRow";
 import { Avatar } from "../../components/Avatar";
+import { AvatarCropper } from "../../components/AvatarCropper";
+import { ChoiceDialog } from "../../components/ChoiceDialog";
 import { EmptyState } from "../../components/EmptyState";
 
 const AVG_EPISODE_MINUTES = 42;
@@ -159,6 +161,11 @@ export default function ProfileScreen() {
     (WatchedEpisode & { showName: string; showImage: string | null })[]
   >([]);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
+  const [removePhotoConfirmOpen, setRemovePhotoConfirmOpen] = useState(false);
+  // What the cropper is showing; `original` is the freshly picked file to
+  // store alongside the crop (null when re-cropping the stored one).
+  const [cropSource, setCropSource] = useState<{ uri: string; original: PickedImageFile | null } | null>(null);
   const [streakData, setStreakData] = useState<StreakData | null>(null);
   const [hasAdminAlerts, setHasAdminAlerts] = useState(false);
   const { unreadCount, refresh: refreshNotifications } = useNotifications();
@@ -447,20 +454,52 @@ export default function ProfileScreen() {
     });
   }
 
-  async function handleChangeAvatar() {
+  function handleAvatarPress() {
+    // No photo yet — nothing to reposition or remove, straight to the picker.
+    if (profile?.avatar_url) setPhotoMenuOpen(true);
+    else pickNewAvatar();
+  }
+
+  async function pickNewAvatar() {
+    setPhotoMenuOpen(false);
     const picked = await pickImages(1);
     if (picked.length === 0) return;
-    const asset = picked[0];
+    setCropSource({ uri: picked[0].uri, original: picked[0] });
+  }
+
+  async function adjustAvatar() {
+    setPhotoMenuOpen(false);
+    // Re-crop from the full original when there is one (so zooming back out
+    // works); avatars from before it was stored only have the crop itself.
+    const originalUrl = await fetchAvatarOriginalUrl().catch(() => null);
+    const uri = originalUrl ?? profile?.avatar_url;
+    if (uri) setCropSource({ uri, original: null });
+  }
+
+  async function saveCroppedAvatar(cropped: PickedImageFile) {
+    const source = cropSource;
+    setCropSource(null);
     setUploadingAvatar(true);
     try {
-      const avatarUrl = await uploadAvatar(
-        asset.uri,
-        asset.mimeType,
-      );
+      const avatarUrl = await uploadAvatar(cropped.uri, cropped.mimeType, source?.original ?? undefined);
       profileVersionRef.current++;
       setProfile((prev) => (prev ? { ...prev, avatar_url: avatarUrl } : prev));
     } catch {
       alert(t.profile.changePhoto, t.profile.changePhotoFailed);
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    setRemovePhotoConfirmOpen(false);
+    setUploadingAvatar(true);
+    try {
+      await removeAvatar();
+      profileVersionRef.current++;
+      setProfile((prev) => (prev ? { ...prev, avatar_url: null } : prev));
+    } catch {
+      alert(t.profile.removePhoto, t.profile.removePhotoFailed);
     } finally {
       setUploadingAvatar(false);
     }
@@ -504,7 +543,7 @@ export default function ProfileScreen() {
           ]}
         >
           <Pressable
-            onPress={handleChangeAvatar}
+            onPress={handleAvatarPress}
             disabled={uploadingAvatar}
             accessibilityRole="button"
             accessibilityLabel={t.profile.changePhoto}
@@ -1077,6 +1116,39 @@ export default function ProfileScreen() {
               })}
         </View>
       </ScrollView>
+
+      <Sheet visible={photoMenuOpen} onClose={() => setPhotoMenuOpen(false)}>
+        <Pressable style={styles.menuItem} onPress={pickNewAvatar}>
+          <Ionicons name="image-outline" size={20} color={colors.text} />
+          <Text style={styles.menuItemText}>{t.profile.choosePhoto}</Text>
+        </Pressable>
+        <Pressable style={styles.menuItem} onPress={adjustAvatar}>
+          <Ionicons name="crop-outline" size={20} color={colors.text} />
+          <Text style={styles.menuItemText}>{t.profile.adjustPhoto}</Text>
+        </Pressable>
+        <Pressable
+          style={styles.menuItem}
+          onPress={() => {
+            setPhotoMenuOpen(false);
+            setRemovePhotoConfirmOpen(true);
+          }}
+        >
+          <Ionicons name="trash-outline" size={20} color={colors.red} />
+          <Text style={[styles.menuItemText, { color: colors.red }]}>{t.profile.removePhoto}</Text>
+        </Pressable>
+      </Sheet>
+      <ChoiceDialog
+        visible={removePhotoConfirmOpen}
+        title={t.profile.removePhoto}
+        subtitle={t.profile.removePhotoConfirm}
+        options={[
+          { value: "cancel", label: t.common.cancel },
+          { value: "remove", label: t.profile.removePhoto, primary: true },
+        ]}
+        onChoose={(v) => (v === "remove" ? handleRemoveAvatar() : setRemovePhotoConfirmOpen(false))}
+        onDismiss={() => setRemovePhotoConfirmOpen(false)}
+      />
+      <AvatarCropper uri={cropSource?.uri ?? null} onCancel={() => setCropSource(null)} onConfirm={saveCroppedAvatar} />
 
       <Sheet visible={!!listMenuTarget} onClose={() => setListMenuTarget(null)}>
         {listMenuTarget &&
