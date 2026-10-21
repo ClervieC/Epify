@@ -15,6 +15,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.11",
+    date: "2026-10-21",
+    en: ["Rooms load a bit faster now — a few network requests that didn't actually depend on each other were running one after another instead of at the same time."],
+    fr: ["Les rooms se chargent un peu plus vite maintenant — plusieurs requêtes réseau qui n'avaient pas besoin de s'attendre les unes les autres se faisaient à la suite au lieu d'être lancées en même temps."],
+  },
+  {
     version: "5.3.10",
     date: "2026-10-21",
     en: [

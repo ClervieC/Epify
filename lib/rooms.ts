@@ -77,17 +77,13 @@ export async function fetchMyRooms(): Promise<RoomWithMembers[]> {
   const roomIds = [...new Set(memberRows.map((r) => r.room_id))];
   if (roomIds.length === 0) return [];
 
-  const { data: rooms, error: roomsError } = await supabase
-    .from("rooms")
-    .select("*")
-    .in("id", roomIds)
-    .order("created_at", { ascending: false });
+  // Same independent-queries-run-in-series issue as fetchRoom above — both
+  // of these only need roomIds, already known at this point.
+  const [{ data: rooms, error: roomsError }, { data: allMembers, error: allMembersError }] = await Promise.all([
+    supabase.from("rooms").select("*").in("id", roomIds).order("created_at", { ascending: false }),
+    supabase.from("room_members").select("*").in("room_id", roomIds),
+  ]);
   if (roomsError) throw roomsError;
-
-  const { data: allMembers, error: allMembersError } = await supabase
-    .from("room_members")
-    .select("*")
-    .in("room_id", roomIds);
   if (allMembersError) throw allMembersError;
 
   const profiles = await fetchProfiles([...new Set((allMembers as RoomMember[]).map((m) => m.user_id))]);
@@ -102,14 +98,18 @@ export async function fetchMyRooms(): Promise<RoomWithMembers[]> {
 }
 
 export async function fetchRoom(roomId: string): Promise<RoomWithMembers | null> {
-  const { data: room, error: roomError } = await supabase.from("rooms").select("*").eq("id", roomId).maybeSingle();
+  // The room row and its members don't depend on each other (both only
+  // need roomId) — run in parallel instead of in series. Found as the
+  // dominant cost of a slow room load: this was 3 round trips to the VPS
+  // back to back (room, then members, then profiles once member ids were
+  // known), when only the last one genuinely has to wait on the one before
+  // it.
+  const [{ data: room, error: roomError }, { data: members, error: membersError }] = await Promise.all([
+    supabase.from("rooms").select("*").eq("id", roomId).maybeSingle(),
+    supabase.from("room_members").select("*").eq("room_id", roomId),
+  ]);
   if (roomError) throw roomError;
   if (!room) return null;
-
-  const { data: members, error: membersError } = await supabase
-    .from("room_members")
-    .select("*")
-    .eq("room_id", roomId);
   if (membersError) throw membersError;
 
   const profiles = await fetchProfiles((members as RoomMember[]).map((m) => m.user_id));
