@@ -52,9 +52,13 @@ export interface AppNotification {
   // Set for type === "room_rewatch_confirm" (see confirm_room_rewatch in
   // supabase/schema.sql) — someone shared an episode to the room that the
   // recipient already has marked watched, asking them to confirm it's a
-  // genuine rewatch before their count bumps. tvmaze_show_id (above) is
-  // reused for which show; these two are the episode within it.
+  // genuine rewatch before their count bumps. rewatch_show_id is which
+  // show — deliberately not tvmaze_show_id (above), whose unique index
+  // with user_id (dedupes stale_watchlist rows) rejected a second rewatch
+  // notification for the same show with a 409. The season/number below
+  // are the episode within it.
   rewatch_confirmation_id: string | null;
+  rewatch_show_id: number | null;
   rewatch_season: number | null;
   rewatch_number: number | null;
   read: boolean;
@@ -71,7 +75,7 @@ export interface EnrichedNotification extends AppNotification {
   roomWatchLogShowName: string | null;
   // Resolved for type === "room_rewatch_confirm", same lookup as
   // roomWatchLogShowName above but keyed off the notification's own
-  // tvmaze_show_id directly (there's no room_watch_log row for an
+  // rewatch_show_id directly (there's no room_watch_log row for an
   // unconfirmed rewatch — see confirm_room_rewatch's own comment).
   rewatchShowName: string | null;
 }
@@ -96,7 +100,7 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
   const episodeShowIds = [
     ...new Set([
       ...[...logById.values()].filter((e) => e.content_type === "episode" && e.tvmaze_show_id != null).map((e) => e.tvmaze_show_id!),
-      ...data.filter((n) => n.type === "room_rewatch_confirm" && n.tvmaze_show_id != null).map((n) => n.tvmaze_show_id as number),
+      ...data.filter((n) => n.type === "room_rewatch_confirm" && n.rewatch_show_id != null).map((n) => n.rewatch_show_id as number),
     ]),
   ];
   const shows = await Promise.all(episodeShowIds.map((id) => getCachedShow(id, () => getShow(id)).catch(() => null)));
@@ -109,7 +113,7 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
       actor: n.actor_id ? actorById.get(n.actor_id) ?? null : null,
       roomWatchLog: log,
       roomWatchLogShowName: log?.tvmaze_show_id != null ? showNameById.get(log.tvmaze_show_id) ?? null : null,
-      rewatchShowName: n.tvmaze_show_id != null ? showNameById.get(n.tvmaze_show_id) ?? null : null,
+      rewatchShowName: n.rewatch_show_id != null ? showNameById.get(n.rewatch_show_id) ?? null : null,
     };
   });
 }
