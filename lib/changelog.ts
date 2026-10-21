@@ -15,6 +15,20 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.5",
+    date: "2026-10-21",
+    en: [
+      "Fixed photos still not attaching to a report on Safari — the file picker was hidden with display:none, which Safari doesn't reliably open even with a real click.",
+      "Fixed an accepted room invite still showing as pending in the Rooms list.",
+      "Report-reply notifications now show which report they're about, not just the reply on its own.",
+    ],
+    fr: [
+      "Correction d'un bug empêchant toujours d'ajouter une photo à un signalement sur Safari — le sélecteur de fichier était caché avec display:none, que Safari n'ouvre pas de façon fiable même avec un vrai clic.",
+      "Correction d'une invitation à une room acceptée qui continuait à s'afficher comme en attente dans la liste des rooms.",
+      "Les notifications de réponse à un signalement précisent maintenant de quel signalement il s'agit, pas seulement la réponse seule.",
+    ],
+  },
+  {
     version: "5.3.4",
     date: "2026-10-21",
     en: [

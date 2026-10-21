@@ -1,6 +1,7 @@
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchProfiles, Profile } from "./profiles";
 import { fetchRoomWatchLogEntriesByIds, RoomWatchLogEntry } from "./rooms";
+import { fetchReportsByIds } from "./reports";
 import { getCachedShow } from "./showDataCache";
 import { getShow } from "./tvmaze";
 import { createShortCache } from "./shortCache";
@@ -61,6 +62,12 @@ export interface EnrichedNotification extends AppNotification {
   // rendering "X marked [Show] S1E2 watched" needs this looked up, same
   // shared cache every other screen already reads the show's name from.
   roomWatchLogShowName: string | null;
+  // Only set for type === "report_response" — the original report's own
+  // reason text, so a reply reads as "Reply to your report ('the app
+  // crashes when...'): fixed!" instead of just the reply on its own with
+  // nothing saying which report it was about. null if the report was
+  // since deleted (report_id cascades) or hasn't resolved yet.
+  reportReason: string | null;
 }
 
 export async function fetchNotifications(): Promise<EnrichedNotification[]> {
@@ -77,8 +84,14 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
 
   const actorIds = [...new Set(data.map((n) => n.actor_id).filter((id): id is string => !!id))];
   const logIds = [...new Set(data.map((n) => n.room_watch_log_id).filter((id): id is string => !!id))];
-  const [actors, logById] = await Promise.all([fetchProfiles(actorIds), fetchRoomWatchLogEntriesByIds(logIds)]);
+  const reportIds = [...new Set(data.map((n) => n.report_id).filter((id): id is string => !!id))];
+  const [actors, logById, reports] = await Promise.all([
+    fetchProfiles(actorIds),
+    fetchRoomWatchLogEntriesByIds(logIds),
+    fetchReportsByIds(reportIds),
+  ]);
   const actorById = new Map(actors.map((a) => [a.user_id, a]));
+  const reportById = new Map(reports.map((r) => [r.id, r]));
 
   const episodeShowIds = [
     ...new Set(
@@ -95,6 +108,7 @@ export async function fetchNotifications(): Promise<EnrichedNotification[]> {
       actor: n.actor_id ? actorById.get(n.actor_id) ?? null : null,
       roomWatchLog: log,
       roomWatchLogShowName: log?.tvmaze_show_id != null ? showNameById.get(log.tvmaze_show_id) ?? null : null,
+      reportReason: n.report_id ? reportById.get(n.report_id)?.reason ?? null : null,
     };
   });
 }

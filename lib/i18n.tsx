@@ -452,7 +452,8 @@ const en = {
     removePhoto: "Remove photo",
     photoUploadFailedTitle: "Couldn't attach photo",
     photoUploadFailedMessage: "Check your connection and try again.",
-    replyNotification: (message: string) => `Reply to your report: "${message}"`,
+    replyNotification: (reason: string, message: string) =>
+      reason ? `Reply to your report ("${reason}"): ${message}` : `Reply to your report: "${message}"`,
   },
   support: {
     title: "Contact us",
@@ -659,6 +660,7 @@ const en = {
     title: "Rooms",
     noRooms: "No rooms yet.",
     noRoomsDesc: "Create a room to watch shows and movies together — marking something watched can share it with everyone in the room.",
+    respondInviteFailed: "Couldn't update this invite. Check your connection and try again.",
     createRoom: "Create a room",
     newRoom: "New room",
     editRoom: "Edit room",
@@ -1113,7 +1115,8 @@ const fr: typeof en = {
     removePhoto: "Retirer la photo",
     photoUploadFailedTitle: "Échec de l'ajout de la photo",
     photoUploadFailedMessage: "Vérifie ta connexion et réessaie.",
-    replyNotification: (message: string) => `Réponse à ton signalement : "${message}"`,
+    replyNotification: (reason: string, message: string) =>
+      reason ? `Réponse à ton signalement ("${reason}") : ${message}` : `Réponse à ton signalement : "${message}"`,
   },
   support: {
     title: "Nous contacter",
@@ -1320,6 +1323,7 @@ const fr: typeof en = {
     title: "Rooms",
     noRooms: "Pas encore de room.",
     noRoomsDesc: "Crée une room pour regarder des séries et films ensemble — marquer quelque chose comme vu peut le partager avec tout le monde dans la room.",
+    respondInviteFailed: "Impossible de mettre à jour cette invitation. Vérifie ta connexion et réessaie.",
     createRoom: "Créer une room",
     newRoom: "Nouvelle room",
     editRoom: "Modifier la room",

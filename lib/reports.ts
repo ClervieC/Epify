@@ -121,6 +121,20 @@ export async function fetchReports(status?: ReportStatus): Promise<Report[]> {
   return data as Report[];
 }
 
+// For lib/notifications.ts's own enrichment pass — a type === "report_
+// response" notification only carries the admin's reply (report_message),
+// not what the original report was even about, so there was nothing on
+// screen telling the reporter which of their reports a reply referred to.
+// Safe to call with ids belonging to someone else's reports — "Users view
+// their own reports" (see supabase/schema.sql) means those rows just don't
+// come back, same as any other id a non-owner has no access to.
+export async function fetchReportsByIds(ids: string[]): Promise<Report[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await supabase.from("reports").select("*").in("id", ids);
+  if (error) throw error;
+  return data as Report[];
+}
+
 export async function resolveReport(id: string, note: string | null): Promise<void> {
   const adminId = await getCurrentUserId();
   const { error } = await supabase

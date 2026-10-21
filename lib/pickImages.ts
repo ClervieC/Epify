@@ -29,12 +29,51 @@ export async function pickImages(maxCount: number): Promise<PickedImageFile[]> {
     input.type = "file";
     input.accept = "image/*";
     input.multiple = maxCount > 1;
-    input.style.display = "none";
+    // NOT display:none — iOS Safari doesn't reliably open the native file
+    // picker for a display:none input even with a real .click() call (this
+    // was still broken after switching away from expo-document-picker's
+    // dispatchEvent approach, for exactly this reason). Positioned off-
+    // screen and invisible instead, which keeps it both present in the
+    // layout (so Safari treats the click as going to a real, visible-ish
+    // element) and inert for everything else.
+    Object.assign(input.style, {
+      position: "fixed",
+      top: "-1000px",
+      left: "-1000px",
+      width: "1px",
+      height: "1px",
+      opacity: "0",
+    });
+
+    let settled = false;
+    function cleanup() {
+      window.removeEventListener("focus", onWindowFocus);
+      if (input.parentNode) document.body.removeChild(input);
+    }
+    function finish(files: PickedImageFile[]) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(files);
+    }
+
     input.addEventListener("change", () => {
       const files = input.files ? Array.from(input.files).slice(0, maxCount) : [];
-      resolve(files.map((f) => ({ uri: URL.createObjectURL(f), mimeType: f.type || "image/jpeg" })));
-      document.body.removeChild(input);
+      finish(files.map((f) => ({ uri: URL.createObjectURL(f), mimeType: f.type || "image/jpeg" })));
     });
+
+    // Safety net: iOS Safari doesn't always fire a 'change' (or 'cancel')
+    // event when the picker is dismissed without choosing a file, which
+    // would otherwise leave this promise — and the caller awaiting it —
+    // hanging forever. The window regaining focus is what reliably happens
+    // either way (picker closed, with or without a selection); if a real
+    // selection was made, the 'change' listener above has already settled
+    // this by the time focus returns, so this fires second and is a no-op.
+    function onWindowFocus() {
+      setTimeout(() => finish([]), 300);
+    }
+    window.addEventListener("focus", onWindowFocus);
+
     document.body.appendChild(input);
     input.click();
   });

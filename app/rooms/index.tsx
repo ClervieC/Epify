@@ -11,6 +11,7 @@ import { RoomFormFields, ExpiryChoice, LinkedShowChoice } from "../../components
 import { Sheet } from "../../components/Sheet";
 import { EmptyState } from "../../components/EmptyState";
 import { useGoBack } from "../../lib/useGoBack";
+import { alert } from "../../lib/alert";
 
 export default function RoomsScreen() {
   const router = useRouter();
@@ -50,22 +51,27 @@ export default function RoomsScreen() {
   );
 
   // Lets a pending invite be accepted/declined right from this list (see
-  // app/notifications.tsx for the other entry point to the same actions) —
-  // updated optimistically so the row flips to a normal member row (or
-  // disappears, on decline) without waiting for the next focus refetch.
+  // app/notifications.tsx for the other entry point to the same actions).
+  // Re-fetches the whole list from Supabase afterward rather than patching
+  // local state in place — an earlier version did the latter (flip this
+  // one member's status to "accepted" in place) and it looked right in
+  // testing, but a real device still showed the row as pending after
+  // accepting it even though the database row genuinely was 'accepted'
+  // (confirmed directly via psql) — a refetch sidesteps whatever stale-
+  // closure/render-timing issue caused that mismatch by always rendering
+  // whatever the server actually has, same as this screen already does on
+  // every normal focus.
   async function respondInvite(room: RoomWithMembers, accept: boolean) {
-    if (accept) {
-      await acceptRoomInvite(room.id);
-      setRooms((prev) =>
-        prev.map((r) =>
-          r.id === room.id
-            ? { ...r, members: r.members.map((m) => (m.user_id === myId ? { ...m, status: "accepted" as const } : m)) }
-            : r
-        )
-      );
-    } else {
-      await declineRoomInvite(room.id);
-      setRooms((prev) => prev.filter((r) => r.id !== room.id));
+    try {
+      if (accept) {
+        await acceptRoomInvite(room.id);
+      } else {
+        await declineRoomInvite(room.id);
+      }
+      const fresh = await fetchMyRooms();
+      setRooms(fresh);
+    } catch {
+      alert(t.rooms.title, t.rooms.respondInviteFailed);
     }
   }
 

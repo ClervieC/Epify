@@ -13,6 +13,14 @@ import { Avatar } from "../components/Avatar";
 import { EmptyState } from "../components/EmptyState";
 import { useGoBack } from "../lib/useGoBack";
 
+// Mirrors app/admin/index.tsx's own report-reason truncation — long enough
+// to recognize which report this was (the reporter's own words), short
+// enough not to dominate a one-line notification row.
+function truncateReason(reason: string | null): string {
+  if (!reason) return "";
+  return reason.length > 60 ? `${reason.slice(0, 60)}…` : reason;
+}
+
 export default function NotificationsScreen() {
   const router = useRouter();
   const goBack = useGoBack("/(tabs)/profile");
@@ -138,7 +146,9 @@ export default function NotificationsScreen() {
                   <Ionicons name="flag-outline" size={18} color={colors.textFaint} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.text}>{t.report.replyNotification(item.report_message ?? "")}</Text>
+                  <Text style={styles.text}>
+                    {t.report.replyNotification(truncateReason(item.reportReason), item.report_message ?? "")}
+                  </Text>
                   <Text style={styles.date}>{shortDate(item.created_at)}</Text>
                 </View>
                 {!item.read && <View style={styles.unreadDot} />}
