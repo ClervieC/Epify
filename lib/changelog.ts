@@ -15,6 +15,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.1",
+    date: "2026-10-21",
+    en: ["Debug build — temporary diagnostics to find a remaining bottom-spacing issue on iPhone."],
+    fr: ["Build de debug — diagnostic temporaire pour trouver un problème d'espace restant en bas sur iPhone."],
+  },
+  {
     version: "5.3.0",
     date: "2026-10-21",
     en: [

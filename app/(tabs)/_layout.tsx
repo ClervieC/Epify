@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tabs, useFocusEffect } from "expo-router";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { AdBanner } from "../../components/AdBanner";
@@ -38,15 +38,82 @@ function tabLabels(t: Translations): Record<string, string> {
   };
 }
 
+// TEMPORARY — same diagnostic technique that found the 5.2.3 double-padding
+// bug (real device measurements beat guessing blind again): the user
+// confirmed the gap below the tab bar on their iPhone behaves like the
+// pre-5.2.3 bug (the app's own rendered area stops short of the real
+// screen bottom), which reappeared after 5.2.4 added insets.top padding
+// elsewhere on this same screen. Remove once the real root cause is found.
+function DebugOverlay({ barBottom }: { barBottom: number | null }) {
+  const insets = useSafeAreaInsets();
+  const [data, setData] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const vv = window.visualViewport;
+    const rootEl = document.getElementById("root");
+    const rootRect = rootEl?.getBoundingClientRect();
+    setData({
+      innerHeight: String(window.innerHeight),
+      vvHeight: vv ? String(vv.height) : "n/a",
+      vvOffsetTop: vv ? String(vv.offsetTop) : "n/a",
+      screenHeight: String(window.screen.height),
+      dpr: String(window.devicePixelRatio),
+      standalone: String((navigator as any).standalone),
+      rootTop: rootRect ? String(rootRect.top) : "n/a",
+      rootBottom: rootRect ? String(rootRect.bottom) : "n/a",
+      rootHeight: rootRect ? String(rootRect.height) : "n/a",
+      barBottom: barBottom != null ? String(barBottom) : "n/a",
+      insetsTop: String(insets.top),
+      insetsBottom: String(insets.bottom),
+    });
+  }, [barBottom, insets.top, insets.bottom]);
+
+  return (
+    <View style={debugStyles.box} pointerEvents="none">
+      {Object.entries(data).map(([k, v]) => (
+        <Text key={k} style={debugStyles.text}>
+          {k}: {v}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+const debugStyles = StyleSheet.create({
+  box: {
+    position: "absolute",
+    top: 60,
+    left: 8,
+    right: 8,
+    backgroundColor: "rgba(200,0,0,0.9)",
+    padding: 8,
+    borderRadius: 6,
+    zIndex: 9999,
+  },
+  text: { color: "#fff", fontSize: 10, fontFamily: Platform.OS === "web" ? "monospace" : undefined },
+});
+
 function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAdminAlerts }: TabBarProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
   const labels = tabLabels(t);
+  const barRef = useRef<View>(null);
+  const [barBottom, setBarBottom] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const node = barRef.current as unknown as HTMLElement | null;
+    if (node?.getBoundingClientRect) {
+      setBarBottom(node.getBoundingClientRect().bottom);
+    }
+  }, []);
 
   return (
     <View>
+      <DebugOverlay barBottom={barBottom} />
       <AdBanner />
       {/* paddingBottom is the LARGER of 20 (room for the tap targets, the
           original fixed value on any screen with no home-indicator inset to
@@ -62,7 +129,7 @@ function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAd
           needed to be). insets.bottom is 0 anywhere a home indicator isn't
           in play (web tab, Android, older iPhones), where this is just 20,
           unchanged from before. */}
-      <View style={[styles.bar, { paddingBottom: Math.max(20, insets.bottom) }]}>
+      <View ref={barRef} style={[styles.bar, { paddingBottom: Math.max(20, insets.bottom) }]}>
         {state.routes.map((route, index) => {
           const focused = state.index === index;
           const color = focused ? colors.accent : colors.textFaint;
