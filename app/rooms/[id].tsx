@@ -14,11 +14,15 @@ import {
   removeMember,
   fetchGroupedRoomWatchLog,
   fetchLinkedShowProgress,
+  fetchRoomWatchlist,
+  removeFromRoomWatchlist,
   RoomWithMembers,
   RoomWatchGroup,
+  RoomWatchlistEntry,
   LinkedShowProgress,
   RoomExpiry,
 } from "../../lib/rooms";
+import { posterUrl } from "../../lib/tmdb";
 import { searchProfiles, Profile } from "../../lib/profiles";
 import { getCurrentUserId } from "../../lib/supabase";
 import { UserRow } from "../../components/UserRow";
@@ -28,6 +32,7 @@ import { Pill } from "../../components/Pill";
 import { RoomBadge } from "../../components/RoomBadge";
 import { RoomFormFields, ExpiryChoice, LinkedShowChoice } from "../../components/RoomFormFields";
 import { AddWatchTogetherSheet } from "../../components/AddWatchTogetherSheet";
+import { AddToWatchlistSheet } from "../../components/AddToWatchlistSheet";
 import { Sheet } from "../../components/Sheet";
 import { ChoiceDialog } from "../../components/ChoiceDialog";
 import { useGoBack } from "../../lib/useGoBack";
@@ -41,6 +46,8 @@ export default function RoomDetailScreen() {
   const { t, language } = useLanguage();
   const [room, setRoom] = useState<RoomWithMembers | null>(null);
   const [watchLog, setWatchLog] = useState<RoomWatchGroup[]>([]);
+  const [watchlist, setWatchlist] = useState<RoomWatchlistEntry[]>([]);
+  const [addToWatchlistOpen, setAddToWatchlistOpen] = useState(false);
   const [linkedProgress, setLinkedProgress] = useState<LinkedShowProgress | null>(null);
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [inviteQuery, setInviteQuery] = useState("");
@@ -68,11 +75,21 @@ export default function RoomDetailScreen() {
         if (data) fetchLinkedShowProgress(data).then((p) => active && setLinkedProgress(p));
       });
       fetchGroupedRoomWatchLog(id).then((data) => active && setWatchLog(data));
+      fetchRoomWatchlist(id).then((data) => active && setWatchlist(data));
       return () => {
         active = false;
       };
     }, [id])
   );
+
+  function refreshWatchlist() {
+    fetchRoomWatchlist(id).then(setWatchlist);
+  }
+
+  async function handleRemoveFromWatchlist(entryId: string) {
+    setWatchlist((prev) => prev.filter((e) => e.id !== entryId));
+    await removeFromRoomWatchlist(entryId).catch(() => refreshWatchlist());
+  }
 
   function onInviteQueryChange(text: string) {
     setInviteQuery(text);
@@ -253,6 +270,64 @@ export default function RoomDetailScreen() {
               })}
             </View>
           )}
+
+          <View style={styles.card}>
+            <View style={styles.sectionLabelRow}>
+              <Text style={styles.sectionLabel}>{t.rooms.wantToWatch}</Text>
+              <Pressable
+                onPress={() => setAddToWatchlistOpen(true)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t.rooms.addToWatchlistTitle}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+              </Pressable>
+            </View>
+            {watchlist.length === 0 ? (
+              <Text style={styles.emptyText}>{t.rooms.noWantToWatch}</Text>
+            ) : (
+              watchlist.map((entry) => {
+                const image =
+                  entry.content_type === "movie"
+                    ? posterUrl(entry.image_url, "w200")
+                    : entry.image_url;
+                return (
+                  <Pressable
+                    key={entry.id}
+                    style={styles.watchRow}
+                    onPress={() =>
+                      router.push(
+                        entry.content_type === "show" ? `/show/${entry.tvmaze_show_id}` : `/movie/tmdb/${entry.tmdb_id}`,
+                      )
+                    }
+                  >
+                    {image ? (
+                      <Image source={{ uri: image }} style={styles.watchThumb} />
+                    ) : (
+                      <View style={[styles.watchThumb, styles.watchThumbPlaceholder]}>
+                        <Ionicons
+                          name={entry.content_type === "show" ? "tv-outline" : "film-outline"}
+                          size={18}
+                          color={colors.textFaint}
+                        />
+                      </View>
+                    )}
+                    <Text style={styles.watchTitle} numberOfLines={1}>
+                      {entry.title}
+                    </Text>
+                    <Pressable
+                      onPress={() => handleRemoveFromWatchlist(entry.id)}
+                      hitSlop={10}
+                      accessibilityRole="button"
+                      accessibilityLabel={t.rooms.removeFromWatchlist}
+                    >
+                      <Ionicons name="close-circle-outline" size={20} color={colors.textFaint} />
+                    </Pressable>
+                  </Pressable>
+                );
+              })
+            )}
+          </View>
 
           <View style={styles.card}>
             <View style={styles.sectionLabelRow}>
@@ -460,6 +535,10 @@ export default function RoomDetailScreen() {
           onAdded={refreshAfterAdd}
           onClose={() => setAddOpen(false)}
         />
+      </Sheet>
+
+      <Sheet visible={addToWatchlistOpen} onClose={() => setAddToWatchlistOpen(false)}>
+        <AddToWatchlistSheet roomId={id} onAdded={refreshWatchlist} onClose={() => setAddToWatchlistOpen(false)} />
       </Sheet>
     </View>
   );

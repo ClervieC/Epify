@@ -2023,3 +2023,61 @@ create policy "tmdb_tvmaze_resolved_upsert_authenticated"
 create policy "tmdb_tvmaze_resolved_update_authenticated"
   on public.tmdb_tvmaze_resolved for update
   using (auth.role() = 'authenticated');
+
+-- ============================================================
+-- Room watchlist — "we want to watch this together" (not yet started, not
+-- an episode-level log like room_watch_log above). Lets a room build up a
+-- shared queue of shows/movies members intend to watch together, distinct
+-- from both room_watch_log (what's already been watched) and rooms.
+-- linked_tvmaze_show_id (a single show the room is explicitly tracking
+-- progress on). Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.room_watchlist (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.rooms (id) on delete cascade,
+  added_by uuid not null references auth.users (id) on delete cascade,
+  content_type text not null check (content_type in ('show', 'movie')),
+  tvmaze_show_id integer,
+  tmdb_id integer,
+  title text not null,
+  image_url text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.room_watchlist enable row level security;
+
+create policy "Members view their room's watchlist"
+  on public.room_watchlist
+  for select
+  using (public.is_room_member(room_id));
+
+create policy "Accepted members add to their room's watchlist"
+  on public.room_watchlist
+  for insert
+  with check (
+    auth.uid() = added_by
+    and exists (
+      select 1 from public.room_members rm
+      where rm.room_id = room_watchlist.room_id and rm.user_id = auth.uid() and rm.status = 'accepted'
+    )
+  );
+
+-- Whoever added an entry can take it back off, same as the owner managing
+-- anything else in their room.
+create policy "Adder or owner removes a watchlist entry"
+  on public.room_watchlist
+  for delete
+  using (
+    auth.uid() = added_by
+    or auth.uid() = (select owner_id from public.rooms r where r.id = room_id)
+  );
+
+-- Partial, not a plain unique(room_id, tvmaze_show_id, tmdb_id) — the two
+-- id columns are only ever one-set-one-null depending on content_type, and
+-- a plain multi-column unique constraint doesn't dedupe nulls (NULL is
+-- never equal to NULL), so two movies would never have actually conflicted
+-- on a bare (room_id, tvmaze_show_id, tmdb_id) constraint.
+create unique index if not exists room_watchlist_show_unique
+  on public.room_watchlist (room_id, tvmaze_show_id) where content_type = 'show';
+create unique index if not exists room_watchlist_movie_unique
+  on public.room_watchlist (room_id, tmdb_id) where content_type = 'movie';

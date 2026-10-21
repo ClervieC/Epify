@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.7",
+    date: "2026-10-21",
+    en: [
+      "Rooms can now queue up shows and movies they want to watch together before anyone's actually started — a new \"Want to watch together\" list, separate from what's already been watched.",
+    ],
+    fr: [
+      "Les rooms peuvent maintenant mettre en attente des séries et films qu'elles veulent regarder ensemble avant même d'avoir commencé — une nouvelle liste \"À regarder ensemble\", séparée de ce qui a déjà été vu.",
+    ],
+  },
+  {
     version: "5.3.6",
     date: "2026-10-21",
     en: [

@@ -1,8 +1,8 @@
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchProfiles, Profile } from "./profiles";
-import { getShow, getShowEpisodes } from "./tvmaze";
+import { getShow, getShowEpisodes, TVMazeShow } from "./tvmaze";
 import { getCachedShow } from "./showDataCache";
-import { posterUrl } from "./tmdb";
+import { posterUrl, TMDBSearchResult } from "./tmdb";
 import { createShortCache } from "./shortCache";
 
 export interface Room {
@@ -426,4 +426,75 @@ export async function fetchGroupedRoomWatchLog(roomId: string): Promise<RoomWatc
     }
   }
   return [...groups.values()].sort((a, b) => (a.lastWatchedAt < b.lastWatchedAt ? 1 : -1));
+}
+
+// "We want to watch this together" — a lightweight shared queue, distinct
+// from room_watch_log (what's already been watched together) and
+// linked_tvmaze_show_id (a single show the room explicitly tracks
+// progress on, set at creation/edit time). Any accepted member can add or
+// remove their own entries; the owner can remove anyone's (see the RLS
+// policies in supabase/schema.sql).
+export interface RoomWatchlistEntry {
+  id: string;
+  room_id: string;
+  added_by: string;
+  content_type: "show" | "movie";
+  tvmaze_show_id: number | null;
+  tmdb_id: number | null;
+  title: string;
+  image_url: string | null;
+  created_at: string;
+}
+
+export async function fetchRoomWatchlist(roomId: string): Promise<RoomWatchlistEntry[]> {
+  const { data, error } = await supabase
+    .from("room_watchlist")
+    .select("*")
+    .eq("room_id", roomId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data as RoomWatchlistEntry[];
+}
+
+// Plain insert, not upsert — the uniqueness constraints on this table
+// (room_watchlist_show_unique/_movie_unique in supabase/schema.sql) are
+// *partial* indexes (content_type = 'show'/'movie'), and Postgres only
+// matches an upsert's ON CONFLICT target against a partial index when the
+// same predicate is repeated there too, which PostgREST's onConflict
+// option has no way to express — it silently produces a plain ON CONFLICT
+// (room_id, tvmaze_show_id) that matches no real constraint and fails.
+// Catching the resulting unique-violation (23505) here instead — already
+// on the list, nothing to do — gets the same "add or no-op" behavior a
+// working upsert would have.
+export async function addShowToRoomWatchlist(roomId: string, show: TVMazeShow): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+  const { error } = await supabase.from("room_watchlist").insert({
+    room_id: roomId,
+    added_by: userId,
+    content_type: "show",
+    tvmaze_show_id: show.id,
+    title: show.name,
+    image_url: show.image?.medium ?? null,
+  });
+  if (error && error.code !== "23505") throw error;
+}
+
+export async function addMovieToRoomWatchlist(roomId: string, movie: TMDBSearchResult): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+  const { error } = await supabase.from("room_watchlist").insert({
+    room_id: roomId,
+    added_by: userId,
+    content_type: "movie",
+    tmdb_id: movie.id,
+    title: movie.title,
+    image_url: movie.poster_path,
+  });
+  if (error && error.code !== "23505") throw error;
+}
+
+export async function removeFromRoomWatchlist(entryId: string): Promise<void> {
+  const { error } = await supabase.from("room_watchlist").delete().eq("id", entryId);
+  if (error) throw error;
 }
