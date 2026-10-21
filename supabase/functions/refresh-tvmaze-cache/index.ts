@@ -16,6 +16,13 @@
 // lib/tvmaze.ts's writeTvmazeSharedCache). This job's the backstop for
 // shows nobody's opened again since they aired a new episode.
 //
+// Also refreshes public.tmdb_tvmaze_resolved (Explore's "already in my
+// list" TMDB->TVmaze id cache, see lib/tmdb.ts's fetchResolvedTvmazeShows)
+// — a show's TVmaze *identity* there never changes once resolved, but the
+// snapshotted name/image/status can drift (a rename, a poster refresh, a
+// status change once a show ends), so this is the same backstop for that
+// table instead of a separate cron entry for it.
+//
 // Earlier attempt & why this one's different: supabase/schema.sql and this
 // function's own former header both documented a prior tvmaze_show_cache/
 // tvmaze_episodes_cache (and later a generic tvmaze_api_cache) being
@@ -37,9 +44,11 @@
 // on demand.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+type SupabaseAdmin = ReturnType<typeof createClient>;
+
 const TVMAZE_BASE_URL = "https://api.tvmaze.com";
 // TVmaze's public rate limit is ~20 req/10s per caller IP. This job issues
-// two requests per show (info + episodes) with no interactive user
+// up to two requests per show (info + episodes) with no interactive user
 // waiting, so it can afford to pace itself well under that ceiling rather
 // than racing it — a slow, reliable nightly pass beats a fast one that
 // starts drawing 429s partway through.
@@ -49,19 +58,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchAndCache(admin: ReturnType<typeof createClient>, path: string): Promise<"ok" | string> {
+async function fetchTvmazePayload(path: string): Promise<unknown | null> {
   try {
     const res = await fetch(`${TVMAZE_BASE_URL}${path}`);
     if (!res.ok) throw new Error(`TVmaze responded ${res.status}`);
-    const payload = await res.json();
-    const { error } = await admin
-      .from("tvmaze_api_cache")
-      .upsert({ path, payload, fetched_at: new Date().toISOString() });
-    if (error) throw error;
-    return "ok";
-  } catch (err) {
-    return `error: ${err instanceof Error ? err.message : String(err)}`;
+    return await res.json();
+  } catch {
+    return null;
   }
+}
+
+async function upsertApiCache(admin: SupabaseAdmin, path: string, payload: unknown): Promise<"ok" | string> {
+  const { error } = await admin.from("tvmaze_api_cache").upsert({ path, payload, fetched_at: new Date().toISOString() });
+  return error ? `error: ${error.message}` : "ok";
 }
 
 Deno.serve(async (req: Request) => {
@@ -101,24 +110,68 @@ Deno.serve(async (req: Request) => {
     });
   }
   const showIdPattern = /^\/shows\/(\d+)$/;
-  const showIds: number[] = [];
+  const trackedShowIds = new Set<number>();
   for (const row of cachedShowRows ?? []) {
-    const match = showIdPattern.exec(row.path);
+    const match = showIdPattern.exec(row.path as string);
     if (!match) continue; // skips this same show's own .../episodes row
     const status = (row.payload as { status?: string } | null)?.status;
     if (status === "Ended") continue;
-    showIds.push(Number(match[1]));
+    trackedShowIds.add(Number(match[1]));
   }
+
+  // Same "skip Ended" shortcut as above — a finished show's name/image
+  // essentially never changes again either, so there's nothing worth
+  // re-fetching daily forever.
+  const { data: resolvedRows, error: resolvedError } = await admin
+    .from("tmdb_tvmaze_resolved")
+    .select("tmdb_tv_id, tvmaze_show");
+  const tmdbIdsByTvmazeId = new Map<number, number[]>();
+  if (!resolvedError) {
+    for (const row of resolvedRows ?? []) {
+      const show = row.tvmaze_show as { id?: number; status?: string } | null;
+      if (!show?.id || show.status === "Ended") continue;
+      const list = tmdbIdsByTvmazeId.get(show.id) ?? [];
+      list.push(row.tmdb_tv_id as number);
+      tmdbIdsByTvmazeId.set(show.id, list);
+    }
+  }
+
+  // Union so a show present in both sources (common — a popular show is
+  // likely both someone's tracked show and one of Explore's discover-
+  // category cards) only costs one /shows/{id} fetch, not two.
+  const allShowIds = new Set<number>([...trackedShowIds, ...tmdbIdsByTvmazeId.keys()]);
 
   const results: Record<string, string> = {};
-  for (const id of showIds) {
-    results[`/shows/${id}`] = await fetchAndCache(admin, `/shows/${id}`);
+  for (const id of allShowIds) {
+    const payload = await fetchTvmazePayload(`/shows/${id}`);
+    if (payload) {
+      results[`/shows/${id}`] = await upsertApiCache(admin, `/shows/${id}`, payload);
+
+      const tmdbIds = tmdbIdsByTvmazeId.get(id);
+      if (tmdbIds && tmdbIds.length > 0) {
+        const { error } = await admin
+          .from("tmdb_tvmaze_resolved")
+          .update({ tvmaze_show: payload, resolved_at: new Date().toISOString() })
+          .in("tmdb_tv_id", tmdbIds);
+        results[`tmdb_tvmaze_resolved(tvmaze:${id})`] = error ? `error: ${error.message}` : "ok";
+      }
+    } else {
+      results[`/shows/${id}`] = "error: fetch failed";
+    }
     await sleep(REQUEST_DELAY_MS);
-    results[`/shows/${id}/episodes`] = await fetchAndCache(admin, `/shows/${id}/episodes`);
-    await sleep(REQUEST_DELAY_MS);
+
+    // Episodes are only relevant to tvmaze_api_cache (tmdb_tvmaze_resolved
+    // doesn't store them), so only fetched for shows that came from there.
+    if (trackedShowIds.has(id)) {
+      const episodes = await fetchTvmazePayload(`/shows/${id}/episodes`);
+      results[`/shows/${id}/episodes`] = episodes
+        ? await upsertApiCache(admin, `/shows/${id}/episodes`, episodes)
+        : "error: fetch failed";
+      await sleep(REQUEST_DELAY_MS);
+    }
   }
 
-  return new Response(JSON.stringify({ showCount: showIds.length, results }), {
+  return new Response(JSON.stringify({ showCount: allShowIds.size, results }), {
     headers: { "Content-Type": "application/json" },
   });
 });
