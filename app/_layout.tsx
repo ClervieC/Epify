@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { View, Text, StyleSheet, Platform } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
@@ -48,6 +48,68 @@ Sentry.init({
 // is ready to take over. Called eagerly at module scope — per Expo's
 // guidance — so it can't lose the race against the native auto-hide.
 SplashScreen.preventAutoHideAsync();
+
+// TEMPORARY — same diagnostic technique that found the 5.2.3 double-padding
+// bug (real device measurements beat guessing blind again): the bottom gap
+// on iPhone standalone is back to behaving like the pre-5.2.3 bug (the
+// app's own rendered area stops short of the real screen bottom), which
+// reappeared after 5.2.4 added insets.top padding. Rendered here (a direct
+// sibling of the root Stack, not nested inside the bottom-docked tab bar
+// like the first attempt at this overlay — that positioned "top: 60"
+// relative to the tab bar's own already-bottom-pinned container, which is
+// why it showed up cut off at the screen's bottom edge instead of near the
+// top). Remove once the real root cause is found.
+function DebugOverlay() {
+  const insets = useSafeAreaInsets();
+  const [data, setData] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const vv = window.visualViewport;
+    const rootEl = document.getElementById("root");
+    const rootRect = rootEl?.getBoundingClientRect();
+    const barEl = document.getElementById("debug-tab-bar");
+    const barRect = barEl?.getBoundingClientRect();
+    setData({
+      innerHeight: String(window.innerHeight),
+      vvHeight: vv ? String(vv.height) : "n/a",
+      vvOffsetTop: vv ? String(vv.offsetTop) : "n/a",
+      screenHeight: String(window.screen.height),
+      dpr: String(window.devicePixelRatio),
+      standalone: String((navigator as any).standalone),
+      rootTop: rootRect ? String(rootRect.top) : "n/a",
+      rootBottom: rootRect ? String(rootRect.bottom) : "n/a",
+      rootHeight: rootRect ? String(rootRect.height) : "n/a",
+      barBottom: barRect ? String(barRect.bottom) : "n/a",
+      insetsTop: String(insets.top),
+      insetsBottom: String(insets.bottom),
+    });
+  }, [insets.top, insets.bottom]);
+
+  return (
+    <View style={debugStyles.box} pointerEvents="none">
+      {Object.entries(data).map(([k, v]) => (
+        <Text key={k} style={debugStyles.text}>
+          {k}: {v}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+const debugStyles = StyleSheet.create({
+  box: {
+    position: "absolute",
+    top: 55,
+    left: 8,
+    right: 8,
+    backgroundColor: "rgba(200,0,0,0.9)",
+    padding: 8,
+    borderRadius: 6,
+    zIndex: 9999,
+  },
+  text: { color: "#fff", fontSize: 10, fontFamily: Platform.OS === "web" ? "monospace" : undefined },
+});
 
 function RootNavigation() {
   const { session, loading, dataReady, setDataReady, needsOnboarding } = useAuth();
@@ -155,6 +217,7 @@ function RootNavigation() {
         <Stack.Screen name="streaks" options={{ headerShown: false }} />
       </Stack>
       <AppSplash visible={showSplash} />
+      <DebugOverlay />
       <OfflineBanner />
       {/* Deliberately NOT mounted on the Shows tab (where NewVersionToast
           lives) — that tab/screen actually mounts several times in quick

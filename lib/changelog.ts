@@ -15,6 +15,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.2",
+    date: "2026-10-21",
+    en: ["Debug build — moved the temporary diagnostic overlay (5.3.1 placed it incorrectly, cut off at the bottom of the screen)."],
+    fr: ["Build de debug — déplacement de l'overlay de diagnostic temporaire (la 5.3.1 le plaçait mal, coupé en bas de l'écran)."],
+  },
+  {
     version: "5.3.1",
     date: "2026-10-21",
     en: ["Debug build — temporary diagnostics to find a remaining bottom-spacing issue on iPhone."],
