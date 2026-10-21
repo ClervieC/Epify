@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
 import { View, Text, TextInput, ScrollView, Pressable, Image, StyleSheet } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useColors, radius, type, Colors } from "../../lib/theme";
+import { useColors, radius, type, dropShadow, hueForTitle, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import {
   fetchRoom,
@@ -22,6 +23,8 @@ import { searchProfiles, Profile } from "../../lib/profiles";
 import { getCurrentUserId } from "../../lib/supabase";
 import { UserRow } from "../../components/UserRow";
 import { Avatar } from "../../components/Avatar";
+import { AvatarStack } from "../../components/AvatarStack";
+import { Pill } from "../../components/Pill";
 import { RoomBadge } from "../../components/RoomBadge";
 import { RoomFormFields, ExpiryChoice, LinkedShowChoice } from "../../components/RoomFormFields";
 import { AddWatchTogetherSheet } from "../../components/AddWatchTogetherSheet";
@@ -171,18 +174,15 @@ export default function RoomDetailScreen() {
       )}`
     : t.rooms.expiryNone;
 
+  const heroHue = colors[hueForTitle(room.name)];
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <View style={styles.titleRow}>
-          <RoomBadge name={room.name} emoji={room.emoji} size={28} />
-          <Text style={styles.title} numberOfLines={1}>
-            {room.name}
-          </Text>
-        </View>
+        <View style={{ flex: 1 }} />
         {isOwner ? (
           <Pressable onPress={openEdit} hitSlop={10} accessibilityRole="button" accessibilityLabel={t.rooms.editRoom}>
             <Ionicons name="pencil-outline" size={20} color={colors.text} />
@@ -193,11 +193,30 @@ export default function RoomDetailScreen() {
       </View>
 
       <ScrollView>
-        <View style={styles.body}>
-          <Text style={styles.expiryText}>{expiryText}</Text>
+        <View style={styles.hero}>
+          <LinearGradient colors={[`${heroHue}33`, "transparent"]} style={styles.heroGlow} pointerEvents="none" />
+          <RoomBadge name={room.name} emoji={room.emoji} size={72} />
+          <Text style={styles.heroName} numberOfLines={2}>
+            {room.name}
+          </Text>
+          <View style={styles.heroMetaRow}>
+            {accepted.length > 0 && (
+              <AvatarStack
+                members={accepted.map((m) => ({ name: m.profile?.username, imageUri: m.profile?.avatar_url }))}
+                size="sm"
+                max={5}
+                ringColor={colors.background}
+              />
+            )}
+            <Pill size="sm" tone={expired ? "neutral" : "accent"}>
+              {expiryText}
+            </Pill>
+          </View>
+        </View>
 
+        <View style={styles.body}>
           {linkedProgress && (
-            <>
+            <View style={styles.card}>
               <Text style={styles.sectionLabel}>{t.rooms.currentlyWatching}</Text>
               <Pressable style={styles.watchRow} onPress={() => router.push(`/show/${linkedProgress.show.id}`)}>
                 {linkedProgress.show.imageUrl ? (
@@ -211,59 +230,72 @@ export default function RoomDetailScreen() {
                   {linkedProgress.show.name}
                 </Text>
               </Pressable>
-              {linkedProgress.memberProgress.map((m) => (
-                <View key={m.user_id} style={styles.progressRow}>
-                  <Avatar name={m.username} imageUri={m.avatar_url} size="sm" />
-                  <Text style={styles.progressName} numberOfLines={1}>
-                    {m.username}
-                  </Text>
-                  <Text style={styles.progressCount}>
-                    {m.watchedCount}/{linkedProgress.totalEpisodes}
-                  </Text>
-                </View>
-              ))}
-            </>
-          )}
-
-          <View style={styles.sectionLabelRow}>
-            <Text style={styles.sectionLabel}>{t.rooms.watchedTogether}</Text>
-            <Pressable
-              onPress={() => setAddOpen(true)}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={t.rooms.addWatchedTitle}
-            >
-              <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
-            </Pressable>
-          </View>
-          {watchLog.length === 0 ? (
-            <Text style={styles.emptyText}>{t.rooms.noWatchedTogether}</Text>
-          ) : (
-            watchLog.map((g) => (
-              <Pressable
-                key={g.key}
-                style={styles.watchRow}
-                onPress={() => router.push(g.kind === "show" ? `/show/${g.tvmazeShowId}` : `/movie/tmdb/${g.tmdbId}`)}
-              >
-                {g.imageUrl ? (
-                  <Image source={{ uri: g.imageUrl }} style={styles.watchThumb} />
-                ) : (
-                  <View style={[styles.watchThumb, styles.watchThumbPlaceholder]}>
-                    <Ionicons name={g.kind === "show" ? "tv-outline" : "film-outline"} size={18} color={colors.textFaint} />
+              {linkedProgress.memberProgress.map((m) => {
+                const pct = linkedProgress.totalEpisodes > 0 ? Math.min(100, (m.watchedCount / linkedProgress.totalEpisodes) * 100) : 0;
+                return (
+                  <View key={m.user_id} style={styles.progressRow}>
+                    <Avatar name={m.username} imageUri={m.avatar_url} size="sm" />
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.progressNameRow}>
+                        <Text style={styles.progressName} numberOfLines={1}>
+                          {m.username}
+                        </Text>
+                        <Text style={styles.progressCount}>
+                          {m.watchedCount}/{linkedProgress.totalEpisodes}
+                        </Text>
+                      </View>
+                      <View style={styles.progressTrack}>
+                        <View style={[styles.progressFill, { width: `${pct}%` }]} />
+                      </View>
+                    </View>
                   </View>
-                )}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.watchTitle} numberOfLines={1}>
-                    {g.title}
-                  </Text>
-                  <Text style={styles.watchSubtitle}>
-                    {g.kind === "show" ? t.rooms.episodesTogetherCount(g.episodeCount) : t.rooms.movieTogetherCount(g.episodeCount)}
-                  </Text>
-                </View>
-              </Pressable>
-            ))
+                );
+              })}
+            </View>
           )}
 
+          <View style={styles.card}>
+            <View style={styles.sectionLabelRow}>
+              <Text style={styles.sectionLabel}>{t.rooms.watchedTogether}</Text>
+              <Pressable
+                onPress={() => setAddOpen(true)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t.rooms.addWatchedTitle}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+              </Pressable>
+            </View>
+            {watchLog.length === 0 ? (
+              <Text style={styles.emptyText}>{t.rooms.noWatchedTogether}</Text>
+            ) : (
+              watchLog.map((g) => (
+                <Pressable
+                  key={g.key}
+                  style={styles.watchRow}
+                  onPress={() => router.push(g.kind === "show" ? `/show/${g.tvmazeShowId}` : `/movie/tmdb/${g.tmdbId}`)}
+                >
+                  {g.imageUrl ? (
+                    <Image source={{ uri: g.imageUrl }} style={styles.watchThumb} />
+                  ) : (
+                    <View style={[styles.watchThumb, styles.watchThumbPlaceholder]}>
+                      <Ionicons name={g.kind === "show" ? "tv-outline" : "film-outline"} size={18} color={colors.textFaint} />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.watchTitle} numberOfLines={1}>
+                      {g.title}
+                    </Text>
+                    <Text style={styles.watchSubtitle}>
+                      {g.kind === "show" ? t.rooms.episodesTogetherCount(g.episodeCount) : t.rooms.movieTogetherCount(g.episodeCount)}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))
+            )}
+          </View>
+
+          <View style={styles.card}>
             <Text style={styles.sectionLabel}>{t.rooms.members}</Text>
             {accepted.map((m) => (
               <UserRow
@@ -272,7 +304,9 @@ export default function RoomDetailScreen() {
                 imageUri={m.profile?.avatar_url}
                 onPress={() => router.push({ pathname: "/users/[id]", params: { id: m.user_id } })}
                 trailing={
-                  isOwner && m.user_id !== myUserId ? (
+                  m.user_id === room.owner_id ? (
+                    <Ionicons name="ribbon-outline" size={17} color={colors.accent} />
+                  ) : isOwner ? (
                     <Pressable
                       onPress={() => setRemoveTarget({ user_id: m.user_id, username: m.profile?.username ?? "?" })}
                       hitSlop={10}
@@ -288,7 +322,7 @@ export default function RoomDetailScreen() {
 
             {pending.length > 0 && (
               <>
-                <Text style={styles.sectionLabel}>{t.rooms.pendingInvites}</Text>
+                <Text style={[styles.sectionLabel, styles.sectionLabelInner]}>{t.rooms.pendingInvites}</Text>
                 {pending.map((m) => (
                   <UserRow
                     key={m.user_id}
@@ -303,7 +337,7 @@ export default function RoomDetailScreen() {
 
             {isOwner && (
               <>
-                <Text style={styles.sectionLabel}>{t.rooms.invite}</Text>
+                <Text style={[styles.sectionLabel, styles.sectionLabelInner]}>{t.rooms.invite}</Text>
                 <View style={styles.searchBar}>
                   <Ionicons name="search" size={18} color={colors.textFaint} />
                   <TextInput
@@ -338,16 +372,17 @@ export default function RoomDetailScreen() {
                 ))}
               </>
             )}
-
-            <Pressable
-              style={styles.dangerRow}
-              onPress={() => (isOwner ? setDeleteConfirm(true) : setLeaveConfirm(true))}
-              accessibilityRole="button"
-            >
-              <Ionicons name="exit-outline" size={18} color={colors.red} />
-              <Text style={styles.dangerText}>{isOwner ? t.rooms.deleteRoom : t.rooms.leaveRoom}</Text>
-            </Pressable>
           </View>
+
+          <Pressable
+            style={styles.dangerRow}
+            onPress={() => (isOwner ? setDeleteConfirm(true) : setLeaveConfirm(true))}
+            accessibilityRole="button"
+          >
+            <Ionicons name="exit-outline" size={18} color={colors.red} />
+            <Text style={styles.dangerText}>{isOwner ? t.rooms.deleteRoom : t.rooms.leaveRoom}</Text>
+          </Pressable>
+        </View>
       </ScrollView>
 
       <ChoiceDialog
@@ -439,13 +474,21 @@ function createStyles(colors: Colors) {
       justifyContent: "space-between",
       paddingHorizontal: 16,
       paddingTop: 16,
-      paddingBottom: 12,
+      paddingBottom: 4,
     },
-    titleRow: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
-    title: { flexShrink: 1, textAlign: "center", fontSize: type.title, fontWeight: "800", color: colors.text },
-    body: { paddingHorizontal: 16, paddingBottom: 32 },
-    expiryText: { fontSize: type.caption, color: colors.textMuted, marginBottom: 16 },
-    sectionLabel: { fontWeight: "800", fontSize: type.caption, color: colors.textMuted, marginTop: 16, marginBottom: 4 },
+    hero: { alignItems: "center", paddingTop: 8, paddingBottom: 20, paddingHorizontal: 16 },
+    heroGlow: { position: "absolute", top: 0, left: 0, right: 0, height: 160 },
+    heroName: { marginTop: 12, fontSize: type.title, fontWeight: "800", color: colors.text, textAlign: "center" },
+    heroMetaRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
+    body: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: 14,
+      ...dropShadow({ opacity: 0.06, radius: 10, offsetY: 3, elevation: 2 }),
+    },
+    sectionLabel: { fontWeight: "800", fontSize: type.caption, color: colors.textMuted, marginBottom: 4 },
+    sectionLabelInner: { marginTop: 14 },
     sectionLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
     emptyText: { fontSize: type.caption, color: colors.textFaint, paddingVertical: 4 },
     watchRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8 },
@@ -454,8 +497,11 @@ function createStyles(colors: Colors) {
     watchTitle: { fontWeight: "700", fontSize: type.body, color: colors.text },
     watchSubtitle: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
     progressRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
+    progressNameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
     progressName: { flex: 1, fontWeight: "700", fontSize: type.body, color: colors.text },
     progressCount: { fontSize: type.caption, fontWeight: "700", color: colors.textMuted },
+    progressTrack: { height: 5, borderRadius: radius.pill, backgroundColor: colors.pillBg, marginTop: 5, overflow: "hidden" },
+    progressFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.accent },
     searchBar: {
       flexDirection: "row",
       alignItems: "center",

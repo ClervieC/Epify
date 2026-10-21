@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.6",
+    date: "2026-10-21",
+    en: [
+      "Redesigned Rooms — cards instead of flat rows in the list, a colored header on the room page, overlapping member avatars instead of a bare count, and progress bars for \"currently watching.\"",
+    ],
+    fr: [
+      "Refonte visuelle des rooms — des cartes au lieu de lignes plates dans la liste, un en-tête coloré sur la page d'une room, des avatars de membres superposés au lieu d'un simple nombre, et des barres de progression pour \"en cours de visionnage.\"",
+    ],
+  },
+  {
     version: "5.3.5",
     date: "2026-10-21",
     en: [

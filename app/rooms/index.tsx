@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, FlatList, Pressable, StyleSheet } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useColors, radius, type, Colors } from "../../lib/theme";
+import { useColors, radius, type, dropShadow, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { fetchMyRooms, createRoom, acceptRoomInvite, declineRoomInvite, RoomWithMembers, RoomExpiry } from "../../lib/rooms";
 import { getCurrentUserId } from "../../lib/supabase";
 import { RoomBadge } from "../../components/RoomBadge";
+import { AvatarStack } from "../../components/AvatarStack";
+import { Pill } from "../../components/Pill";
 import { RoomFormFields, ExpiryChoice, LinkedShowChoice } from "../../components/RoomFormFields";
 import { Sheet } from "../../components/Sheet";
 import { EmptyState } from "../../components/EmptyState";
@@ -114,6 +117,7 @@ export default function RoomsScreen() {
 
   return (
     <View style={styles.container}>
+      <LinearGradient colors={[colors.headerGlow, "transparent"]} style={styles.headerGlow} pointerEvents="none" />
       <View style={styles.header}>
         <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
@@ -128,7 +132,8 @@ export default function RoomsScreen() {
         <FlatList
           data={rooms}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={rooms.length === 0 ? styles.emptyContainer : undefined}
+          contentContainerStyle={rooms.length === 0 ? styles.emptyContainer : styles.listContent}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           renderItem={({ item }) => {
             const members = item.members.filter((m) => m.status === "accepted");
             const expiry = expiryLabel(item);
@@ -136,47 +141,57 @@ export default function RoomsScreen() {
 
             if (myMembership?.status === "invited") {
               return (
-                <View style={styles.row}>
-                  <RoomBadge name={item.name} emoji={item.emoji} />
+                <View style={[styles.card, styles.cardInvited]}>
+                  <RoomBadge name={item.name} emoji={item.emoji} size={48} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.roomName} numberOfLines={1}>
                       {item.name}
                     </Text>
-                    <Text style={styles.roomSubtitle} numberOfLines={1}>
+                    <Pill size="sm" tone="accent" style={styles.invitedPill}>
                       {t.rooms.invited}
-                    </Text>
+                    </Pill>
                   </View>
-                  <Pressable
-                    style={styles.inviteDecline}
-                    onPress={() => respondInvite(item, false)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t.rooms.decline}
-                  >
-                    <Text style={styles.inviteDeclineText}>{t.rooms.decline}</Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.inviteAccept}
-                    onPress={() => respondInvite(item, true)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t.rooms.accept}
-                  >
-                    <Text style={styles.inviteAcceptText}>{t.rooms.accept}</Text>
-                  </Pressable>
+                  <View style={styles.inviteActions}>
+                    <Pressable
+                      style={styles.inviteDecline}
+                      onPress={() => respondInvite(item, false)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t.rooms.decline}
+                    >
+                      <Text style={styles.inviteDeclineText}>{t.rooms.decline}</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.inviteAccept}
+                      onPress={() => respondInvite(item, true)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t.rooms.accept}
+                    >
+                      <Text style={styles.inviteAcceptText}>{t.rooms.accept}</Text>
+                    </Pressable>
+                  </View>
                 </View>
               );
             }
 
             return (
-              <Pressable style={styles.row} onPress={() => router.push(`/rooms/${item.id}`)}>
-                <RoomBadge name={item.name} emoji={item.emoji} />
+              <Pressable style={styles.card} onPress={() => router.push(`/rooms/${item.id}`)}>
+                <RoomBadge name={item.name} emoji={item.emoji} size={48} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.roomName} numberOfLines={1}>
                     {item.name}
                   </Text>
-                  <Text style={styles.roomSubtitle} numberOfLines={1}>
-                    {t.rooms.members} · {members.length}
-                    {expiry ? ` · ${expiry}` : ""}
-                  </Text>
+                  <View style={styles.metaRow}>
+                    <AvatarStack
+                      members={members.map((m) => ({ name: m.profile?.username, imageUri: m.profile?.avatar_url }))}
+                      size="sm"
+                      max={3}
+                    />
+                    {expiry && (
+                      <Pill size="sm" tone="neutral">
+                        {expiry}
+                      </Pill>
+                    )}
+                  </View>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
               </Pressable>
@@ -229,6 +244,14 @@ export default function RoomsScreen() {
 function createStyles(colors: Colors) {
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
+    headerGlow: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 140,
+      pointerEvents: "none",
+    },
     header: {
       flexDirection: "row",
       alignItems: "center",
@@ -239,18 +262,24 @@ function createStyles(colors: Colors) {
     },
     title: { fontSize: type.title, fontWeight: "800", color: colors.text },
     emptyContainer: { flexGrow: 1 },
-    row: {
+    listContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 },
+    card: {
       flexDirection: "row",
       alignItems: "center",
       gap: 12,
-      paddingVertical: 12,
-      paddingHorizontal: 16,
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: 14,
+      ...dropShadow({ opacity: 0.06, radius: 10, offsetY: 3, elevation: 2 }),
     },
-    roomName: { fontWeight: "800", fontSize: type.body, color: colors.text },
-    roomSubtitle: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
-    inviteDecline: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.pillBg },
+    cardInvited: { backgroundColor: colors.accentSoft },
+    roomName: { fontWeight: "800", fontSize: type.subtitle, color: colors.text },
+    metaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
+    invitedPill: { marginTop: 6 },
+    inviteActions: { flexDirection: "row", gap: 6 },
+    inviteDecline: { paddingVertical: 7, paddingHorizontal: 11, borderRadius: radius.pill, backgroundColor: colors.surface },
     inviteDeclineText: { fontSize: type.caption, fontWeight: "700", color: colors.textMuted },
-    inviteAccept: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.accent },
+    inviteAccept: { paddingVertical: 7, paddingHorizontal: 11, borderRadius: radius.pill, backgroundColor: colors.accent },
     inviteAcceptText: { fontSize: type.caption, fontWeight: "700", color: colors.onAccent },
     sheetTitle: { textAlign: "center", fontWeight: "800", fontSize: 13, color: colors.textMuted, letterSpacing: 0.5, marginBottom: 16 },
     createBtn: {
