@@ -21,7 +21,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useMountIn } from "../../lib/animations";
-import * as DocumentPicker from "expo-document-picker";
+import { pickImages } from "../../lib/pickImages";
 import { useAuth } from "../../context/AuthContext";
 import {
   createList,
@@ -448,17 +448,14 @@ export default function ProfileScreen() {
   }
 
   async function handleChangeAvatar() {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: "image/*",
-      copyToCacheDirectory: true,
-    });
-    if (result.canceled) return;
-    const asset = result.assets[0];
+    const picked = await pickImages(1);
+    if (picked.length === 0) return;
+    const asset = picked[0];
     setUploadingAvatar(true);
     try {
       const avatarUrl = await uploadAvatar(
         asset.uri,
-        asset.mimeType ?? "image/jpeg",
+        asset.mimeType,
       );
       profileVersionRef.current++;
       setProfile((prev) => (prev ? { ...prev, avatar_url: avatarUrl } : prev));

@@ -18,7 +18,7 @@ interface FeelingSheetProps {
   // rooms is non-empty, since the room-share block below has nothing to do
   // with the feeling-reaction setting.
   rooms?: ShareableRoom[];
-  onShareRoom?: (roomIds: string[], userIds: string[]) => void;
+  onShareRoom?: (roomIds: string[], userIds: string[]) => void | Promise<void>;
 }
 
 // Quick-capture popup shown right after marking an episode watched from a

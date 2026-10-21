@@ -57,6 +57,7 @@ import {
 import { EpisodeRow } from "../../components/EpisodeRow";
 import { FeelingSheet } from "../../components/FeelingSheet";
 import { FinaleToast, useFinaleToast } from "../../components/FinaleToast";
+import { RoomShareToast, useRoomShareToast } from "../../components/RoomShareToast";
 import { NewVersionToast } from "../../components/NewVersionToast";
 import { Pill } from "../../components/Pill";
 import { EmptyState } from "../../components/EmptyState";
@@ -619,6 +620,7 @@ export default function ShowsScreen() {
     useState<EnrichedEpisode | null>(null);
   const justWatchedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finaleToast = useFinaleToast();
+  const roomShareToast = useRoomShareToast();
   const listRef = useRef<FlatList<WatchListRow>>(null);
   const upcomingListRef = useRef<FlatList<UpcomingRow>>(null);
   const hasLoadedOnce = useRef(false);
@@ -1495,6 +1497,7 @@ export default function ShowsScreen() {
   const handleShareRoom = useCallback(
     async (roomIds: string[], userIds: string[]) => {
       const item = feelingPrompt.promptItem;
+      const roomNames = feelingPrompt.rooms.filter((r) => roomIds.includes(r.id)).map((r) => r.name);
       feelingPrompt.close();
       setJustWatchedItem(null);
       if (!item) return;
@@ -1506,8 +1509,9 @@ export default function ShowsScreen() {
         item.episode.season,
         item.episode.number,
       ).catch(() => {});
+      roomShareToast.show(roomNames);
     },
-    [feelingPrompt],
+    [feelingPrompt, roomShareToast],
   );
 
   const rewatchEpisode = useCallback(async (item: EnrichedEpisode) => {
@@ -2086,6 +2090,9 @@ export default function ShowsScreen() {
       />
       {finaleToast.visible && (
         <FinaleToast showName={finaleToast.showName} translateY={finaleToast.translateY} />
+      )}
+      {roomShareToast.visible && (
+        <RoomShareToast message={roomShareToast.message} translateY={roomShareToast.translateY} />
       )}
       <NewVersionToast />
     </View>

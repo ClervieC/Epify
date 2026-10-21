@@ -311,6 +311,9 @@ export default function RoomDetailScreen() {
                     placeholder={t.rooms.inviteUsernamePlaceholder}
                     placeholderTextColor={colors.textFaint}
                     autoCapitalize="none"
+                    textContentType="none"
+                    autoComplete="off"
+                    importantForAutofill="no"
                     value={inviteQuery}
                     onChangeText={onInviteQueryChange}
                   />

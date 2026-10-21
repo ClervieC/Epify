@@ -43,6 +43,12 @@ export interface AppNotification {
   // season, not a single episode, and to word/link it accordingly.
   room_watch_log_id: string | null;
   room_watch_episode_count: number;
+  // Set for type === "report_response" (see send_report_reply in supabase/
+  // schema.sql) — an admin's reply to a report this user filed. null for
+  // every other type, same sparse-column convention as the room_*/
+  // tvmaze_show_id columns above.
+  report_id: string | null;
+  report_message: string | null;
   read: boolean;
   created_at: string;
 }

@@ -90,6 +90,16 @@ export default function UserSearchScreen() {
           placeholder={t.social.searchPlaceholder}
           placeholderTextColor={colors.textFaint}
           autoCapitalize="none"
+          // This is a search box, not a login form, but the placeholder
+          // ("Search by username") is exactly the kind of text Safari's
+          // password-manager heuristic matches on a single text field —
+          // without these it was offering to autofill a saved password
+          // into a plain search input. textContentType covers iOS native,
+          // autoComplete covers web (react-native-web maps it to the HTML
+          // autocomplete attribute).
+          textContentType="none"
+          autoComplete="off"
+          importantForAutofill="no"
           value={query}
           onChangeText={onChangeText}
           autoFocus

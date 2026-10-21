@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
@@ -14,7 +14,7 @@ interface RoomSharePickerProps {
   // silently write to any OTHER room they happen to share with that
   // person, not just the one(s) actually checked here) and the union of
   // those rooms' other members, pre-deduplicated the same way.
-  onShare: (roomIds: string[], userIds: string[]) => void;
+  onShare: (roomIds: string[], userIds: string[]) => void | Promise<void>;
   // For a caller that's already its own dedicated Sheet with nothing else
   // competing for space (see app/show/[id].tsx's season-level share) — the
   // collapse/expand affordance exists to save room alongside other content
@@ -43,6 +43,13 @@ export function RoomSharePicker({ rooms, onShare, defaultExpanded = false }: Roo
   const { t } = useLanguage();
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  // Guards against the exact bug this shipped to fix: tapping "Share"
+  // doesn't visibly do anything on its own (the sheet hosting this is
+  // usually closed by the caller the moment onShare resolves — see
+  // components/RoomShareToast.tsx), so without disabling immediately a
+  // user unsure anything happened would tap again and log the same
+  // episode/movie to the room more than once.
+  const [state, setState] = useState<"idle" | "sharing" | "shared">("idle");
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -53,11 +60,20 @@ export function RoomSharePicker({ rooms, onShare, defaultExpanded = false }: Roo
     });
   }
 
-  function handleShare() {
+  async function handleShare() {
+    if (state !== "idle" || selected.size === 0) return;
     const selectedRooms = rooms.filter((r) => selected.has(r.id));
     const roomIds = selectedRooms.map((r) => r.id);
     const userIds = [...new Set(selectedRooms.flatMap((r) => r.memberUserIds))];
-    onShare(roomIds, userIds);
+    setState("sharing");
+    try {
+      await onShare(roomIds, userIds);
+      setState("shared");
+      setSelected(new Set());
+      setTimeout(() => setState("idle"), 1500);
+    } catch {
+      setState("idle");
+    }
   }
 
   return (
@@ -105,13 +121,17 @@ export function RoomSharePicker({ rooms, onShare, defaultExpanded = false }: Roo
             );
           })}
           <Pressable
-            style={[styles.shareBtn, selected.size === 0 && styles.shareBtnDisabled]}
-            disabled={selected.size === 0}
+            style={[styles.shareBtn, (selected.size === 0 || state !== "idle") && styles.shareBtnDisabled]}
+            disabled={selected.size === 0 || state !== "idle"}
             onPress={handleShare}
             accessibilityRole="button"
             accessibilityLabel={t.rooms.shareConfirm}
           >
-            <Text style={styles.shareBtnText}>{t.rooms.shareConfirm}</Text>
+            {state === "sharing" ? (
+              <ActivityIndicator color={colors.onAccent} />
+            ) : (
+              <Text style={styles.shareBtnText}>{state === "shared" ? t.rooms.shareConfirmed : t.rooms.shareConfirm}</Text>
+            )}
           </Pressable>
         </>
       )}

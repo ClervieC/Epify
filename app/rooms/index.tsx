@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, FlatList, Pressable, StyleSheet } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
-import { fetchMyRooms, createRoom, RoomWithMembers, RoomExpiry } from "../../lib/rooms";
+import { fetchMyRooms, createRoom, acceptRoomInvite, declineRoomInvite, RoomWithMembers, RoomExpiry } from "../../lib/rooms";
+import { getCurrentUserId } from "../../lib/supabase";
 import { RoomBadge } from "../../components/RoomBadge";
 import { RoomFormFields, ExpiryChoice, LinkedShowChoice } from "../../components/RoomFormFields";
 import { Sheet } from "../../components/Sheet";
@@ -19,6 +20,7 @@ export default function RoomsScreen() {
   const { t, language } = useLanguage();
   const [rooms, setRooms] = useState<RoomWithMembers[]>([]);
   const [loading, setLoading] = useState(true);
+  const [myId, setMyId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [expiryChoice, setExpiryChoice] = useState<ExpiryChoice>("none");
@@ -27,6 +29,10 @@ export default function RoomsScreen() {
   const [selectedShow, setSelectedShow] = useState<LinkedShowChoice | null>(null);
   const [emoji, setEmoji] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    getCurrentUserId().then((id) => setMyId(id ?? null));
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -42,6 +48,26 @@ export default function RoomsScreen() {
       };
     }, [])
   );
+
+  // Lets a pending invite be accepted/declined right from this list (see
+  // app/notifications.tsx for the other entry point to the same actions) —
+  // updated optimistically so the row flips to a normal member row (or
+  // disappears, on decline) without waiting for the next focus refetch.
+  async function respondInvite(room: RoomWithMembers, accept: boolean) {
+    if (accept) {
+      await acceptRoomInvite(room.id);
+      setRooms((prev) =>
+        prev.map((r) =>
+          r.id === room.id
+            ? { ...r, members: r.members.map((m) => (m.user_id === myId ? { ...m, status: "accepted" as const } : m)) }
+            : r
+        )
+      );
+    } else {
+      await declineRoomInvite(room.id);
+      setRooms((prev) => prev.filter((r) => r.id !== room.id));
+    }
+  }
 
   function openCreate() {
     setName("");
@@ -100,6 +126,40 @@ export default function RoomsScreen() {
           renderItem={({ item }) => {
             const members = item.members.filter((m) => m.status === "accepted");
             const expiry = expiryLabel(item);
+            const myMembership = item.members.find((m) => m.user_id === myId);
+
+            if (myMembership?.status === "invited") {
+              return (
+                <View style={styles.row}>
+                  <RoomBadge name={item.name} emoji={item.emoji} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.roomName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={styles.roomSubtitle} numberOfLines={1}>
+                      {t.rooms.invited}
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={styles.inviteDecline}
+                    onPress={() => respondInvite(item, false)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t.rooms.decline}
+                  >
+                    <Text style={styles.inviteDeclineText}>{t.rooms.decline}</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.inviteAccept}
+                    onPress={() => respondInvite(item, true)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t.rooms.accept}
+                  >
+                    <Text style={styles.inviteAcceptText}>{t.rooms.accept}</Text>
+                  </Pressable>
+                </View>
+              );
+            }
+
             return (
               <Pressable style={styles.row} onPress={() => router.push(`/rooms/${item.id}`)}>
                 <RoomBadge name={item.name} emoji={item.emoji} />
@@ -182,6 +242,10 @@ function createStyles(colors: Colors) {
     },
     roomName: { fontWeight: "800", fontSize: type.body, color: colors.text },
     roomSubtitle: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
+    inviteDecline: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.pillBg },
+    inviteDeclineText: { fontSize: type.caption, fontWeight: "700", color: colors.textMuted },
+    inviteAccept: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.accent },
+    inviteAcceptText: { fontSize: type.caption, fontWeight: "700", color: colors.onAccent },
     sheetTitle: { textAlign: "center", fontWeight: "800", fontSize: 13, color: colors.textMuted, letterSpacing: 0.5, marginBottom: 16 },
     createBtn: {
       backgroundColor: colors.accent,

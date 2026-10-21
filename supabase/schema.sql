@@ -1923,3 +1923,56 @@ begin
     and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
 end;
 $$;
+
+-- ============================================================
+-- General report (not tied to a show/movie/user/comment) + admin replies
+-- to the reporter. Purely additive — safe to run once against an existing
+-- database.
+-- ============================================================
+
+-- A problem that isn't about any specific piece of content (e.g. "search is
+-- broken") had nowhere to go before — every target_* column on reports was
+-- always null for these, same sparse-column convention the others use.
+alter type report_target add value if not exists 'general';
+
+-- resolution_note (see public.reports above) is deliberately never shown to
+-- the reporter — admins wanted a second, explicitly-reporter-facing field
+-- to actually tell someone "fixed" or "can't reproduce," instead of
+-- repurposing the internal-only note. One reply per report (overwritten by
+-- a later one, not a thread) is enough for what this is actually used for.
+alter table public.reports add column if not exists admin_reply text;
+alter table public.reports add column if not exists admin_reply_at timestamptz;
+
+-- Replies ride the existing notifications table, same convention room_id/
+-- room_name (see notify_on_room_invite above) already established.
+alter table public.notifications
+  add column if not exists report_id uuid references public.reports (id) on delete cascade,
+  add column if not exists report_message text;
+
+-- security definer so a client can't insert into someone else's
+-- notifications directly (no insert policy exists for that — see
+-- public.notifications above) — this is the one controlled path in,
+-- gated on the same is_admin check the "Admins update reports" RLS policy
+-- already uses.
+create or replace function public.send_report_reply(p_report_id uuid, p_message text)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_reporter_id uuid;
+begin
+  if not exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin) then
+    raise exception 'not authorized';
+  end if;
+
+  select reporter_id into v_reporter_id from public.reports where id = p_report_id;
+  if v_reporter_id is null then
+    raise exception 'report not found';
+  end if;
+
+  update public.reports set admin_reply = p_message, admin_reply_at = now() where id = p_report_id;
+
+  insert into public.notifications (user_id, type, actor_id, report_id, report_message)
+  values (v_reporter_id, 'report_response', auth.uid(), p_report_id, p_message);
+end;
+$$;
+
+grant execute on function public.send_report_reply(uuid, text) to authenticated;

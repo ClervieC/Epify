@@ -15,6 +15,30 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.0",
+    date: "2026-10-21",
+    en: [
+      "You can now change your username from Settings.",
+      "Added a way to report a problem that isn't about a specific show, movie, comment, or user — from Settings.",
+      "Admins can now reply directly to a report, so the person who filed it hears back when it's fixed or can't be fixed.",
+      "Fixed photos not attaching when filing a report, or when changing your avatar, on iPhone (including from the Home Screen bookmark) and some desktop browsers — the file picker was opening in a way Safari silently ignored.",
+      "You can now drag and drop images into a report instead of only using the file picker.",
+      "A room invite can now be accepted or declined right from the Rooms list, not only from Notifications.",
+      "Sharing an episode or movie with a room now shows a confirmation, instead of looking like nothing happened — which could previously lead to sharing the same thing more than once.",
+      "Fixed a search box showing your saved passwords as autofill suggestions on Mac.",
+    ],
+    fr: [
+      "Tu peux maintenant changer de pseudo depuis les Réglages.",
+      "Ajout d'un moyen de signaler un problème qui ne concerne ni une série, ni un film, ni un commentaire, ni un utilisateur précis — depuis les Réglages.",
+      "Les modérateurs peuvent maintenant répondre directement à un signalement, pour que la personne sache qu'il a été corrigé ou qu'il ne peut pas l'être.",
+      "Correction d'un bug empêchant d'ajouter une photo à un signalement, ou de changer sa photo de profil, sur iPhone (y compris depuis le raccourci à l'écran d'accueil) et certains navigateurs d'ordinateur — le sélecteur de fichier s'ouvrait d'une façon que Safari ignorait silencieusement.",
+      "Tu peux maintenant glisser-déposer des images dans un signalement, en plus du sélecteur de fichier.",
+      "Une invitation à une room peut maintenant être acceptée ou refusée directement depuis la liste des rooms, pas seulement depuis les notifications.",
+      "Partager un épisode ou un film avec une room affiche maintenant une confirmation, au lieu de ne rien montrer — ce qui pouvait auparavant mener à partager la même chose plusieurs fois.",
+      "Correction d'une barre de recherche qui proposait tes mots de passe enregistrés en autofill sur Mac.",
+    ],
+  },
+  {
     version: "5.2.4",
     date: "2026-10-20",
     en: [

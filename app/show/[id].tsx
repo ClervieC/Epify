@@ -73,6 +73,7 @@ import { DetailErrorState } from "../../components/DetailErrorState";
 import { Sheet } from "../../components/Sheet";
 import { FeelingSheet } from "../../components/FeelingSheet";
 import { RoomSharePicker } from "../../components/RoomSharePicker";
+import { RoomShareToast, useRoomShareToast } from "../../components/RoomShareToast";
 import { usePreviousEpisodesPrompt } from "../../context/PreviousEpisodesPromptContext";
 import { useRewatchPrompt } from "../../context/RewatchPromptContext";
 import { useAddToListPrompt } from "../../context/AddToListPromptContext";
@@ -174,6 +175,7 @@ export default function ShowDetailScreen() {
   // (app/(tabs)/index.tsx) — this screen's per-episode row had no feeling
   // UI at all before rooms; see lib/useWatchedFeelingPrompt.ts.
   const feelingPrompt = useWatchedFeelingPrompt<TVMazeEpisode>();
+  const roomShareToast = useRoomShareToast();
   const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(goBack);
 
   const load = useCallback(async () => {
@@ -593,9 +595,11 @@ export default function ShowDetailScreen() {
 
   async function handleEpisodeShareRoom(roomIds: string[], userIds: string[]) {
     const ep = feelingPrompt.promptItem;
+    const roomNames = feelingPrompt.rooms.filter((r) => roomIds.includes(r.id)).map((r) => r.name);
     feelingPrompt.close();
     if (!ep) return;
     await markEpisodeWatchedForRoom(roomIds, userIds, showId, ep.id, ep.season, ep.number).catch(() => {});
+    roomShareToast.show(roomNames);
   }
 
   async function rewatchEpisode(ep: TVMazeEpisode) {
@@ -644,6 +648,7 @@ export default function ShowDetailScreen() {
 
   async function handleSeasonShareRoom(roomIds: string[], userIds: string[]) {
     const eps = seasonShareEpisodes;
+    const roomNames = feelingPrompt.rooms.filter((r) => roomIds.includes(r.id)).map((r) => r.name);
     setSeasonShareEpisodes(null);
     if (!eps) return;
     await markEpisodesWatchedForRoom(
@@ -652,6 +657,7 @@ export default function ShowDetailScreen() {
       showId,
       eps.map((e) => ({ id: e.id, season: e.season, number: e.number })),
     ).catch(() => {});
+    roomShareToast.show(roomNames);
   }
 
   async function unmarkSeasonWatched(eps: TVMazeEpisode[]) {
@@ -1168,6 +1174,9 @@ export default function ShowDetailScreen() {
           </Pressable>
         </View>
       </Sheet>
+      {roomShareToast.visible && (
+        <RoomShareToast message={roomShareToast.message} translateY={roomShareToast.translateY} />
+      )}
     </View>
   );
 }

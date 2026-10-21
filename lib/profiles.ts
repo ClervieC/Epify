@@ -45,6 +45,22 @@ export async function createProfile(username: string): Promise<Profile> {
   return data;
 }
 
+// Same constraint as the DB's own check (see "profiles" in supabase/
+// schema.sql) — checked client-side first so a bad username shows an
+// inline error instead of a round trip just to get rejected. The unique
+// violation (another user already has it) can only be caught server-side,
+// which is why this still lets Postgres's own error surface on conflict.
+export const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,20}$/;
+
+export async function updateUsername(username: string): Promise<void> {
+  const userId = await getCurrentUserId();
+  if (!userId) throw new Error("Not authenticated");
+
+  const { error } = await supabase.from("profiles").update({ username }).eq("user_id", userId);
+  if (error) throw error;
+  myProfileCache.invalidate();
+}
+
 export async function fetchProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle();
   if (error) throw error;

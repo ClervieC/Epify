@@ -1,12 +1,12 @@
-import { useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, ScrollView } from "react-native";
+import { useEffect, useState } from "react";
+import { View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator, ScrollView, Platform } from "react-native";
 import { Image } from "expo-image";
-import * as DocumentPicker from "expo-document-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { Sheet } from "./Sheet";
 import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { createReport, uploadReportImage, CreateReportParams, MAX_REPORT_IMAGES } from "../lib/reports";
+import { pickImages, PickedImageFile } from "../lib/pickImages";
 import { alert } from "../lib/alert";
 import { mapWithConcurrency } from "../lib/concurrency";
 
@@ -18,11 +18,6 @@ interface ReportModalProps {
   target: Omit<CreateReportParams, "reason">;
 }
 
-interface PickedImage {
-  uri: string;
-  mimeType: string;
-}
-
 // One shared reason-entry sheet for every reportable thing (a user, a
 // comment, a show/episode/movie) rather than five near-identical modals —
 // call sites only differ in which `target` they pass in.
@@ -31,23 +26,55 @@ export function ReportModal({ visible, onClose, target }: ReportModalProps) {
   const styles = useStyles(colors);
   const { t } = useLanguage();
   const [reason, setReason] = useState("");
-  const [images, setImages] = useState<PickedImage[]>([]);
+  const [images, setImages] = useState<PickedImageFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
 
   async function handleAddPhoto() {
     const remaining = MAX_REPORT_IMAGES - images.length;
     if (remaining <= 0) return;
-    const result = await DocumentPicker.getDocumentAsync({
-      type: "image/*",
-      copyToCacheDirectory: true,
-      multiple: remaining > 1,
-    });
-    if (result.canceled) return;
-    setImages((prev) => [
-      ...prev,
-      ...result.assets.slice(0, remaining).map((a) => ({ uri: a.uri, mimeType: a.mimeType ?? "image/jpeg" })),
-    ]);
+    const picked = await pickImages(remaining);
+    if (picked.length === 0) return;
+    setImages((prev) => [...prev, ...picked]);
   }
+
+  // Web only — dragging image files from the Finder/desktop straight onto
+  // the sheet, as an alternative to the file-picker button above. Listens
+  // on window rather than a specific element so the whole sheet (not just
+  // one drop target) accepts a drop, matching how most desktop apps treat
+  // "drag an image into this dialog." Scoped to while the sheet is open —
+  // there's nothing to drop onto otherwise.
+  useEffect(() => {
+    if (Platform.OS !== "web" || !visible) return;
+
+    function onDragOver(e: DragEvent) {
+      e.preventDefault();
+      setDragActive(true);
+    }
+    function onDragLeave(e: DragEvent) {
+      if (!e.relatedTarget) setDragActive(false);
+    }
+    function onDrop(e: DragEvent) {
+      e.preventDefault();
+      setDragActive(false);
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      const picked = Array.from(files)
+        .filter((f) => f.type.startsWith("image/"))
+        .map((f) => ({ uri: URL.createObjectURL(f), mimeType: f.type || "image/jpeg" }));
+      if (picked.length === 0) return;
+      setImages((prev) => [...prev, ...picked].slice(0, MAX_REPORT_IMAGES));
+    }
+
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [visible]);
 
   function removeImage(index: number) {
     setImages((prev) => prev.filter((_, i) => i !== index));
@@ -100,6 +127,13 @@ export function ReportModal({ visible, onClose, target }: ReportModalProps) {
         multiline
         numberOfLines={4}
       />
+
+      {dragActive && (
+        <View style={styles.dropZone}>
+          <Ionicons name="image-outline" size={20} color={colors.accent} />
+          <Text style={styles.dropZoneText}>{t.report.dropImagesHere}</Text>
+        </View>
+      )}
 
       {images.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoRow} contentContainerStyle={styles.photoRowContent}>
@@ -163,6 +197,19 @@ function useStyles(colors: Colors) {
       fontSize: type.input,
       marginBottom: 12,
     },
+    dropZone: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      borderWidth: 2,
+      borderStyle: "dashed",
+      borderColor: colors.accent,
+      borderRadius: radius.sm,
+      paddingVertical: 14,
+      marginBottom: 12,
+    },
+    dropZoneText: { color: colors.accent, fontWeight: "700", fontSize: type.bodySm },
     photoRow: { marginBottom: 12 },
     photoRowContent: { gap: 8 },
     thumbWrap: { position: "relative" },

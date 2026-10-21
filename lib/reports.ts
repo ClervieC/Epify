@@ -11,7 +11,7 @@ export function clearOpenReportCountCache() {
   openReportCountCache.invalidate();
 }
 
-export type ReportTargetType = "user" | "comment" | "movie_comment" | "show" | "episode" | "movie";
+export type ReportTargetType = "user" | "comment" | "movie_comment" | "show" | "episode" | "movie" | "general";
 export type ReportStatus = "open" | "resolved" | "dismissed";
 
 export interface Report {
@@ -31,6 +31,11 @@ export interface Report {
   resolved_by: string | null;
   created_at: string;
   resolved_at: string | null;
+  // A reply shown to the reporter (unlike resolution_note, which never is
+  // — see admin_reply's own comment in supabase/schema.sql). Set/overwritten
+  // by sendReportReply below.
+  admin_reply: string | null;
+  admin_reply_at: string | null;
 }
 
 // Matches components/ReportModal.tsx's own limit — see supabase/schema.sql
@@ -134,4 +139,15 @@ export async function dismissReport(id: string, note: string | null): Promise<vo
     .eq("id", id);
   if (error) throw error;
   openReportCountCache.invalidate();
+}
+
+// Sends the reporter a reply (e.g. "fixed" / "can't reproduce this"), shown
+// to them as a notification — unlike resolution_note, which stays admin-
+// only. Independent of resolve/dismiss: an admin can reply any time, before
+// or after acting on the report. Goes through a security-definer RPC (see
+// its own comment in supabase/schema.sql) since there's no insert policy
+// letting a client write into someone else's notifications directly.
+export async function sendReportReply(reportId: string, message: string): Promise<void> {
+  const { error } = await supabase.rpc("send_report_reply", { p_report_id: reportId, p_message: message.trim() });
+  if (error) throw error;
 }

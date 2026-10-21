@@ -10,9 +10,10 @@ import { importTvTimeCsv, importTvTimeJson, ImportProgress } from "../lib/tvtime
 import { useColors, useThemeMode, radius, type, Colors, ThemeMode } from "../lib/theme";
 import { useLanguage, Translations } from "../lib/i18n";
 import { Language, StaleWatchlistMonths } from "../lib/userSettings";
-import { fetchMyProfile, Profile } from "../lib/profiles";
+import { fetchMyProfile, updateUsername, USERNAME_REGEX, Profile } from "../lib/profiles";
 import { changePassword, exportMyData, deleteAccount } from "../lib/account";
 import { fetchOpenReportCount } from "../lib/reports";
+import { ReportModal } from "../components/ReportModal";
 import { fetchSupportNeedsResponseCount } from "../lib/support";
 import { APP_VERSION, CHANGELOG } from "../lib/changelog";
 import { getLastSeenChangelogVersion } from "../lib/lastSeenVersion";
@@ -68,6 +69,11 @@ export default function SettingsScreen() {
   const [exportingData, setExportingData] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [hasNewChangelog, setHasNewChangelog] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [changeUsernameOpen, setChangeUsernameOpen] = useState(false);
+  const [newUsername, setNewUsername] = useState("");
+  const [changingUsername, setChangingUsername] = useState(false);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -82,6 +88,32 @@ export default function SettingsScreen() {
       getLastSeenChangelogVersion().then((seen) => setHasNewChangelog(seen !== CHANGELOG[0].version));
     }, [])
   );
+
+  function openChangeUsername() {
+    setUsernameError(null);
+    setNewUsername(profile?.username ?? "");
+    setChangeUsernameOpen(true);
+  }
+
+  async function handleChangeUsername() {
+    setUsernameError(null);
+    const trimmed = newUsername.trim();
+    if (!USERNAME_REGEX.test(trimmed)) {
+      setUsernameError(t.signup.usernameInvalid);
+      return;
+    }
+    setChangingUsername(true);
+    try {
+      await updateUsername(trimmed);
+      setProfile((prev) => (prev ? { ...prev, username: trimmed } : prev));
+      setChangeUsernameOpen(false);
+      alert(t.profile.changeUsername, t.profile.changeUsernameSuccess);
+    } catch {
+      setUsernameError(t.signup.usernameTaken);
+    } finally {
+      setChangingUsername(false);
+    }
+  }
 
   async function handleChangePassword() {
     setPasswordError(null);
@@ -316,6 +348,16 @@ export default function SettingsScreen() {
         <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.contactUs}</Text>
         <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
       </Pressable>
+      <Pressable
+        style={styles.importRow}
+        onPress={() => setReportOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel={t.report.reportGeneral}
+      >
+        <Ionicons name="flag-outline" size={20} color={colors.text} />
+        <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.report.reportGeneral}</Text>
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+      </Pressable>
 
       <SectionHeader title={t.profile.account} styles={styles} />
       {profile?.is_admin && (
@@ -333,6 +375,14 @@ export default function SettingsScreen() {
           <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
         </Pressable>
       )}
+      <Pressable style={styles.importRow} onPress={openChangeUsername}>
+        <Ionicons name="at-outline" size={20} color={colors.text} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.importRowTitle}>{t.profile.changeUsername}</Text>
+          {profile?.username && <Text style={styles.importRowSubtitle}>@{profile.username}</Text>}
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+      </Pressable>
       <Pressable style={styles.importRow} onPress={() => setChangePasswordOpen(true)}>
         <Ionicons name="key-outline" size={20} color={colors.text} />
         <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.changePassword}</Text>
@@ -363,6 +413,33 @@ export default function SettingsScreen() {
         <Text style={styles.signOutText}>{t.profile.signOut}</Text>
       </Pressable>
 
+      <Sheet visible={changeUsernameOpen} onClose={() => setChangeUsernameOpen(false)}>
+        <Text style={styles.sectionTitle}>{t.profile.changeUsername}</Text>
+        <TextInput
+          style={styles.newPasswordInput}
+          placeholder={t.profile.newUsername}
+          placeholderTextColor={colors.textFaint}
+          autoCapitalize="none"
+          textContentType="username"
+          value={newUsername}
+          onChangeText={setNewUsername}
+        />
+        {usernameError && <Text style={{ color: colors.red, marginBottom: 8 }}>{usernameError}</Text>}
+        <Pressable
+          style={styles.modalSubmitBtn}
+          onPress={handleChangeUsername}
+          disabled={changingUsername}
+          accessibilityRole="button"
+          accessibilityLabel={t.profile.changeUsernameConfirm}
+        >
+          {changingUsername ? (
+            <ActivityIndicator color={colors.onAccent} />
+          ) : (
+            <Text style={styles.modalSubmitBtnText}>{t.profile.changeUsernameConfirm}</Text>
+          )}
+        </Pressable>
+      </Sheet>
+
       <Sheet visible={changePasswordOpen} onClose={() => setChangePasswordOpen(false)}>
         <Text style={styles.sectionTitle}>{t.profile.changePassword}</Text>
         <TextInput
@@ -388,6 +465,8 @@ export default function SettingsScreen() {
           )}
         </Pressable>
       </Sheet>
+
+      <ReportModal visible={reportOpen} onClose={() => setReportOpen(false)} target={{ targetType: "general" }} />
     </ScrollView>
   );
 }

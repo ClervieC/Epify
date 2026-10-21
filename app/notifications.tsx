@@ -132,6 +132,17 @@ export default function NotificationsScreen() {
                   <Text style={styles.inviteAcceptText}>{t.rooms.accept}</Text>
                 </Pressable>
               </View>
+            ) : item.type === "report_response" ? (
+              <View style={styles.row}>
+                <View style={[styles.showThumb, styles.showThumbPlaceholder]}>
+                  <Ionicons name="flag-outline" size={18} color={colors.textFaint} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.text}>{t.report.replyNotification(item.report_message ?? "")}</Text>
+                  <Text style={styles.date}>{shortDate(item.created_at)}</Text>
+                </View>
+                {!item.read && <View style={styles.unreadDot} />}
+              </View>
             ) : item.type === "stale_watchlist" ? (
               <Pressable
                 style={styles.row}

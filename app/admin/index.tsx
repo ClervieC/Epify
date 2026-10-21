@@ -5,7 +5,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { fetchMyProfile, fetchAllProfilesForAdmin, fetchProfiles, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
-import { fetchReports, resolveReport, dismissReport, Report, ReportStatus, ReportTargetType } from "../../lib/reports";
+import { fetchReports, resolveReport, dismissReport, sendReportReply, Report, ReportStatus, ReportTargetType } from "../../lib/reports";
 import { fetchSupportConversationsForAdmin, SupportConversation } from "../../lib/support";
 import { fetchCommentsByIds } from "../../lib/comments";
 import { fetchMovieCommentsByIds } from "../../lib/movieComments";
@@ -26,6 +26,7 @@ const TARGET_ICON: Record<ReportTargetType, keyof typeof Ionicons.glyphMap> = {
   show: "tv-outline",
   episode: "film-outline",
   movie: "videocam-outline",
+  general: "alert-circle-outline",
 };
 
 interface EpisodeInfo {
@@ -52,6 +53,7 @@ const TARGET_COLOR: Record<ReportTargetType, string> = {
   show: C.yellow,
   episode: C.yellow,
   movie: C.yellow,
+  general: C.textMuted,
 };
 
 export default function AdminScreen() {
@@ -324,6 +326,9 @@ export default function AdminScreen() {
               style={styles.searchInput}
               placeholder={t.admin.searchUsersPlaceholder}
               placeholderTextColor={C.textMuted}
+              textContentType="none"
+              autoComplete="off"
+              importantForAutofill="no"
               value={userQuery}
               onChangeText={setUserQuery}
               onSubmitEditing={() => loadUsers(userQuery)}
@@ -420,6 +425,8 @@ function targetSummary(
     }
     case "movie":
       return `${t.admin.targetMovie} #${r.target_tmdb_id}`;
+    case "general":
+      return t.admin.targetGeneral;
   }
 }
 
@@ -459,6 +466,8 @@ function targetHref(
       const info = r.target_movie_comment_id ? movieCommentInfo.get(r.target_movie_comment_id) : undefined;
       return info?.movieTmdbId ? `/movie/tmdb/${info.movieTmdbId}` : null;
     }
+    case "general":
+      return null;
   }
 }
 
@@ -483,6 +492,9 @@ function ReportCard({
   const router = useRouter();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reply, setReply] = useState("");
+  const [replying, setReplying] = useState(false);
+  const [replySent, setReplySent] = useState(false);
   const href = targetHref(report, commentInfo, movieCommentInfo);
 
   async function act(action: "resolve" | "dismiss") {
@@ -494,6 +506,25 @@ function ReportCard({
       alert("Failed", "Couldn't update this report.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Independent of resolve/dismiss — see admin_reply's own comment in
+  // supabase/schema.sql for why this is a separate, reporter-facing field
+  // rather than resolution_note (which stays admin-only). An admin can
+  // reply any time, before or after acting on the report.
+  async function sendReply() {
+    if (!reply.trim()) return;
+    setReplying(true);
+    try {
+      await sendReportReply(report.id, reply.trim());
+      setReply("");
+      setReplySent(true);
+      onActed();
+    } catch {
+      alert("Failed", "Couldn't send the reply.");
+    } finally {
+      setReplying(false);
     }
   }
 
@@ -565,6 +596,34 @@ function ReportCard({
           </View>
         )
       )}
+
+      {report.admin_reply && (
+        <View style={styles.cardMetaRow}>
+          <Ionicons name="arrow-undo-outline" size={13} color={C.textMuted} />
+          <Text style={styles.cardMeta} numberOfLines={2}>
+            {t.admin.replySentLabel} {report.admin_reply}
+          </Text>
+        </View>
+      )}
+      <View style={styles.replyRow}>
+        <TextInput
+          style={styles.replyInput}
+          placeholder={t.admin.replyPlaceholder}
+          placeholderTextColor={C.textMuted}
+          value={reply}
+          onChangeText={(text) => {
+            setReply(text);
+            setReplySent(false);
+          }}
+        />
+        <Pressable
+          style={[styles.replySendBtn, (!reply.trim() || replying) && styles.actionBtnDisabled]}
+          onPress={sendReply}
+          disabled={!reply.trim() || replying}
+        >
+          <Ionicons name={replySent ? "checkmark" : "send"} size={14} color="#fff" />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -714,6 +773,20 @@ const styles = StyleSheet.create({
   quoteBlock: { borderLeftWidth: 2, borderLeftColor: C.accent, paddingLeft: 10 },
   quoteText: { color: C.textMuted, fontSize: 12, fontStyle: "italic", lineHeight: 17 },
   noteInput: {
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    color: C.text,
+    // 16px, not 13 — see searchInput's own comment above.
+    fontSize: 16,
+  },
+  replyRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  replySendBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
+  replyInput: {
+    flex: 1,
     backgroundColor: C.bg,
     borderWidth: 1,
     borderColor: C.border,

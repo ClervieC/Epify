@@ -61,6 +61,7 @@ import {
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { EpisodeWatchersRow } from "../../components/EpisodeWatchersRow";
 import { RoommateShareRow } from "../../components/RoommateShareRow";
+import { RoomShareToast, useRoomShareToast } from "../../components/RoomShareToast";
 import { fetchShareableRoomsCached, ShareableRoom } from "../../lib/rooms";
 import { CommentsSection } from "../../components/CommentsSection";
 import { CharacterVote } from "../../components/CharacterVote";
@@ -137,6 +138,7 @@ export default function EpisodeDetailScreen() {
   // prompt, so the room list just needs fetching once, no trigger/
   // visibility decision.
   const [rooms, setRooms] = useState<ShareableRoom[]>([]);
+  const roomShareToast = useRoomShareToast();
   useEffect(() => {
     let active = true;
     fetchShareableRoomsCached().then((r) => active && setRooms(r));
@@ -388,7 +390,9 @@ export default function EpisodeDetailScreen() {
   }
 
   async function shareRoomForEpisode(episode: TVMazeEpisode, roomIds: string[], userIds: string[]) {
+    const roomNames = rooms.filter((r) => roomIds.includes(r.id)).map((r) => r.name);
     await markEpisodeWatchedForRoom(roomIds, userIds, showIdNum, episode.id, episode.season, episode.number).catch(() => {});
+    roomShareToast.show(roomNames);
   }
 
   const watchedCount = Object.values(watchedMap).filter(Boolean).length;
@@ -537,6 +541,9 @@ export default function EpisodeDetailScreen() {
         {finaleToastVisible && show && (
           <FinaleToast showName={show.name} translateY={finaleToastY} t={t} colors={colors} styles={styles} />
         )}
+        {roomShareToast.visible && (
+          <RoomShareToast message={roomShareToast.message} translateY={roomShareToast.translateY} />
+        )}
       </View>
     );
   }
@@ -638,6 +645,9 @@ export default function EpisodeDetailScreen() {
       />
       {finaleToastVisible && show && (
         <FinaleToast showName={show.name} translateY={finaleToastY} t={t} colors={colors} styles={styles} />
+      )}
+      {roomShareToast.visible && (
+        <RoomShareToast message={roomShareToast.message} translateY={roomShareToast.translateY} />
       )}
     </View>
   );

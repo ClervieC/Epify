@@ -39,6 +39,7 @@ import {
 import { Pill } from "../../components/Pill";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { MovieDetailView, MovieDetailLoading } from "../../components/MovieDetailView";
+import { RoomShareToast, useRoomShareToast } from "../../components/RoomShareToast";
 import { MovieRatingSection } from "../../components/MovieRatingSection";
 import { RecommendationItem } from "../../components/RecommendationsRow";
 import { useGoBack } from "../../lib/useGoBack";
@@ -59,6 +60,7 @@ export default function MovieDetailScreen() {
 
   const [movie, setMovie] = useState<UserMovie | null>(null);
   const [rooms, setRooms] = useState<ShareableRoom[]>([]);
+  const roomShareToast = useRoomShareToast();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [tmdb, setTmdb] = useState<TMDBMovieDetails | null>(null);
@@ -229,9 +231,11 @@ export default function MovieDetailScreen() {
     setMovie(updated);
   }
   async function handleShareRoom(roomIds: string[], userIds: string[]) {
+    const roomNames = rooms.filter((r) => roomIds.includes(r.id)).map((r) => r.name);
     await markMovieWatchedForRoom(roomIds, userIds, movie!.tmdb_id ?? undefined, movie!.title, movie!.year, movie!.poster_path).catch(
       () => {},
     );
+    roomShareToast.show(roomNames);
   }
   async function handlePostComment(body: string, parentId?: string) {
     if (!commentTmdbId) return;
@@ -272,6 +276,7 @@ export default function MovieDetailScreen() {
   }));
 
   return (
+    <>
     <MovieDetailView
       title={movie.title}
       year={movie.year}
@@ -333,6 +338,10 @@ export default function MovieDetailScreen() {
         />
       }
     />
+    {roomShareToast.visible && (
+      <RoomShareToast message={roomShareToast.message} translateY={roomShareToast.translateY} />
+    )}
+    </>
   );
 }
 

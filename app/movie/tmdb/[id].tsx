@@ -40,6 +40,7 @@ import {
 import { Pill } from "../../../components/Pill";
 import { WatchedCheck } from "../../../components/WatchedCheck";
 import { MovieDetailView, MovieDetailLoading } from "../../../components/MovieDetailView";
+import { RoomShareToast, useRoomShareToast } from "../../../components/RoomShareToast";
 import { MovieRatingSection } from "../../../components/MovieRatingSection";
 import { RecommendationItem } from "../../../components/RecommendationsRow";
 import { useGoBack } from "../../../lib/useGoBack";
@@ -66,6 +67,7 @@ export default function TmdbMovieDetailScreen() {
   const [watchProviders, setWatchProviders] = useState<WatchProviders | null>(null);
   const [recommendations, setRecommendations] = useState<TMDBSearchResult[]>([]);
   const [rooms, setRooms] = useState<ShareableRoom[]>([]);
+  const roomShareToast = useRoomShareToast();
   // Bumped by every write to `userRow` — this reload and every mutation
   // handler below (handleRewatch, handleToggleFavorite, ...) — so a reload
   // already in flight when a mutation lands can tell its own fetch predates
@@ -219,7 +221,9 @@ export default function TmdbMovieDetailScreen() {
     setUserRow(updated);
   }
   async function handleShareRoom(roomIds: string[], userIds: string[]) {
+    const roomNames = rooms.filter((r) => roomIds.includes(r.id)).map((r) => r.name);
     await markMovieWatchedForRoom(roomIds, userIds, tmdbId, title, year, tmdb?.poster_path).catch(() => {});
+    roomShareToast.show(roomNames);
   }
   async function handlePostComment(body: string, parentId?: string) {
     await postMovieComment(tmdbId, body, parentId);
@@ -262,6 +266,7 @@ export default function TmdbMovieDetailScreen() {
     : null;
 
   return (
+    <>
     <MovieDetailView
       title={title}
       year={year}
@@ -329,6 +334,10 @@ export default function TmdbMovieDetailScreen() {
         />
       }
     />
+    {roomShareToast.visible && (
+      <RoomShareToast message={roomShareToast.message} translateY={roomShareToast.translateY} />
+    )}
+    </>
   );
 }
 

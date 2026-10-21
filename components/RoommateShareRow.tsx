@@ -6,7 +6,7 @@ import { RoomSharePicker } from "./RoomSharePicker";
 
 interface RoommateShareRowProps {
   rooms: ShareableRoom[];
-  onShare: (roomIds: string[], userIds: string[]) => void;
+  onShare: (roomIds: string[], userIds: string[]) => void | Promise<void>;
 }
 
 // The always-visible counterpart to FeelingSheet's room-share block — for
