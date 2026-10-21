@@ -31,6 +31,7 @@ import {
   getOnTheAirTv,
   getUpcomingTv,
   findTvmazeShowFromTmdbTv,
+  fetchResolvedTvmazeShows,
   posterUrl,
   TMDBSearchResult,
   TMDBTvResult,
@@ -166,40 +167,63 @@ export default function ExploreScreen() {
     );
   }, [t]);
 
-  // Resolves every visible discover-category card's TVmaze id in the
-  // background, at low priority, so the add/favorite icons above are
-  // accurate immediately rather than only after the user has tapped that
-  // specific card once (see resolvedTvShows above). Low priority means an
-  // actual interactive tap (open/add/favorite, or a search) still jumps
-  // ahead of this batch in the shared TVmaze queue; a genuine "no match"
-  // (findTvmazeShowFromTmdbTv resolves to null — no tvdb_id on file, or
-  // TVmaze's lookup 404s) is marked attempted and not retried, since retrying
-  // that would never succeed. A *transient* failure (network blip, TVmaze
-  // 5xx — the promise actually rejects) is deliberately NOT marked attempted,
-  // so the next time this effect runs (e.g. the next language switch) it
-  // gets another try instead of that card's icons staying blank forever.
+  // Resolves every visible discover-category card's TVmaze id so the add/
+  // favorite icons above are accurate immediately rather than only after
+  // the user has tapped that specific card once (see resolvedTvShows
+  // above). Checks the shared Supabase cache in ONE batched request first
+  // (see fetchResolvedTvmazeShows in lib/tmdb.ts) — these discover lists
+  // are the same small, overlapping set every user sees, so this covers
+  // nearly everything on a typical load without ever touching the slower
+  // per-show TMDB+TVmaze lookup chain below. Only genuine cache misses
+  // fall through to that, at low priority, so an actual interactive tap
+  // (open/add/favorite, or a search) still jumps ahead of them in the
+  // shared TVmaze queue; a genuine "no match" (findTvmazeShowFromTmdbTv
+  // resolves to null — no tvdb_id on file, or TVmaze's lookup 404s) is
+  // marked attempted and not retried, since retrying that would never
+  // succeed. A *transient* failure (network blip, TVmaze 5xx — the promise
+  // actually rejects) is deliberately NOT marked attempted, so the next
+  // time this effect runs (e.g. the next language switch) it gets another
+  // try instead of that card's icons staying blank forever.
   useEffect(() => {
     const allShows = showCategories.flatMap((c) => c.data);
     const toResolve = allShows.filter((s) => !attemptedResolveIds.current.has(s.id));
     if (toResolve.length === 0) return;
 
     let cancelled = false;
-    mapWithConcurrency(
-      toResolve,
-      4,
-      async (show) => {
-        try {
-          return await findTvmazeShowFromTmdbTv(show.id, "low");
-        } catch {
-          return undefined;
-        }
-      },
-      (result, show) => {
-        if (cancelled || result === undefined) return;
-        attemptedResolveIds.current.add(show.id);
-        if (result) setResolvedTvShows((prev) => (prev.has(show.id) ? prev : new Map(prev).set(show.id, result)));
-      },
-    );
+
+    (async () => {
+      const cached = await fetchResolvedTvmazeShows(toResolve.map((s) => s.id));
+      if (cancelled) return;
+      if (cached.size > 0) {
+        for (const id of cached.keys()) attemptedResolveIds.current.add(id);
+        setResolvedTvShows((prev) => {
+          const next = new Map(prev);
+          for (const [id, show] of cached) next.set(id, show);
+          return next;
+        });
+      }
+
+      const stillMissing = toResolve.filter((s) => !cached.has(s.id));
+      if (stillMissing.length === 0) return;
+
+      await mapWithConcurrency(
+        stillMissing,
+        4,
+        async (show) => {
+          try {
+            return await findTvmazeShowFromTmdbTv(show.id, "low");
+          } catch {
+            return undefined;
+          }
+        },
+        (result, show) => {
+          if (cancelled || result === undefined) return;
+          attemptedResolveIds.current.add(show.id);
+          if (result) setResolvedTvShows((prev) => (prev.has(show.id) ? prev : new Map(prev).set(show.id, result)));
+        },
+      );
+    })();
+
     return () => {
       cancelled = true;
     };

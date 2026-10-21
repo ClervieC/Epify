@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.4",
+    date: "2026-10-21",
+    en: [
+      "Explore now shows whether a show is already in your list much faster — the TMDB-to-internal mapping for the popular/trending shows everyone sees is now cached and read in one request, instead of being looked up one show at a time. \"View more\" and search still look things up live as before.",
+    ],
+    fr: [
+      "Explore affiche maintenant beaucoup plus vite si une série est déjà dans ta liste — la correspondance TMDB/interne des séries populaires/tendances que tout le monde voit est désormais mise en cache et lue en une seule requête, au lieu d'être recherchée série par série. \"Voir plus\" et la recherche continuent de chercher en direct comme avant.",
+    ],
+  },
+  {
     version: "5.3.3",
     date: "2026-10-21",
     en: [

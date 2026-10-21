@@ -1976,3 +1976,50 @@ end;
 $$;
 
 grant execute on function public.send_report_reply(uuid, text) to authenticated;
+
+-- ============================================================
+-- Shared, cross-user cache of TMDB TV id -> resolved TVmaze show (see
+-- findTvmazeShowFromTmdbTv in lib/tmdb.ts). Unlike tmdb_api_cache/
+-- tvmaze_api_cache above, this has no TTL — a TMDB show's matching TVmaze
+-- show is a fixed identity that doesn't change once resolved, so there's
+-- nothing to go stale. Explore's discover-category cards (app/(tabs)/
+-- explore.tsx) batch-read this in one request for everything on screen
+-- before falling back to the normal chained TMDB-external-ids + TVmaze-
+-- lookup resolution one card at a time — that chain is still correct, just
+-- noticeably slower done per-card across 40-80 cards at once, which is
+-- what made "is this already in my list" visibly lag behind on Explore's
+-- first load compared to a user profile (whose shows are already stored by
+-- TVmaze id directly, no resolution needed at all). "View more" (app/
+-- browse.tsx) and Explore's own text search deliberately keep resolving
+-- live instead of reading this table — their result sets are large/
+-- dynamic, not the same small fixed set of discover-category cards every
+-- user sees — but every successful resolution anywhere (including those
+-- two) still writes through here for next time.
+--
+-- Same RLS shape as tvmaze_api_cache: any authenticated user can read, and
+-- can also write a resolution their own session just computed — the data
+-- is a public mapping with no injection/abuse surface worth locking down
+-- further (worst case a bad write is one wrong row, overwritten by the
+-- next real resolution).
+--
+-- Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.tmdb_tvmaze_resolved (
+  tmdb_tv_id integer primary key,
+  tvmaze_show jsonb not null,
+  resolved_at timestamptz not null default now()
+);
+
+alter table public.tmdb_tvmaze_resolved enable row level security;
+
+create policy "tmdb_tvmaze_resolved_select_authenticated"
+  on public.tmdb_tvmaze_resolved for select
+  using (auth.role() = 'authenticated');
+
+create policy "tmdb_tvmaze_resolved_upsert_authenticated"
+  on public.tmdb_tvmaze_resolved for insert
+  with check (auth.role() = 'authenticated');
+
+create policy "tmdb_tvmaze_resolved_update_authenticated"
+  on public.tmdb_tvmaze_resolved for update
+  using (auth.role() = 'authenticated');

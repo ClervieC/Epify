@@ -446,7 +446,51 @@ export async function findTvmazeShowFromTmdbTv(
 ): Promise<TVMazeShow | null> {
   const external = await getTvExternalIds(tmdbTvId);
   if (!external.tvdb_id) return null;
-  return lookupShowByTvdbId(external.tvdb_id, priority);
+  const show = await lookupShowByTvdbId(external.tvdb_id, priority);
+  // Write-through into the shared resolution cache below regardless of
+  // which screen/priority triggered this — a show resolved from a direct
+  // tap, "View more", or a search is just as permanently valid as one
+  // resolved by Explore's own background prefetch, so every caller
+  // contributes to the same cache.
+  if (show) cacheResolvedTvmazeShow(tmdbTvId, show);
+  return show;
+}
+
+// A TMDB TV id's matching TVmaze show never changes once resolved — unlike
+// tmdb_api_cache/tvmaze_api_cache above, this has no TTL, just "do we
+// already know this one." Explore's discover-category cards (app/(tabs)/
+// explore.tsx) batch-read this in ONE request for everything on screen
+// before falling back to the chained TMDB external-ids + TVmaze lookup
+// above one card at a time — that chain is still correct, just slower when
+// done per-card for 40-80 cards at once. "View more" (app/browse.tsx) and
+// Explore's own text search deliberately skip this read (their result sets
+// are large/dynamic, not the same small fixed set of discover-category
+// cards every user sees), but still benefit from the write-through above.
+export async function fetchResolvedTvmazeShows(tmdbTvIds: number[]): Promise<Map<number, TVMazeShow>> {
+  if (tmdbTvIds.length === 0) return new Map();
+  try {
+    const { data, error } = await supabase
+      .from("tmdb_tvmaze_resolved")
+      .select("tmdb_tv_id, tvmaze_show")
+      .in("tmdb_tv_id", tmdbTvIds);
+    if (error || !data) return new Map();
+    return new Map((data as { tmdb_tv_id: number; tvmaze_show: TVMazeShow }[]).map((row) => [row.tmdb_tv_id, row.tvmaze_show]));
+  } catch {
+    return new Map();
+  }
+}
+
+// Fire-and-forget (mirrors lib/tvmaze.ts's writeTvmazeSharedCache) — a
+// failed write here just means the next reader falls back to the normal
+// chained resolution, same as a cache miss today.
+function cacheResolvedTvmazeShow(tmdbTvId: number, show: TVMazeShow): void {
+  (async () => {
+    try {
+      await supabase.from("tmdb_tvmaze_resolved").upsert({ tmdb_tv_id: tmdbTvId, tvmaze_show: show });
+    } catch {
+      // Best-effort — see comment above.
+    }
+  })();
 }
 
 // The other direction of the same bridge: a TVmaze show (see
