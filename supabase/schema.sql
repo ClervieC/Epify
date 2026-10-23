@@ -2471,3 +2471,120 @@ end;
 $$;
 
 grant execute on function public.unmark_episode_watched_for_room(uuid, int) to authenticated;
+
+-- ============================================================
+-- Report replies — turns public.reports from a one-shot "file a report, get
+-- at most one overwritten admin_reply back" dead end into a real threaded
+-- conversation, the same upgrade support_message_replies already gave
+-- support_messages above. reports.reason stays the reporter's original
+-- message; admin_reply/admin_reply_at stop being written to (left in place,
+-- never backfilled, purely so an old report answered before this migration
+-- still shows its answer) — every reply after that, from either side, is a
+-- row here. resolution_note/resolved_by/resolved_at stay exactly as they
+-- were: the admin-only "why resolved/dismissed" audit trail, independent of
+-- this conversation. Purely additive — safe to run once.
+-- ============================================================
+create table if not exists public.report_replies (
+  id uuid primary key default gen_random_uuid(),
+  report_id uuid not null references public.reports (id) on delete cascade,
+  author_id uuid not null references auth.users (id) on delete cascade,
+  is_admin boolean not null default false,
+  body text not null check (char_length(trim(body)) between 1 and 2000),
+  created_at timestamptz not null default now()
+);
+
+alter table public.report_replies enable row level security;
+
+create policy "Reporters view replies on their own reports"
+  on public.report_replies
+  for select
+  using (
+    exists (select 1 from public.reports r where r.id = report_id and r.reporter_id = auth.uid())
+  );
+
+create policy "Reporters reply to their own reports"
+  on public.report_replies
+  for insert
+  with check (
+    auth.uid() = author_id
+    and is_admin = false
+    and exists (select 1 from public.reports r where r.id = report_id and r.reporter_id = auth.uid())
+  );
+
+create policy "Admins view all report replies"
+  on public.report_replies
+  for select
+  using (exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin));
+
+create policy "Admins reply to any report"
+  on public.report_replies
+  for insert
+  with check (
+    auth.uid() = author_id
+    and is_admin = true
+    and exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin)
+  );
+
+create index if not exists report_replies_report_idx on public.report_replies (report_id, created_at);
+
+-- Lets lib/reports.ts's sendReporterReply flip a resolved/dismissed report
+-- back to 'open' when the reporter follows up on it — same reopen-on-reply
+-- behavior support_messages already has, and for the same reason: without
+-- this, only the "Admins update reports" policy could touch this table, so
+-- that reopen silently updated zero rows for every non-admin reporter.
+create policy "Reporters reopen their own reports"
+  on public.reports
+  for update
+  using (auth.uid() = reporter_id)
+  with check (auth.uid() = reporter_id);
+
+-- Supersedes the original send_report_reply above: now appends to the
+-- thread (report_replies) instead of overwriting the single admin_reply
+-- column, and returns the created row so the admin screen can append it to
+-- its own thread state immediately instead of refetching. Still security
+-- definer for the same reason as before — a client has no insert policy
+-- letting it write into someone else's notifications row directly.
+create or replace function public.send_report_reply(p_report_id uuid, p_message text)
+returns public.report_replies language plpgsql security definer set search_path = public as $$
+declare
+  v_reporter_id uuid;
+  v_reply public.report_replies;
+begin
+  if not exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_admin) then
+    raise exception 'not authorized';
+  end if;
+
+  select reporter_id into v_reporter_id from public.reports where id = p_report_id;
+  if v_reporter_id is null then
+    raise exception 'report not found';
+  end if;
+
+  insert into public.report_replies (report_id, author_id, is_admin, body)
+  values (p_report_id, auth.uid(), true, p_message)
+  returning * into v_reply;
+
+  insert into public.notifications (user_id, type, actor_id, report_id, report_message)
+  values (v_reporter_id, 'report_response', auth.uid(), p_report_id, p_message);
+
+  return v_reply;
+end;
+$$;
+
+grant execute on function public.send_report_reply(uuid, text) to authenticated;
+
+-- Realtime for the report ticket thread (see lib/reports.ts's
+-- subscribeToReportReplies, used by app/reports/[id].tsx) — same reasoning
+-- as support_message_replies' own realtime block above: a self-hosted
+-- instance needs the table added to the `supabase_realtime` publication
+-- directly, or postgres_changes subscriptions connect but never deliver.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'report_replies'
+  ) then
+    alter publication supabase_realtime add table public.report_replies;
+  end if;
+end $$;

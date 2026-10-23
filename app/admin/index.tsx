@@ -1,16 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextInput, Platform, Linking } from "react-native";
-import { Image } from "expo-image";
+import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, TextInput, Platform } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
-import { fetchMyProfile, fetchAllProfilesForAdmin, fetchProfiles, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
-import { fetchReports, resolveReport, dismissReport, sendReportReply, Report, ReportStatus, ReportTargetType } from "../../lib/reports";
+import { fetchMyProfile, fetchAllProfilesForAdmin, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
+import { fetchReports, Report, ReportStatus } from "../../lib/reports";
+import { resolveReportTargets, targetSummary, targetHref, TARGET_ICON, TARGET_COLOR, ResolvedReportTargets } from "../../lib/reportTargets";
 import { fetchSupportConversationsForAdmin, SupportConversation } from "../../lib/support";
-import { fetchCommentsByIds } from "../../lib/comments";
-import { fetchMovieCommentsByIds } from "../../lib/movieComments";
-import { getShow, getEpisodeWithShow } from "../../lib/tvmaze";
-import { mapWithConcurrency } from "../../lib/concurrency";
 import { useLanguage } from "../../lib/i18n";
 import { shortDate } from "../../lib/dates";
 import { alert } from "../../lib/alert";
@@ -19,41 +15,12 @@ import { C } from "../../lib/adminTheme";
 
 const STATUS_TABS: ReportStatus[] = ["open", "resolved", "dismissed"];
 
-const TARGET_ICON: Record<ReportTargetType, keyof typeof Ionicons.glyphMap> = {
-  user: "person-outline",
-  comment: "chatbubble-outline",
-  movie_comment: "chatbubble-outline",
-  show: "tv-outline",
-  episode: "film-outline",
-  movie: "videocam-outline",
-  general: "alert-circle-outline",
-};
-
-interface EpisodeInfo {
-  name: string;
-  showName: string | null;
-  showId: number;
-}
-
-interface CommentInfo {
-  body: string;
-  authorName: string | null;
-  // Lets the report card link through to whatever the comment is actually
-  // on — a comment/movie_comment report has no tvmaze/tmdb id of its own on
-  // the report row (see targetHref below), only this resolved lookup does.
-  showId?: number; // comment (show/episode) only
-  episodeId?: number | null; // comment (episode) only
-  movieTmdbId?: number; // movie_comment only
-}
-
-const TARGET_COLOR: Record<ReportTargetType, string> = {
-  user: C.red,
-  comment: C.accent,
-  movie_comment: C.accent,
-  show: C.yellow,
-  episode: C.yellow,
-  movie: C.yellow,
-  general: C.textMuted,
+const EMPTY_TARGETS: ResolvedReportTargets = {
+  userNames: new Map(),
+  showNames: new Map(),
+  episodeInfo: new Map(),
+  commentInfo: new Map(),
+  movieCommentInfo: new Map(),
 };
 
 export default function AdminScreen() {
@@ -72,14 +39,10 @@ export default function AdminScreen() {
   const [conversations, setConversations] = useState<SupportConversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
   // Reports only store raw ids (reporter_id/target_user_id, TVmaze show/
-  // episode ids) — these resolve them to display names so a report reads
+  // episode ids) — this resolves them to display names so a report reads
   // as "Breaking Bad (#169)" / "reported by clervie" instead of a bare id
   // an admin has to look up by hand to know what's actually being reported.
-  const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
-  const [showNames, setShowNames] = useState<Map<number, string>>(new Map());
-  const [episodeInfo, setEpisodeInfo] = useState<Map<number, EpisodeInfo>>(new Map());
-  const [commentInfo, setCommentInfo] = useState<Map<string, CommentInfo>>(new Map());
-  const [movieCommentInfo, setMovieCommentInfo] = useState<Map<string, CommentInfo>>(new Map());
+  const [targets, setTargets] = useState<ResolvedReportTargets>(EMPTY_TARGETS);
 
   // Gated server-side too (see the "Admins view/update all reports" RLS
   // policies in supabase/schema.sql) — this client-side check is purely so
@@ -97,104 +60,12 @@ export default function AdminScreen() {
     fetchReports(s)
       .then((data) => {
         setReports(data);
-        resolveReportLabels(data);
+        // Best-effort, non-blocking — targetSummary already falls back to
+        // the raw id/number if any of this hasn't resolved yet.
+        resolveReportTargets(data).then(setTargets).catch(() => {});
       })
       .finally(() => setLoading(false));
   }, []);
-
-  // Best-effort, non-blocking — the report cards already fall back to the
-  // raw id/number if any of these lookups fails or hasn't resolved yet.
-  function resolveReportLabels(data: Report[]) {
-    const userIds = Array.from(
-      new Set(
-        data.flatMap((r) => [r.reporter_id, r.target_user_id]).filter((id): id is string => !!id),
-      ),
-    );
-    fetchProfiles(userIds)
-      .then((profiles) => setUserNames(new Map(profiles.map((p) => [p.user_id, p.username]))))
-      .catch(() => {});
-
-    const showIds = Array.from(
-      new Set(
-        data
-          .filter((r) => r.target_type === "show" && r.target_tvmaze_show_id != null)
-          .map((r) => r.target_tvmaze_show_id as number),
-      ),
-    );
-    mapWithConcurrency(showIds, 5, (id) =>
-      getShow(id)
-        .then((show) => [id, show.name] as const)
-        .catch(() => [id, null] as const),
-    ).then((entries) => {
-      setShowNames((prev) => {
-        const next = new Map(prev);
-        for (const [id, name] of entries) if (name) next.set(id, name);
-        return next;
-      });
-    });
-
-    const episodeIds = Array.from(
-      new Set(
-        data
-          .filter((r) => r.target_type === "episode" && r.target_tvmaze_episode_id != null)
-          .map((r) => r.target_tvmaze_episode_id as number),
-      ),
-    );
-    mapWithConcurrency(episodeIds, 5, (id) =>
-      getEpisodeWithShow(id)
-        .then((ep) => [id, { name: ep.name, showName: ep._embedded.show.name, showId: ep._embedded.show.id }] as const)
-        .catch(() => [id, null] as const),
-    ).then((entries) => {
-      setEpisodeInfo((prev) => {
-        const next = new Map(prev);
-        for (const [id, info] of entries) if (info) next.set(id, info);
-        return next;
-      });
-    });
-
-    const commentIds = Array.from(
-      new Set(
-        data
-          .filter((r) => r.target_type === "comment" && r.target_comment_id)
-          .map((r) => r.target_comment_id as string),
-      ),
-    );
-    fetchCommentsByIds(commentIds)
-      .then((comments) => {
-        setCommentInfo((prev) => {
-          const next = new Map(prev);
-          for (const c of comments) {
-            next.set(c.id, {
-              body: c.body,
-              authorName: c.author?.username ?? null,
-              showId: c.tvmaze_show_id,
-              episodeId: c.tvmaze_episode_id,
-            });
-          }
-          return next;
-        });
-      })
-      .catch(() => {});
-
-    const movieCommentIds = Array.from(
-      new Set(
-        data
-          .filter((r) => r.target_type === "movie_comment" && r.target_movie_comment_id)
-          .map((r) => r.target_movie_comment_id as string),
-      ),
-    );
-    fetchMovieCommentsByIds(movieCommentIds)
-      .then((comments) => {
-        setMovieCommentInfo((prev) => {
-          const next = new Map(prev);
-          for (const c of comments) {
-            next.set(c.id, { body: c.body, authorName: c.author?.username ?? null, movieTmdbId: c.tmdb_id });
-          }
-          return next;
-        });
-      })
-      .catch(() => {});
-  }
 
   const loadUsers = useCallback((query: string) => {
     setUsersLoading(true);
@@ -304,16 +175,7 @@ export default function AdminScreen() {
           ) : (
             <ScrollView contentContainerStyle={styles.list}>
               {reports.map((r) => (
-                <ReportCard
-                  key={r.id}
-                  report={r}
-                  onActed={() => load(status)}
-                  userNames={userNames}
-                  showNames={showNames}
-                  episodeInfo={episodeInfo}
-                  commentInfo={commentInfo}
-                  movieCommentInfo={movieCommentInfo}
-                />
+                <ReportRow key={r.id} report={r} targets={targets} />
               ))}
             </ScrollView>
           )}
@@ -382,251 +244,36 @@ export default function AdminScreen() {
   );
 }
 
-function commentSummary(label: string, info: CommentInfo | undefined, fallbackId: string | undefined): string {
-  if (!info) return `${label} · ${fallbackId?.slice(0, 8)}`;
-  const preview = info.body.length > 60 ? `${info.body.slice(0, 60)}…` : info.body;
-  return info.authorName ? `${label} · ${info.authorName}: "${preview}"` : `${label} · "${preview}"`;
-}
-
-function targetSummary(
-  t: ReturnType<typeof useLanguage>["t"],
-  r: Report,
-  userNames: Map<string, string>,
-  showNames: Map<number, string>,
-  episodeInfo: Map<number, EpisodeInfo>,
-  commentInfo: Map<string, CommentInfo>,
-  movieCommentInfo: Map<string, CommentInfo>,
-): string {
-  switch (r.target_type) {
-    case "user": {
-      const name = r.target_user_id ? userNames.get(r.target_user_id) : undefined;
-      return `${t.admin.targetUser} · ${name ?? r.target_user_id?.slice(0, 8)}`;
-    }
-    case "comment":
-      return commentSummary(
-        t.admin.targetComment,
-        r.target_comment_id ? commentInfo.get(r.target_comment_id) : undefined,
-        r.target_comment_id ?? undefined,
-      );
-    case "movie_comment":
-      return commentSummary(
-        t.admin.targetMovieComment,
-        r.target_movie_comment_id ? movieCommentInfo.get(r.target_movie_comment_id) : undefined,
-        r.target_movie_comment_id ?? undefined,
-      );
-    case "show": {
-      const name = r.target_tvmaze_show_id ? showNames.get(r.target_tvmaze_show_id) : undefined;
-      return name ? `${name} (#${r.target_tvmaze_show_id})` : `${t.admin.targetShow} #${r.target_tvmaze_show_id}`;
-    }
-    case "episode": {
-      const info = r.target_tvmaze_episode_id ? episodeInfo.get(r.target_tvmaze_episode_id) : undefined;
-      if (!info) return `${t.admin.targetEpisode} #${r.target_tvmaze_episode_id}`;
-      return `${info.showName ? `${info.showName} · ` : ""}${info.name} (#${r.target_tvmaze_episode_id})`;
-    }
-    case "movie":
-      return `${t.admin.targetMovie} #${r.target_tmdb_id}`;
-    case "general":
-      return t.admin.targetGeneral;
-  }
-}
-
-// Where tapping a report's target should navigate — same screens the app
-// itself uses (show/episode/movie/user detail), so an admin can see
-// exactly what was reported instead of only reading its resolved name.
-// null when there's nothing to navigate to yet (id missing, or a comment
-// whose own target hasn't resolved from commentInfo/movieCommentInfo yet).
-type Href = string | { pathname: string; params: Record<string, string> };
-function targetHref(
-  r: Report,
-  commentInfo: Map<string, CommentInfo>,
-  movieCommentInfo: Map<string, CommentInfo>,
-): Href | null {
-  switch (r.target_type) {
-    case "user":
-      return r.target_user_id ? `/users/${r.target_user_id}` : null;
-    case "show":
-      return r.target_tvmaze_show_id ? `/show/${r.target_tvmaze_show_id}` : null;
-    case "episode":
-      return r.target_tvmaze_episode_id
-        ? {
-            pathname: "/episode/[id]",
-            params: { id: String(r.target_tvmaze_episode_id), showId: String(r.target_tvmaze_show_id ?? "") },
-          }
-        : null;
-    case "movie":
-      return r.target_tmdb_id ? `/movie/tmdb/${r.target_tmdb_id}` : null;
-    case "comment": {
-      const info = r.target_comment_id ? commentInfo.get(r.target_comment_id) : undefined;
-      if (!info?.showId) return null;
-      return info.episodeId
-        ? { pathname: "/episode/[id]", params: { id: String(info.episodeId), showId: String(info.showId) } }
-        : `/show/${info.showId}`;
-    }
-    case "movie_comment": {
-      const info = r.target_movie_comment_id ? movieCommentInfo.get(r.target_movie_comment_id) : undefined;
-      return info?.movieTmdbId ? `/movie/tmdb/${info.movieTmdbId}` : null;
-    }
-    case "general":
-      return null;
-  }
-}
-
-function ReportCard({
-  report,
-  onActed,
-  userNames,
-  showNames,
-  episodeInfo,
-  commentInfo,
-  movieCommentInfo,
-}: {
-  report: Report;
-  onActed: () => void;
-  userNames: Map<string, string>;
-  showNames: Map<number, string>;
-  episodeInfo: Map<number, EpisodeInfo>;
-  commentInfo: Map<string, CommentInfo>;
-  movieCommentInfo: Map<string, CommentInfo>;
-}) {
+// A compact row rather than the old always-expanded card — tapping it opens
+// the report's own full ticket screen (app/admin/reports/[id].tsx), where
+// the reason/photos/thread/resolve-or-dismiss actions now live. Mirrors the
+// "support" tab's own list-then-open-conversation shape just above.
+function ReportRow({ report, targets }: { report: Report; targets: ResolvedReportTargets }) {
   const { t } = useLanguage();
   const router = useRouter();
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [reply, setReply] = useState("");
-  const [replying, setReplying] = useState(false);
-  const [replySent, setReplySent] = useState(false);
-  const href = targetHref(report, commentInfo, movieCommentInfo);
-
-  async function act(action: "resolve" | "dismiss") {
-    setBusy(true);
-    try {
-      await (action === "resolve" ? resolveReport : dismissReport)(report.id, note.trim() || null);
-      onActed();
-    } catch {
-      alert("Failed", "Couldn't update this report.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // Independent of resolve/dismiss — see admin_reply's own comment in
-  // supabase/schema.sql for why this is a separate, reporter-facing field
-  // rather than resolution_note (which stays admin-only). An admin can
-  // reply any time, before or after acting on the report.
-  async function sendReply() {
-    if (!reply.trim()) return;
-    setReplying(true);
-    try {
-      await sendReportReply(report.id, reply.trim());
-      setReply("");
-      setReplySent(true);
-      onActed();
-    } catch {
-      alert("Failed", "Couldn't send the reply.");
-    } finally {
-      setReplying(false);
-    }
-  }
-
   const color = TARGET_COLOR[report.target_type];
 
   return (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={[styles.iconWrap, { backgroundColor: `${color}22` }]}>
-          <Ionicons name={TARGET_ICON[report.target_type]} size={15} color={color} />
-        </View>
-        {href ? (
-          <Pressable onPress={() => router.push(href as never)} style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[styles.cardTarget, styles.cardTargetLink]} numberOfLines={1}>
-              {targetSummary(t, report, userNames, showNames, episodeInfo, commentInfo, movieCommentInfo)}
-            </Text>
-          </Pressable>
-        ) : (
-          <Text style={styles.cardTarget} numberOfLines={1}>
-            {targetSummary(t, report, userNames, showNames, episodeInfo, commentInfo, movieCommentInfo)}
-          </Text>
-        )}
-        <Text style={styles.cardDate}>{shortDate(report.created_at)}</Text>
+    <Pressable
+      style={styles.reportRow}
+      onPress={() => router.push({ pathname: "/admin/reports/[id]", params: { id: report.id } })}
+    >
+      <View style={[styles.iconWrap, { backgroundColor: `${color}22` }]}>
+        <Ionicons name={TARGET_ICON[report.target_type]} size={15} color={color} />
       </View>
-
-      <Text style={styles.cardReason}>{report.reason}</Text>
-
-      {report.image_urls.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.reportImageRow}>
-          {report.image_urls.map((url) => (
-            <Pressable key={url} onPress={() => Linking.openURL(url)}>
-              <Image source={{ uri: url }} style={styles.reportImageThumb} contentFit="cover" />
-            </Pressable>
-          ))}
-        </ScrollView>
-      )}
-
-      <View style={styles.cardMetaRow}>
-        <Ionicons name="person-circle-outline" size={13} color={C.textMuted} />
-        <Text style={styles.cardMeta}>
-          {t.admin.reportedBy} {userNames.get(report.reporter_id) ?? report.reporter_id.slice(0, 8)}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={styles.reportRowTopLine}>
+          <Text style={styles.cardTarget} numberOfLines={1}>
+            {targetSummary(t.admin, report, targets)}
+          </Text>
+          <Text style={styles.cardDate}>{shortDate(report.created_at)}</Text>
+        </View>
+        <Text style={styles.reportRowReason} numberOfLines={1}>
+          {report.reason}
         </Text>
       </View>
-
-      {report.status === "open" ? (
-        <>
-          <TextInput
-            style={styles.noteInput}
-            placeholder={t.admin.resolutionNotePlaceholder}
-            placeholderTextColor={C.textMuted}
-            value={note}
-            onChangeText={setNote}
-          />
-          <View style={styles.actionRow}>
-            <Pressable style={[styles.actionBtn, styles.resolveBtn]} onPress={() => act("resolve")} disabled={busy}>
-              <Ionicons name="checkmark" size={14} color="#0a0c10" />
-              <Text style={styles.actionBtnText}>{t.admin.resolve}</Text>
-            </Pressable>
-            <Pressable style={[styles.actionBtn, styles.dismissBtn]} onPress={() => act("dismiss")} disabled={busy}>
-              <Ionicons name="close" size={14} color="#0a0c10" />
-              <Text style={styles.actionBtnText}>{t.admin.dismiss}</Text>
-            </Pressable>
-          </View>
-        </>
-      ) : (
-        report.resolution_note && (
-          <View style={styles.quoteBlock}>
-            <Text style={styles.quoteText}>{report.resolution_note}</Text>
-          </View>
-        )
-      )}
-
-      {report.admin_reply && (
-        <View style={styles.cardMetaRow}>
-          <Ionicons name="arrow-undo-outline" size={13} color={C.textMuted} />
-          <Text style={styles.cardMeta} numberOfLines={2}>
-            {t.admin.replySentLabel} {report.admin_reply}
-          </Text>
-        </View>
-      )}
-      <View style={styles.replyRow}>
-        <TextInput
-          style={styles.replyInput}
-          placeholder={t.admin.replyPlaceholder}
-          placeholderTextColor={C.textMuted}
-          value={reply}
-          onChangeText={(text) => {
-            setReply(text);
-            setReplySent(false);
-          }}
-        />
-        <Pressable
-          style={[styles.replySendBtn, (!reply.trim() || replying) && styles.actionBtnDisabled]}
-          onPress={sendReply}
-          disabled={!reply.trim() || replying}
-          accessibilityRole="button"
-          accessibilityLabel={t.admin.sendReply}
-        >
-          <Ionicons name={replySent ? "checkmark" : "send"} size={14} color="#fff" />
-        </Pressable>
-      </View>
-    </View>
+      <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
+    </Pressable>
   );
 }
 
@@ -762,48 +409,24 @@ const styles = StyleSheet.create({
   empty: { color: C.textMuted, textAlign: "center", marginTop: 32 },
   list: { padding: 16, paddingTop: 0, gap: 10 },
   card: { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 12, gap: 8 },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   iconWrap: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
   cardTarget: { flex: 1, color: C.text, fontWeight: "700", fontSize: 13 },
-  cardTargetLink: { color: C.accent, textDecorationLine: "underline" },
   cardDate: { color: C.textMuted, fontSize: 11 },
-  cardReason: { color: C.text, fontSize: 13, lineHeight: 18 },
-  reportImageRow: { gap: 8, marginTop: 4 },
-  reportImageThumb: { width: 72, height: 72, borderRadius: 8, backgroundColor: C.bg },
-  cardMetaRow: { flexDirection: "row", alignItems: "center", gap: 5 },
-  cardMeta: { color: C.textMuted, fontSize: 11 },
-  quoteBlock: { borderLeftWidth: 2, borderLeftColor: C.accent, paddingLeft: 10 },
-  quoteText: { color: C.textMuted, fontSize: 12, fontStyle: "italic", lineHeight: 17 },
-  noteInput: {
-    backgroundColor: C.bg,
+  reportRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: C.surface,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    color: C.text,
-    // 16px, not 13 — see searchInput's own comment above.
-    fontSize: 16,
+    padding: 12,
   },
-  replyRow: { flexDirection: "row", gap: 8, alignItems: "center" },
-  replySendBtn: { width: 36, height: 36, borderRadius: 8, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
-  replyInput: {
-    flex: 1,
-    backgroundColor: C.bg,
-    borderWidth: 1,
-    borderColor: C.border,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    color: C.text,
-    // 16px, not 13 — see searchInput's own comment above.
-    fontSize: 16,
-  },
+  reportRowTopLine: { flexDirection: "row", alignItems: "center", gap: 8 },
+  reportRowReason: { color: C.textMuted, fontSize: 12, marginTop: 2 },
   actionRow: { flexDirection: "row", gap: 8 },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 9, borderRadius: 8 },
-  actionBtnDisabled: { opacity: 0.5 },
   resolveBtn: { backgroundColor: C.green },
-  reopenBtn: { backgroundColor: C.yellow },
   replyBtn: { backgroundColor: C.accent },
   dismissBtn: { backgroundColor: C.red },
   actionBtnText: { color: "#0a0c10", fontWeight: "800", fontSize: 12 },

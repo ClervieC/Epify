@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.13",
+    date: "2026-10-23",
+    en: [
+      "Reports are now a real back-and-forth: reply to a moderator's answer on your report instead of it being a dead end, and replying to a resolved report reopens it. The admin side got the same upgrade, plus a cleaner list of tickets instead of one giant always-open page.",
+    ],
+    fr: [
+      "Les signalements sont maintenant une vraie conversation : tu peux répondre à la réponse d'un modérateur au lieu que ça s'arrête là, et répondre à un signalement résolu le rouvre. Côté modération, même amélioration, avec une liste de tickets plus claire au lieu d'une seule page tout-en-un.",
+    ],
+  },
+  {
     version: "5.3.12",
     date: "2026-10-23",
     en: [

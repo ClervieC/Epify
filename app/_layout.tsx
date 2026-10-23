@@ -148,6 +148,7 @@ function RootNavigation() {
         <Stack.Screen name="legal/privacy" options={{ headerShown: false }} />
         <Stack.Screen name="admin/index" options={{ headerShown: false }} />
         <Stack.Screen name="admin/support/[userId]" options={{ headerShown: false }} />
+        <Stack.Screen name="admin/reports/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="stats/shows" options={{ headerShown: false }} />
         <Stack.Screen name="recap" options={{ headerShown: false }} />
         <Stack.Screen name="support" options={{ headerShown: false }} />
