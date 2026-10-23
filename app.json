@@ -2,7 +2,7 @@
   "expo": {
     "name": "Epify",
     "slug": "Epify",
-    "version": "5.3.15",
+    "version": "5.3.16",
     "scheme": "epify",
     "orientation": "portrait",
     "newArchEnabled": true,

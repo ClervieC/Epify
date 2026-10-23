@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.16",
+    date: "2026-10-23",
+    en: [
+      "Behind the scenes: genres, streaming-platform lists, and actor pages now also feed the app-wide shared cache, so the first person who looks something up saves everyone else the same TMDB request — these three had quietly been skipping it.",
+    ],
+    fr: [
+      "En coulisses : les genres, les listes de plateformes de streaming et les pages d'acteurs alimentent maintenant aussi le cache partagé de l'app, donc la première personne qui cherche quelque chose évite à tout le monde la même requête TMDB — ces trois-là passaient à côté sans qu'on s'en rende compte.",
+    ],
+  },
+  {
     version: "5.3.15",
     date: "2026-10-23",
     en: [

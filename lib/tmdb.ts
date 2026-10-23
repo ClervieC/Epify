@@ -681,15 +681,19 @@ function tmdbLanguageTag(language: "en" | "fr"): string {
 }
 
 export function getMovieGenres(language: "en" | "fr"): Promise<TMDBGenre[]> {
+  const path = pathWithQuery("/genre/movie/list", { language: tmdbLanguageTag(language) });
   return withCache(`genres:movie:${language}`, ONE_DAY * 7, async () => {
-    const data = await get<{ genres: TMDBGenre[] }>("/genre/movie/list", { language: tmdbLanguageTag(language) });
+    const shared = await fetchViaSharedCache<{ genres: TMDBGenre[] }>(path, ONE_DAY * 7);
+    const data = shared.hit ? shared.payload : await get<{ genres: TMDBGenre[] }>("/genre/movie/list", { language: tmdbLanguageTag(language) });
     return data.genres;
   });
 }
 
 export function getTvGenres(language: "en" | "fr"): Promise<TMDBGenre[]> {
+  const path = pathWithQuery("/genre/tv/list", { language: tmdbLanguageTag(language) });
   return withCache(`genres:tv:${language}`, ONE_DAY * 7, async () => {
-    const data = await get<{ genres: TMDBGenre[] }>("/genre/tv/list", { language: tmdbLanguageTag(language) });
+    const shared = await fetchViaSharedCache<{ genres: TMDBGenre[] }>(path, ONE_DAY * 7);
+    const data = shared.hit ? shared.payload : await get<{ genres: TMDBGenre[] }>("/genre/tv/list", { language: tmdbLanguageTag(language) });
     return data.genres;
   });
 }
@@ -708,10 +712,13 @@ export interface TMDBWatchProviderOption {
 // rarely.
 function cachedWatchProviderList(kind: "movie" | "tv", language: "en" | "fr") {
   const region = regionForLanguage(language);
+  const path = pathWithQuery(`/watch/providers/${kind}`, { watch_region: region });
   return withCache(`watch-providers:${kind}:${region}`, ONE_DAY * 7, async () => {
-    const data = await get<{
+    type RawProviderList = {
       results: (TMDBWatchProviderOption & { display_priorities?: Record<string, number>; display_priority?: number })[];
-    }>(`/watch/providers/${kind}`, { watch_region: region });
+    };
+    const shared = await fetchViaSharedCache<RawProviderList>(path, ONE_DAY * 7);
+    const data = shared.hit ? shared.payload : await get<RawProviderList>(`/watch/providers/${kind}`, { watch_region: region });
     return data.results
       .slice()
       .sort(

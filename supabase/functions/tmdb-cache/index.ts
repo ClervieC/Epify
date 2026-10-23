@@ -56,7 +56,7 @@ const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 // (rather than accepting any string) keeps an authenticated-but-malicious
 // client from turning this into a general-purpose fetch relay or spamming
 // the cache table with unbounded distinct junk paths.
-const ALLOWED_PREFIXES = ["/movie", "/tv", "/search", "/discover", "/find"];
+const ALLOWED_PREFIXES = ["/movie", "/tv", "/search", "/discover", "/find", "/person", "/watch", "/genre"];
 
 function isAllowedPath(path: string): boolean {
   if (!path.startsWith("/") || path.startsWith("//")) return false;
