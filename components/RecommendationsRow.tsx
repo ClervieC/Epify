@@ -15,7 +15,10 @@ export interface RecommendationItem {
 // "You might also like" — shared by movie and show detail (see
 // app/movie/tmdb/[id].tsx and app/show/[id].tsx), same shape either way
 // (see RecommendationItem) so this doesn't need to know which one it's on.
-export function RecommendationsRow({ items }: { items: RecommendationItem[] }) {
+// `title` defaults to that same copy; app/person/[id].tsx reuses this same
+// poster-row shape for its "Movies"/"TV Shows" credit sections, which need
+// their own headers instead.
+export function RecommendationsRow({ items, title }: { items: RecommendationItem[]; title?: string }) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
@@ -24,7 +27,7 @@ export function RecommendationsRow({ items }: { items: RecommendationItem[] }) {
 
   return (
     <View>
-      <Text style={styles.sectionHeader}>{t.common.youMightAlsoLike}</Text>
+      <Text style={styles.sectionHeader}>{title ?? t.common.youMightAlsoLike}</Text>
       <HorizontalScrollRow>
         {items.map((item) => (
           <Pressable key={item.key} style={styles.card} onPress={item.onPress}>

@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.15",
+    date: "2026-10-23",
+    en: [
+      "Tap an actor's photo in a show or movie's cast list to see everything else they've been in — movies and TV shows both.",
+    ],
+    fr: [
+      "Touche la photo d'un acteur dans le casting d'une série ou d'un film pour voir tout ce qu'il a fait d'autre — films et séries confondus.",
+    ],
+  },
+  {
     version: "5.3.14",
     date: "2026-10-23",
     en: [

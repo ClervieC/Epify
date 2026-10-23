@@ -244,6 +244,99 @@ export function profileUrl(path: string | null, size: "w185" = "w185") {
   return path ? `${IMAGE_BASE_URL}/${size}${path}` : null;
 }
 
+export interface TMDBPerson {
+  id: number;
+  name: string;
+  profile_path: string | null;
+  biography: string;
+}
+
+export function getPersonDetails(personId: number): Promise<TMDBPerson> {
+  const path = `/person/${personId}`;
+  return withCache(`person:${personId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<TMDBPerson>(path, ONE_DAY);
+    return shared.hit ? shared.payload : await get<TMDBPerson>(path);
+  });
+}
+
+// A tap on an actor's photo — a show's cast card (lib/tvmaze.ts's
+// CastMember, TVmaze-only) or a movie's (TMDBCastMember, which already
+// carries this same id) — should surface what else they've been in, movies
+// AND shows alike, which only TMDB (not TVmaze) has data for. media_type
+// narrows TMDB's combined_credits (which otherwise also contains crew
+// roles, documentaries the person directed, etc. mixed into the "cast"
+// array's own department field) down to acting roles.
+export interface TMDBPersonCredit {
+  id: number;
+  mediaType: "movie" | "tv";
+  title: string;
+  posterPath: string | null;
+  date: string | null;
+  character: string;
+}
+
+interface TMDBRawCombinedCredit {
+  id: number;
+  media_type: "movie" | "tv" | string;
+  title?: string;
+  name?: string;
+  poster_path: string | null;
+  release_date?: string;
+  first_air_date?: string;
+  character?: string;
+  popularity: number;
+}
+
+export function getPersonCombinedCredits(personId: number): Promise<TMDBPersonCredit[]> {
+  const path = `/person/${personId}/combined_credits`;
+  return withCache(`person-credits:${personId}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ cast: TMDBRawCombinedCredit[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ cast: TMDBRawCombinedCredit[] }>(path);
+
+    // The same title can appear more than once (recurring role credited
+    // per-season, a cameo plus a regular role, etc.) — keep just the most
+    // popular-looking entry per title rather than listing it twice.
+    const byKey = new Map<string, TMDBRawCombinedCredit>();
+    for (const c of data.cast) {
+      if (c.media_type !== "movie" && c.media_type !== "tv") continue;
+      const key = `${c.media_type}:${c.id}`;
+      const existing = byKey.get(key);
+      if (!existing || c.popularity > existing.popularity) byKey.set(key, c);
+    }
+
+    return [...byKey.values()]
+      .map((c) => ({
+        id: c.id,
+        mediaType: c.media_type as "movie" | "tv",
+        title: c.title ?? c.name ?? "",
+        posterPath: c.poster_path,
+        date: c.release_date || c.first_air_date || null,
+        character: c.character ?? "",
+      }))
+      .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+  });
+}
+
+export interface TMDBPersonSearchResult {
+  id: number;
+  name: string;
+  profile_path: string | null;
+}
+
+// Resolves a TVmaze cast member (name only, no TMDB id of its own) to a
+// TMDB person — same best-effort, take-the-top-hit approach as searchMovie
+// above, since there's no better signal than the name itself to go on.
+// Returns null (not a thrown error) on no match, same convention as
+// findTvmazeShowFromTmdbTv: a plain "couldn't find this one," not a bug.
+export function searchPerson(name: string): Promise<TMDBPersonSearchResult | null> {
+  const path = pathWithQuery("/search/person", { query: name });
+  return withCache(`search-person:${name}`, ONE_DAY, async () => {
+    const shared = await fetchViaSharedCache<{ results: TMDBPersonSearchResult[] }>(path, ONE_DAY);
+    const data = shared.hit ? shared.payload : await get<{ results: TMDBPersonSearchResult[] }>("/search/person", { query: name });
+    return data.results[0] ?? null;
+  });
+}
+
 export interface TMDBVideo {
   key: string;
   site: string;

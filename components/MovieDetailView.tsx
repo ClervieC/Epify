@@ -6,6 +6,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import Reanimated from "react-native-reanimated";
 import { GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import {
   backdropUrl,
   posterUrl,
@@ -76,6 +77,7 @@ export function MovieDetailView({
 }: MovieDetailViewProps) {
   const colors = useColors();
   const { t } = useLanguage();
+  const router = useRouter();
   const posterHue = colors[hueForTitle(title)];
   const styles = useMemo(() => createStyles(colors, posterHue), [colors, posterHue]);
   const { gesture: swipeDownGesture, animatedStyle: swipeDownStyle } = useSwipeDownToDismiss(onBack);
@@ -190,7 +192,11 @@ export function MovieDetailView({
               <Text style={styles.sectionHeader}>{t.showDetail.cast}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {cast.slice(0, 20).map((c) => (
-                  <View key={c.id} style={styles.castCard}>
+                  <Pressable
+                    key={c.id}
+                    style={styles.castCard}
+                    onPress={() => router.push({ pathname: "/person/[id]", params: { id: String(c.id), name: c.name } })}
+                  >
                     {c.profile_path ? (
                       <Image source={{ uri: profileUrl(c.profile_path)! }} style={styles.castImage} contentFit="cover" />
                     ) : (
@@ -204,7 +210,7 @@ export function MovieDetailView({
                     <Text style={styles.castCharacter} numberOfLines={1}>
                       {c.character}
                     </Text>
-                  </View>
+                  </Pressable>
                 ))}
               </ScrollView>
             </>

@@ -25,6 +25,7 @@ import {
   getTvWatchProviders,
   getTvRecommendations,
   posterUrl,
+  searchPerson,
   WatchProviders,
   TMDBTvResult,
 } from "../../lib/tmdb";
@@ -109,6 +110,12 @@ export default function ShowDetailScreen() {
   const [show, setShow] = useState<TVMazeShow | null>(null);
   const [episodes, setEpisodes] = useState<TVMazeEpisode[]>([]);
   const [cast, setCast] = useState<CastMember[]>([]);
+  // TVmaze cast members only carry a TVmaze person id — tapping one needs a
+  // name-based lookup into TMDB (lib/tmdb.ts's searchPerson) to find their
+  // actual filmography (TVmaze itself has no movie data at all). Keyed by
+  // the same person-character pair the cast row itself is keyed by, so two
+  // dual-role credits for the same actor can resolve independently.
+  const [resolvingCastKey, setResolvingCastKey] = useState<string | null>(null);
   const [userShow, setUserShow] = useState<UserShow | null>(null);
   const [watched, setWatched] = useState<WatchedEpisode[]>([]);
   const [watchersByEpisode, setWatchersByEpisode] = useState<Map<number, EpisodeWatcher[]>>(new Map());
@@ -278,6 +285,21 @@ export default function ShowDetailScreen() {
       router.push(`/show/${resolved.id}`);
     } else {
       alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
+    }
+  }
+
+  async function openCastMember(member: CastMember) {
+    const key = `${member.person.id}-${member.character.id}`;
+    setResolvingCastKey(key);
+    try {
+      const person = await searchPerson(member.person.name);
+      if (person) {
+        router.push({ pathname: "/person/[id]", params: { id: String(person.id), name: person.name } });
+      } else {
+        alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
+      }
+    } finally {
+      setResolvingCastKey((prev) => (prev === key ? null : prev));
     }
   }
 
@@ -947,28 +969,42 @@ export default function ShowDetailScreen() {
                       {cast
                         .filter((c) => !!c.person)
                         .slice(0, 20)
-                        .map((c) => (
+                        .map((c) => {
                           // person.id alone isn't unique here — TVMaze lists
                           // the same actor once per character when they play
                           // more than one role (dual roles, recast returning
                           // under a new credit, etc.), so the pair is what's
                           // actually unique.
-                          <View key={`${c.person.id}-${c.character.id}`} style={styles.castCard}>
-                            {c.person.image ? (
-                              <Image source={{ uri: c.person.image.medium }} style={styles.castImage} contentFit="cover" />
-                            ) : (
-                              <View style={[styles.castImage, styles.castImagePlaceholder]}>
-                                <Ionicons name="person" size={24} color={colors.textFaint} />
-                              </View>
-                            )}
-                            <Text style={styles.castName} numberOfLines={1}>
-                              {c.person.name}
-                            </Text>
-                            <Text style={styles.castCharacter} numberOfLines={1}>
-                              {c.character.name}
-                            </Text>
-                          </View>
-                        ))}
+                          const key = `${c.person.id}-${c.character.id}`;
+                          const resolving = resolvingCastKey === key;
+                          return (
+                            <Pressable
+                              key={key}
+                              style={styles.castCard}
+                              onPress={() => openCastMember(c)}
+                              disabled={resolvingCastKey !== null}
+                            >
+                              {c.person.image ? (
+                                <Image source={{ uri: c.person.image.medium }} style={styles.castImage} contentFit="cover" />
+                              ) : (
+                                <View style={[styles.castImage, styles.castImagePlaceholder]}>
+                                  <Ionicons name="person" size={24} color={colors.textFaint} />
+                                </View>
+                              )}
+                              {resolving && (
+                                <View style={[styles.castImage, styles.castResolvingOverlay]}>
+                                  <ActivityIndicator color="#fff" size="small" />
+                                </View>
+                              )}
+                              <Text style={styles.castName} numberOfLines={1}>
+                                {c.person.name}
+                              </Text>
+                              <Text style={styles.castCharacter} numberOfLines={1}>
+                                {c.character.name}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
                     </ScrollView>
                   </>
                 )}
@@ -1516,6 +1552,14 @@ function createStyles(colors: Colors) {
     ...dropShadow({ opacity: 0.12, radius: 6, offsetY: 2, elevation: 2 }),
   },
   castImagePlaceholder: { alignItems: "center", justifyContent: "center" },
+  castResolvingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   castName: { fontWeight: "700", fontSize: 12, color: colors.text, marginTop: 6 },
   castCharacter: { fontSize: 11, color: colors.textMuted },
   trackCard: { width: 130, marginRight: 12 },

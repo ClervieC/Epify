@@ -135,6 +135,7 @@ function RootNavigation() {
         />
         <Stack.Screen name="movie/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
         <Stack.Screen name="movie/tmdb/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
+        <Stack.Screen name="person/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="users/search" options={{ headerShown: false }} />
         <Stack.Screen name="users/[id]/index" options={{ headerShown: false }} />
         <Stack.Screen name="users/[id]/list" options={{ headerShown: false }} />

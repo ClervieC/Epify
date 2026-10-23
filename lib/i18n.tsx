@@ -561,6 +561,12 @@ const en = {
     seasonFinish: "Mark the rest as watched",
     unwatchedPrompt: "Add this show to your list to rate it and react.",
   },
+  person: {
+    movies: "Movies",
+    tvShows: "TV Shows",
+    noCredits: "No other movies or shows found for this person.",
+    notFound: "This person couldn't be found.",
+  },
   episodeDetail: {
     notWatched: "Not watched yet",
     remainingAll: "All episodes have been watched",
@@ -1250,6 +1256,12 @@ const fr: typeof en = {
     seasonUnwatch: "Ne plus marquer cette saison comme vue",
     seasonFinish: "Marquer le reste comme vu",
     unwatchedPrompt: "Ajoute cette série à ta liste pour la noter et réagir.",
+  },
+  person: {
+    movies: "Films",
+    tvShows: "Séries",
+    noCredits: "Aucun autre film ou série trouvé pour cette personne.",
+    notFound: "Cette personne est introuvable.",
   },
   episodeDetail: {
     notWatched: "Pas encore vu",
