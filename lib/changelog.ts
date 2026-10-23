@@ -15,6 +15,18 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.12",
+    date: "2026-10-23",
+    en: [
+      "Browse screens got a \"platform\" filter — narrow Popular/Top Rated/genre lists down to what's on Netflix, Prime Video, Disney+, and more.",
+      "In a room, someone who's pulled at least 2 episodes ahead of you on the linked show now gets a small \"ahead\" badge next to their name.",
+    ],
+    fr: [
+      "Les écrans de parcours ont un nouveau filtre \"plateforme\" — réduis les listes Populaire/Les mieux notés/genre à ce qui est disponible sur Netflix, Prime Video, Disney+, et plus.",
+      "Dans une room, quelqu'un qui a au moins 2 épisodes d'avance sur toi sur la série liée affiche maintenant un petit badge \"d'avance\" à côté de son nom.",
+    ],
+  },
+  {
     version: "5.3.11",
     date: "2026-10-21",
     en: ["Rooms load a bit faster now — a few network requests that didn't actually depend on each other were running one after another instead of at the same time."],

@@ -299,8 +299,12 @@ const EMPTY_PROVIDERS: WatchProviders = { link: null, flatrate: [], rent: [], bu
 // a locale), so this guesses a region from that: a genuine "which country's
 // availability do I want" setting would be more correct, but this is a
 // reasonable default until/unless that's asked for.
-function regionForLanguage(language: "en" | "fr"): string {
+export function regionForLanguage(language: "en" | "fr"): string {
   return language === "fr" ? "FR" : "US";
+}
+
+export function providerLogoUrl(path: string | null, size: "w45" | "w92" = "w45") {
+  return path ? `${IMAGE_BASE_URL}/${size}${path}` : null;
 }
 
 function pickRegion(
@@ -595,4 +599,42 @@ export function getTvGenres(language: "en" | "fr"): Promise<TMDBGenre[]> {
     const data = await get<{ genres: TMDBGenre[] }>("/genre/tv/list", { language: tmdbLanguageTag(language) });
     return data.genres;
   });
+}
+
+export interface TMDBWatchProviderOption {
+  provider_id: number;
+  provider_name: string;
+  logo_path: string | null;
+}
+
+// Curated list for the browse-by-platform filter chips (see app/browse.tsx)
+// — TMDB's /watch/providers/{movie|tv} returns dozens of regional providers
+// ranked by `display_priority` for that region (lower = more prominent
+// there), so this keeps only the top ones instead of dumping all of them on
+// the user. Same weekly TTL as the genre lists above, which change about as
+// rarely.
+function cachedWatchProviderList(kind: "movie" | "tv", language: "en" | "fr") {
+  const region = regionForLanguage(language);
+  return withCache(`watch-providers:${kind}:${region}`, ONE_DAY * 7, async () => {
+    const data = await get<{
+      results: (TMDBWatchProviderOption & { display_priorities?: Record<string, number>; display_priority?: number })[];
+    }>(`/watch/providers/${kind}`, { watch_region: region });
+    return data.results
+      .slice()
+      .sort(
+        (a, b) =>
+          (a.display_priorities?.[region] ?? a.display_priority ?? 999) -
+          (b.display_priorities?.[region] ?? b.display_priority ?? 999)
+      )
+      .slice(0, 20)
+      .map((p) => ({ provider_id: p.provider_id, provider_name: p.provider_name, logo_path: p.logo_path }));
+  });
+}
+
+export function getMovieWatchProviderList(language: "en" | "fr"): Promise<TMDBWatchProviderOption[]> {
+  return cachedWatchProviderList("movie", language);
+}
+
+export function getTvWatchProviderList(language: "en" | "fr"): Promise<TMDBWatchProviderOption[]> {
+  return cachedWatchProviderList("tv", language);
 }

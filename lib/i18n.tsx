@@ -278,6 +278,7 @@ const en = {
       "This show isn't available on TVmaze, which the app uses to track episodes.",
     viewAll: "View all",
     allGenres: "All genres",
+    allPlatforms: "All platforms",
     sortPopularity: "Popularity",
     sortRating: "Rating",
     sortNewest: "Newest",
@@ -730,6 +731,7 @@ const en = {
     unwatchTogetherConfirm: (title: string) =>
       `Undo "${title}" being watched together? This removes it from everyone's watched list in this room.`,
     rewatchConfirmText: (show: string, code: string) => `marked ${show} ${code} watched again — did you rewatch it together?`,
+    aheadBadge: (n: number) => `+${n} ahead`,
   },
 };
 
@@ -963,6 +965,7 @@ const fr: typeof en = {
       "Cette série n'est pas disponible sur TVmaze, que l'app utilise pour suivre les épisodes.",
     viewAll: "Tout voir",
     allGenres: "Tous les genres",
+    allPlatforms: "Toutes les plateformes",
     sortPopularity: "Popularité",
     sortRating: "Note",
     sortNewest: "Plus récent",
@@ -1414,6 +1417,7 @@ const fr: typeof en = {
     unwatchTogetherConfirm: (title: string) =>
       `Annuler "${title}" comme vu ensemble ? Ça le retire de la liste vue de tout le monde dans cette room.`,
     rewatchConfirmText: (show: string, code: string) => `a remarqué ${show} ${code} comme vu — tu l'as revu avec le groupe ?`,
+    aheadBadge: (n: number) => `+${n} d'avance`,
   },
 };
 

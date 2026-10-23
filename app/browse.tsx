@@ -18,11 +18,16 @@ import {
   fetchTvListPage,
   getMovieGenres,
   getTvGenres,
+  getMovieWatchProviderList,
+  getTvWatchProviderList,
+  regionForLanguage,
+  providerLogoUrl,
   findTvmazeShowFromTmdbTv,
   posterUrl,
   TMDBGenre,
   TMDBSearchResult,
   TMDBTvResult,
+  TMDBWatchProviderOption,
 } from "../lib/tmdb";
 import { TVMazeShow } from "../lib/tvmaze";
 import { fetchUserShows, upsertUserShow, removeUserShow, setShowFavorite } from "../lib/userShows";
@@ -91,8 +96,13 @@ interface BrowseCacheEntry {
 }
 const browseStateCache = new Map<string, BrowseCacheEntry>();
 
-function browseCacheKey(categoryKey: string | undefined, kind: BrowseKind, genreId: number | null): string {
-  return `${categoryKey ?? kind}:${genreId ?? "none"}`;
+function browseCacheKey(
+  categoryKey: string | undefined,
+  kind: BrowseKind,
+  genreId: number | null,
+  providerId: number | null
+): string {
+  return `${categoryKey ?? kind}:${genreId ?? "none"}:${providerId ?? "none"}`;
 }
 
 // Scrollable "View all" grid — either an Explore category (?category=...,
@@ -102,7 +112,7 @@ function browseCacheKey(categoryKey: string | undefined, kind: BrowseKind, genre
 // screen). Infinite-scroll paginated via fetchMovieListPage/fetchTvListPage
 // (lib/tmdb.ts) — TMDB caps out at 500 pages, effectively unbounded here.
 export default function BrowseScreen() {
-  const params = useLocalSearchParams<{ category?: string; kind?: string; genreId?: string; title?: string }>();
+  const params = useLocalSearchParams<{ category?: string; kind?: string; genreId?: string; providerId?: string; title?: string }>();
   const router = useRouter();
   const goBack = useGoBack("/(tabs)/explore");
   const colors = useColors();
@@ -117,7 +127,9 @@ export default function BrowseScreen() {
   const categoryConfig = params.category ? CATEGORY_PATHS[params.category] : undefined;
   const [kind, setKind] = useState<BrowseKind>(categoryConfig?.kind ?? (params.kind === "movie" ? "movie" : "tv"));
   const [genreId, setGenreId] = useState<number | null>(params.genreId ? Number(params.genreId) : null);
+  const [providerId, setProviderId] = useState<number | null>(params.providerId ? Number(params.providerId) : null);
   const [genres, setGenres] = useState<TMDBGenre[]>([]);
+  const [providers, setProviders] = useState<TMDBWatchProviderOption[]>([]);
   const [items, setItems] = useState<BrowseItem[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -125,7 +137,7 @@ export default function BrowseScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [resolving, setResolving] = useState<number | null>(null);
   const listRef = useRef<FlatList<BrowseItem>>(null);
-  const cacheKey = browseCacheKey(params.category, kind, genreId);
+  const cacheKey = browseCacheKey(params.category, kind, genreId, providerId);
 
   // The viewer's own tracked/favorited shows and movies — same idea as
   // Explore's own cards (app/(tabs)/explore.tsx): favoriting/adding here
@@ -168,16 +180,32 @@ export default function BrowseScreen() {
     (kind === "movie" ? getMovieGenres(language) : getTvGenres(language)).then(setGenres).catch(() => {});
   }, [kind, language]);
 
+  // Platform chips — same idea as the genre row above, via TMDB's own
+  // with_watch_providers discover filter. Switching platforms resets to a
+  // fresh /discover query the same way a genre switch does, and the two can
+  // be combined (e.g. "Comedy" + "Netflix" at once) since TMDB's /discover
+  // endpoint accepts both filters together.
+  useEffect(() => {
+    (kind === "movie" ? getMovieWatchProviderList(language) : getTvWatchProviderList(language)).then(setProviders).catch(() => {});
+  }, [kind, language]);
+
   const fetchPage = useCallback(
     async (pageNum: number): Promise<BrowseItem[]> => {
+      const discoverParams: Record<string, string> = { sort_by: "popularity.desc" };
+      if (genreId) discoverParams.with_genres = String(genreId);
+      if (providerId) {
+        discoverParams.with_watch_providers = String(providerId);
+        discoverParams.watch_region = regionForLanguage(language);
+      }
+      const useDiscover = genreId !== null || providerId !== null;
       if (kind === "movie") {
-        if (genreId) return fetchMovieListPage("/discover/movie", pageNum, { with_genres: String(genreId), sort_by: "popularity.desc" });
+        if (useDiscover) return fetchMovieListPage("/discover/movie", pageNum, discoverParams);
         return fetchMovieListPage(categoryConfig?.path ?? "/movie/popular", pageNum);
       }
-      if (genreId) return fetchTvListPage("/discover/tv", pageNum, { with_genres: String(genreId), sort_by: "popularity.desc" });
+      if (useDiscover) return fetchTvListPage("/discover/tv", pageNum, discoverParams);
       return fetchTvListPage(categoryConfig?.path ?? "/tv/popular", pageNum);
     },
-    [kind, genreId, categoryConfig],
+    [kind, genreId, providerId, categoryConfig, language],
   );
 
   // Restores from browseStateCache when this exact browse (same category/
@@ -415,6 +443,26 @@ export default function BrowseScreen() {
         )}
       />
 
+      <FlatList
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipRowOuter}
+        data={[{ provider_id: null as number | null, provider_name: t.explore.allPlatforms, logo_path: null }, ...providers]}
+        keyExtractor={(p) => String(p.provider_id)}
+        contentContainerStyle={styles.chipRow}
+        renderItem={({ item: p }) => (
+          <Pressable
+            style={[styles.chip, styles.providerChip, providerId === p.provider_id && styles.chipActive]}
+            onPress={() => setProviderId(p.provider_id)}
+          >
+            {p.logo_path && (
+              <Image source={{ uri: providerLogoUrl(p.logo_path)! }} style={styles.providerChipLogo} contentFit="cover" />
+            )}
+            <Text style={[styles.chipText, providerId === p.provider_id && styles.chipTextActive]}>{p.provider_name}</Text>
+          </Pressable>
+        )}
+      />
+
       {loading ? (
         <ActivityIndicator color={colors.accent} style={{ marginTop: 32 }} />
       ) : (
@@ -564,6 +612,8 @@ function createStyles(colors: Colors, CARD_WIDTH: number, GRID_GAP: number, GRID
     chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
     chipText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
     chipTextActive: { color: colors.onAccent },
+    providerChip: { flexDirection: "row", alignItems: "center", gap: 6 },
+    providerChipLogo: { width: 16, height: 16, borderRadius: 4 },
     grid: { paddingHorizontal: GRID_PADDING, paddingBottom: 32 },
     row: { gap: GRID_GAP, justifyContent: "center" },
     card: { width: CARD_WIDTH, marginBottom: 16 },

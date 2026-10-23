@@ -291,27 +291,44 @@ export default function RoomDetailScreen() {
                   {linkedProgress.show.name}
                 </Text>
               </Pressable>
-              {linkedProgress.memberProgress.map((m) => {
-                const pct = linkedProgress.totalEpisodes > 0 ? Math.min(100, (m.watchedCount / linkedProgress.totalEpisodes) * 100) : 0;
-                return (
-                  <View key={m.user_id} style={styles.progressRow}>
-                    <Avatar name={m.username} imageUri={m.avatar_url} size="sm" />
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.progressNameRow}>
-                        <Text style={styles.progressName} numberOfLines={1}>
-                          {m.username}
-                        </Text>
-                        <Text style={styles.progressCount}>
-                          {m.watchedCount}/{linkedProgress.totalEpisodes}
-                        </Text>
-                      </View>
-                      <View style={styles.progressTrack}>
-                        <View style={[styles.progressFill, { width: `${pct}%` }]} />
+              {(() => {
+                const myWatchedCount = linkedProgress.memberProgress.find((m) => m.user_id === myUserId)?.watchedCount ?? 0;
+                return linkedProgress.memberProgress.map((m) => {
+                  const pct = linkedProgress.totalEpisodes > 0 ? Math.min(100, (m.watchedCount / linkedProgress.totalEpisodes) * 100) : 0;
+                  // Flagged once someone's at least 2 episodes past where the
+                  // viewer is — a 1-episode gap is just normal pacing, not
+                  // worth calling out, but a bigger one is the "they're
+                  // bingeing ahead of us" moment the user asked to surface.
+                  const aheadCount = m.user_id !== myUserId ? m.watchedCount - myWatchedCount : 0;
+                  const isAhead = aheadCount >= 2;
+                  return (
+                    <View key={m.user_id} style={styles.progressRow}>
+                      <Avatar name={m.username} imageUri={m.avatar_url} size="sm" />
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.progressNameRow}>
+                          <View style={styles.progressNameWithBadge}>
+                            <Text style={styles.progressName} numberOfLines={1}>
+                              {m.username}
+                            </Text>
+                            {isAhead && (
+                              <View style={styles.aheadBadge}>
+                                <Ionicons name="play-skip-forward" size={10} color={colors.yellow} />
+                                <Text style={styles.aheadBadgeText}>{t.rooms.aheadBadge(aheadCount)}</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.progressCount}>
+                            {m.watchedCount}/{linkedProgress.totalEpisodes}
+                          </Text>
+                        </View>
+                        <View style={styles.progressTrack}>
+                          <View style={[styles.progressFill, { width: `${pct}%` }]} />
+                        </View>
                       </View>
                     </View>
-                  </View>
-                );
-              })}
+                  );
+                });
+              })()}
             </View>
           )}
 
@@ -717,7 +734,18 @@ function createStyles(colors: Colors) {
     episodeText: { fontSize: type.bodySm, fontWeight: "700", color: colors.textMuted },
     progressRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
     progressNameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-    progressName: { flex: 1, fontWeight: "700", fontSize: type.body, color: colors.text },
+    progressNameWithBadge: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
+    progressName: { flexShrink: 1, fontWeight: "700", fontSize: type.body, color: colors.text },
+    aheadBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 3,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: radius.pill,
+      backgroundColor: colors.yellow + "26",
+    },
+    aheadBadgeText: { fontSize: 10, fontWeight: "800", color: colors.yellow },
     progressCount: { fontSize: type.caption, fontWeight: "700", color: colors.textMuted },
     progressTrack: { height: 5, borderRadius: radius.pill, backgroundColor: colors.pillBg, marginTop: 5, overflow: "hidden" },
     progressFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.accent },
