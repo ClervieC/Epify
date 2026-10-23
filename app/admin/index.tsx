@@ -6,7 +6,7 @@ import { useAuth } from "../../context/AuthContext";
 import { fetchMyProfile, fetchAllProfilesForAdmin, setUserBanned, setUserAdmin, Profile } from "../../lib/profiles";
 import { fetchReports, Report, ReportStatus } from "../../lib/reports";
 import { resolveReportTargets, targetSummary, targetHref, TARGET_ICON, TARGET_COLOR, ResolvedReportTargets } from "../../lib/reportTargets";
-import { fetchSupportConversationsForAdmin, SupportConversation } from "../../lib/support";
+import { fetchSupportTickets, SupportTicket, SupportStatus } from "../../lib/support";
 import { useLanguage } from "../../lib/i18n";
 import { shortDate } from "../../lib/dates";
 import { alert } from "../../lib/alert";
@@ -14,6 +14,7 @@ import { useGoBack } from "../../lib/useGoBack";
 import { C } from "../../lib/adminTheme";
 
 const STATUS_TABS: ReportStatus[] = ["open", "resolved", "dismissed"];
+const SUPPORT_STATUS_TABS: SupportStatus[] = ["open", "resolved"];
 
 const EMPTY_TARGETS: ResolvedReportTargets = {
   userNames: new Map(),
@@ -36,8 +37,9 @@ export default function AdminScreen() {
   const [users, setUsers] = useState<Profile[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [userQuery, setUserQuery] = useState("");
-  const [conversations, setConversations] = useState<SupportConversation[]>([]);
-  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [supportStatus, setSupportStatus] = useState<SupportStatus>("open");
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [supportLoading, setSupportLoading] = useState(false);
   // Reports only store raw ids (reporter_id/target_user_id, TVmaze show/
   // episode ids) — this resolves them to display names so a report reads
   // as "Breaking Bad (#169)" / "reported by clervie" instead of a bare id
@@ -74,11 +76,11 @@ export default function AdminScreen() {
       .finally(() => setUsersLoading(false));
   }, []);
 
-  const loadConversations = useCallback(() => {
-    setConversationsLoading(true);
-    fetchSupportConversationsForAdmin()
-      .then(setConversations)
-      .finally(() => setConversationsLoading(false));
+  const loadSupportTickets = useCallback((s: SupportStatus) => {
+    setSupportLoading(true);
+    fetchSupportTickets(s)
+      .then(setSupportTickets)
+      .finally(() => setSupportLoading(false));
   }, []);
 
   useFocusEffect(
@@ -96,8 +98,8 @@ export default function AdminScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (authorized && view === "support") loadConversations();
-    }, [authorized, view, loadConversations])
+      if (authorized && view === "support") loadSupportTickets(supportStatus);
+    }, [authorized, view, supportStatus, loadSupportTickets])
   );
 
   if (authorized === null) {
@@ -208,37 +210,30 @@ export default function AdminScreen() {
             </ScrollView>
           )}
         </>
-      ) : conversationsLoading ? (
-        <ActivityIndicator color={C.accent} style={{ marginTop: 24 }} />
-      ) : conversations.length === 0 ? (
-        <Text style={styles.empty}>{t.admin.noConversations}</Text>
       ) : (
-        <ScrollView contentContainerStyle={styles.list}>
-          {conversations.map((c) => (
-            <Pressable
-              key={c.userId}
-              style={styles.conversationRow}
-              onPress={() => router.push({ pathname: "/admin/support/[userId]", params: { userId: c.userId } })}
-            >
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{c.username[0]?.toUpperCase()}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <View style={styles.conversationTopRow}>
-                  <Text style={styles.conversationName} numberOfLines={1}>
-                    {c.username}
-                  </Text>
-                  <Text style={styles.conversationDate}>{shortDate(c.lastAt)}</Text>
-                </View>
-                <Text style={styles.conversationPreview} numberOfLines={1}>
-                  {c.lastBody}
+        <>
+          <View style={styles.chipRow}>
+            {SUPPORT_STATUS_TABS.map((s) => (
+              <Pressable key={s} style={[styles.chip, supportStatus === s && styles.chipActive]} onPress={() => setSupportStatus(s)}>
+                <Text style={[styles.chipText, supportStatus === s && styles.chipTextActive]}>
+                  {s === "open" ? t.admin.open : t.admin.resolved}
                 </Text>
-              </View>
-              {c.needsResponse && <View style={styles.needsResponseDot} />}
-              <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
-            </Pressable>
-          ))}
-        </ScrollView>
+              </Pressable>
+            ))}
+          </View>
+
+          {supportLoading ? (
+            <ActivityIndicator color={C.accent} style={{ marginTop: 24 }} />
+          ) : supportTickets.length === 0 ? (
+            <Text style={styles.empty}>{t.admin.noSupportMessages}</Text>
+          ) : (
+            <ScrollView contentContainerStyle={styles.list}>
+              {supportTickets.map((ticket) => (
+                <SupportTicketRow key={ticket.id} ticket={ticket} />
+              ))}
+            </ScrollView>
+          )}
+        </>
       )}
     </View>
   );
@@ -270,6 +265,36 @@ function ReportRow({ report, targets }: { report: Report; targets: ResolvedRepor
         </View>
         <Text style={styles.reportRowReason} numberOfLines={1}>
           {report.reason}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
+    </Pressable>
+  );
+}
+
+// Same compact-row-opens-full-ticket shape as ReportRow above — support
+// tickets are tickets too now (see lib/support.ts's own top comment), one
+// row per message rather than one per user.
+function SupportTicketRow({ ticket }: { ticket: SupportTicket }) {
+  const router = useRouter();
+
+  return (
+    <Pressable
+      style={styles.reportRow}
+      onPress={() => router.push({ pathname: "/admin/support/[id]", params: { id: ticket.id } })}
+    >
+      <View style={[styles.iconWrap, { backgroundColor: `${C.accent}22` }]}>
+        <Ionicons name="chatbubble-outline" size={15} color={C.accent} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={styles.reportRowTopLine}>
+          <Text style={styles.cardTarget} numberOfLines={1}>
+            {ticket.username}
+          </Text>
+          <Text style={styles.cardDate}>{shortDate(ticket.created_at)}</Text>
+        </View>
+        <Text style={styles.reportRowReason} numberOfLines={1}>
+          {ticket.body}
         </Text>
       </View>
       <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
@@ -403,7 +428,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   // 16px, not 13 — anything smaller makes iOS Safari auto-zoom the whole
-  // page when this input is focused (see app/admin/support/[userId].tsx's
+  // page when this input is focused (see app/admin/support/[id].tsx's
   // own input, which already uses 16 for the same reason).
   searchInput: { flex: 1, color: C.text, fontSize: 16 },
   empty: { color: C.textMuted, textAlign: "center", marginTop: 32 },
@@ -445,19 +470,4 @@ const styles = StyleSheet.create({
   badgeRow: { flexDirection: "row", gap: 6, marginTop: 4 },
   badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
   badgeText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
-  conversationRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: C.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: 12,
-  },
-  conversationTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  conversationName: { color: C.text, fontWeight: "700", fontSize: 13, flexShrink: 1 },
-  conversationDate: { color: C.textMuted, fontSize: 11 },
-  conversationPreview: { color: C.textMuted, fontSize: 12, marginTop: 2 },
-  needsResponseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.accent },
 });

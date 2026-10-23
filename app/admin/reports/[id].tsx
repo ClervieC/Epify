@@ -39,7 +39,7 @@ const EMPTY_TARGETS: ResolvedReportTargets = {
 
 // One report's own full ticket — reached from the compact list in
 // app/admin/index.tsx. Same thread+composer shape as
-// app/admin/support/[userId].tsx, plus the report-specific bits support
+// app/admin/support/[id].tsx, plus the report-specific bits support
 // tickets don't have: a target to link through to, photos, and the
 // resolve/dismiss moderation actions.
 export default function AdminReportThreadScreen() {

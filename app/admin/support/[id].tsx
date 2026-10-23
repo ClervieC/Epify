@@ -1,27 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  TextInput,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-} from "react-native";
+import { View, Text, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from "react-native";
 import { useLocalSearchParams, useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { fetchProfile, Profile } from "../../../lib/profiles";
 import {
-  fetchUserSupportThread,
-  markSupportThreadRead,
+  fetchSupportMessageById,
+  fetchSupportReplies,
   sendAdminSupportReply,
+  resolveSupportTicket,
   subscribeToSupportReplies,
   mergeReply,
   SupportMessage,
   SupportReply,
 } from "../../../lib/support";
+import { fetchProfile, Profile } from "../../../lib/profiles";
 import { supabase } from "../../../lib/supabase";
 import { alert } from "../../../lib/alert";
 import { useGoBack } from "../../../lib/useGoBack";
@@ -34,32 +25,33 @@ interface ThreadItem {
   isAdmin: boolean;
 }
 
-// Admin's half of the same conversation app/support.tsx renders for the
-// user — same bubble-thread shape, same reopens-on-reply behavior
-// server-side (see lib/support.ts), just the dark admin palette and no
-// "new ticket" composer since only the user side can start one.
-export default function AdminSupportThreadScreen() {
-  const { userId } = useLocalSearchParams<{ userId: string }>();
+// One support ticket's own thread — reached from the compact list in
+// app/admin/index.tsx. Same shape as app/admin/reports/[id].tsx (the two
+// now share one ticket model), minus the target/dismiss bits reports have
+// that a support message doesn't.
+export default function AdminSupportTicketScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
   const goBack = useGoBack("/admin");
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [ticket, setTicket] = useState<SupportMessage | null>(null);
   const [replies, setReplies] = useState<SupportReply[]>([]);
   const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState(false);
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   const load = useCallback(async () => {
-    const [p, thread] = await Promise.all([fetchProfile(userId), fetchUserSupportThread(userId)]);
-    setProfile(p);
-    setTicket(thread.ticket);
-    setReplies(thread.replies);
+    const data = await fetchSupportMessageById(id);
+    setTicket(data);
+    if (data) {
+      const [replyData, p] = await Promise.all([fetchSupportReplies(data.id), fetchProfile(data.user_id)]);
+      setReplies(replyData);
+      setProfile(p);
+    }
     setLoading(false);
-    // Opening the conversation is what clears its "needs reply" badge, not
-    // sending a reply — see lib/support.ts's markSupportThreadRead.
-    if (thread.ticket) markSupportThreadRead(thread.ticket.id).catch(() => {});
-  }, [userId]);
+  }, [id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -67,9 +59,9 @@ export default function AdminSupportThreadScreen() {
     }, [load])
   );
 
-  // Live replies from the user, without needing to leave/refocus the screen
-  // to see them — mergeReply drops the echo of the admin's own just-sent
-  // reply instead of double-adding it.
+  // Live replies from the user, without needing to leave/refocus the
+  // screen to see them — mergeReply drops the echo of the admin's own
+  // just-sent reply instead of double-adding it.
   useEffect(() => {
     if (!ticket) return;
     const channel = subscribeToSupportReplies(ticket.id, (reply) => {
@@ -96,6 +88,19 @@ export default function AdminSupportThreadScreen() {
     }
   }
 
+  async function handleResolve() {
+    if (!ticket) return;
+    setActing(true);
+    try {
+      await resolveSupportTicket(ticket.id);
+      setTicket((prev) => (prev ? { ...prev, status: "resolved" } : prev));
+    } catch {
+      alert("Failed", "Couldn't update this ticket.");
+    } finally {
+      setActing(false);
+    }
+  }
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -104,15 +109,19 @@ export default function AdminSupportThreadScreen() {
     );
   }
 
-  const thread: ThreadItem[] = ticket
-    ? [
-        { key: "original", body: ticket.body, isAdmin: false },
-        ...(ticket.resolution_note && replies.length === 0
-          ? [{ key: "resolution", body: ticket.resolution_note, isAdmin: true }]
-          : []),
-        ...replies.map((r) => ({ key: r.id, body: r.body, isAdmin: r.is_admin })),
-      ]
-    : [];
+  if (!ticket) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.emptyText}>Ticket not found.</Text>
+      </View>
+    );
+  }
+
+  const thread: ThreadItem[] = [
+    { key: "original", body: ticket.body, isAdmin: false },
+    ...(ticket.resolution_note && replies.length === 0 ? [{ key: "resolution", body: ticket.resolution_note, isAdmin: true }] : []),
+    ...replies.map((r) => ({ key: r.id, body: r.body, isAdmin: r.is_admin })),
+  ];
 
   return (
     <KeyboardAvoidingView
@@ -132,33 +141,37 @@ export default function AdminSupportThreadScreen() {
             <Text style={styles.avatarText}>{(profile?.username ?? "?")[0]?.toUpperCase()}</Text>
           </View>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            {profile?.username ?? userId.slice(0, 8)}
+            {profile?.username ?? ticket.user_id.slice(0, 8)}
           </Text>
         </Pressable>
-        <View style={{ width: 22 }} />
+        <View
+          style={[styles.statusPill, ticket.status === "resolved" && styles.statusPillResolved]}
+        >
+          <Text style={styles.statusPillText}>{ticket.status === "resolved" ? "Resolved" : "Open"}</Text>
+        </View>
       </View>
 
-      {thread.length === 0 ? (
-        <View style={styles.center}>
-          <Ionicons name="chatbubbles-outline" size={28} color={C.textMuted} />
-          <Text style={styles.emptyText}>No messages yet.</Text>
-        </View>
-      ) : (
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.thread}
-          onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
-        >
-          {thread.map((item) => (
-            <View key={item.key} style={[styles.bubbleRow, item.isAdmin ? styles.bubbleRowRight : styles.bubbleRowLeft]}>
-              <View style={[styles.bubble, item.isAdmin ? styles.bubbleAdmin : styles.bubbleUser]}>
-                <Text style={styles.bubbleAuthor}>{item.isAdmin ? "You" : profile?.username ?? "User"}</Text>
-                <Text style={styles.bubbleText}>{item.body}</Text>
-              </View>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.thread}
+        onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
+      >
+        {ticket.status === "open" && (
+          <Pressable style={[styles.actionBtn, styles.resolveBtn]} onPress={handleResolve} disabled={acting}>
+            <Ionicons name="checkmark" size={14} color="#0a0c10" />
+            <Text style={styles.actionBtnText}>Mark resolved</Text>
+          </Pressable>
+        )}
+
+        {thread.map((item) => (
+          <View key={item.key} style={[styles.bubbleRow, item.isAdmin ? styles.bubbleRowRight : styles.bubbleRowLeft]}>
+            <View style={[styles.bubble, item.isAdmin ? styles.bubbleAdmin : styles.bubbleUser]}>
+              <Text style={styles.bubbleAuthor}>{item.isAdmin ? "You" : profile?.username ?? "User"}</Text>
+              <Text style={styles.bubbleText}>{item.body}</Text>
             </View>
-          ))}
-        </ScrollView>
-      )}
+          </View>
+        ))}
+      </ScrollView>
 
       <View style={styles.composer}>
         <TextInput
@@ -169,12 +182,11 @@ export default function AdminSupportThreadScreen() {
           onChangeText={setBody}
           onKeyPress={enterToSubmit(handleSend)}
           multiline
-          editable={!!ticket}
         />
         <Pressable
-          style={[styles.sendBtn, (!body.trim() || sending || !ticket) && styles.sendBtnDisabled]}
+          style={[styles.sendBtn, (!body.trim() || sending) && styles.sendBtnDisabled]}
           onPress={handleSend}
-          disabled={!body.trim() || sending || !ticket}
+          disabled={!body.trim() || sending}
           accessibilityRole="button"
           accessibilityLabel="Send reply"
         >
@@ -212,7 +224,13 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: C.text, fontWeight: "800", fontSize: 12 },
   headerTitle: { color: C.text, fontWeight: "800", fontSize: 15, letterSpacing: 0.2 },
+  statusPill: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  statusPillResolved: { backgroundColor: `${C.green}22`, borderColor: C.green },
+  statusPillText: { fontSize: 11, fontWeight: "700", color: C.textMuted },
   thread: { padding: 16, gap: 10 },
+  actionBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 9, borderRadius: 8 },
+  resolveBtn: { backgroundColor: C.green },
+  actionBtnText: { color: "#0a0c10", fontWeight: "800", fontSize: 12 },
   bubbleRow: { flexDirection: "row" },
   bubbleRowLeft: { justifyContent: "flex-start" },
   bubbleRowRight: { justifyContent: "flex-end" },

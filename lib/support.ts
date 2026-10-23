@@ -1,21 +1,34 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase, getCurrentUserId } from "./supabase";
+import { fetchProfiles } from "./profiles";
 import { createShortCache } from "./shortCache";
 
 // Admin badge count, polled on every navigation focus (see
 // app/(tabs)/_layout.tsx) — same reasoning as lib/notifications.ts's
-// unreadCountCache. fetchSupportNeedsResponseCount() itself calls
-// fetchSupportConversationsForAdmin() (3 queries), so caching just the
-// count still collapses that whole chain, not only the final filter.
-const needsResponseCountCache = createShortCache<number>(20_000);
+// unreadCountCache, and now the same *shape* as lib/reports.ts's own
+// openReportCountCache: support tickets are tickets too (see this file's
+// own top comment), so "needs attention" is just "status = open", exactly
+// like reports.
+const openTicketCountCache = createShortCache<number>(20_000);
 
 // Called on sign-out (see context/AuthContext.tsx) — not scoped by user id.
+// Kept under its original name (clearSupportNeedsResponseCountCache) even
+// though what it clears changed shape, so every call site (AuthContext)
+// needed zero changes for this ticket-model rewrite.
 export function clearSupportNeedsResponseCountCache() {
-  needsResponseCountCache.invalidate();
+  openTicketCountCache.invalidate();
 }
 
 export type SupportStatus = "open" | "resolved";
 
+// Each support message is its own ticket now — previously the client
+// treated a user's single most recent row as "the" ongoing conversation
+// and piled every later message onto it as a reply. That read fine for one
+// person asking one thing, but a second, unrelated question became a reply
+// buried in an old thread instead of its own trackable item — exactly the
+// same one-shot-vs-ticket gap this file's reports.ts sibling just fixed.
+// Sending a new message (see sendSupportMessage) always starts a fresh
+// ticket; a reply (sendSupportReply) always targets one specific ticket id.
 export interface SupportMessage {
   id: string;
   user_id: string;
@@ -25,9 +38,9 @@ export interface SupportMessage {
   resolved_by: string | null;
   created_at: string;
   resolved_at: string | null;
-  // Set every time an admin opens this ticket's conversation (see
-  // markSupportThreadRead) — drives SupportConversation.needsResponse below,
-  // independent of whether an admin has actually replied yet.
+  // Legacy — set by the old single-conversation model's "mark read" step
+  // (markSupportThreadRead, no longer called). Left populated on old rows;
+  // status (open/resolved) is what "needs attention" goes by now.
   admin_read_at: string | null;
 }
 
@@ -40,10 +53,7 @@ export interface SupportReply {
   created_at: string;
 }
 
-// Returns the created ticket (not just void) — app/support.tsx is a single
-// running conversation now, not a picker over several tickets, so it needs
-// this row's id immediately to know which ticket every reply after the
-// first message should attach to.
+// Always creates a new ticket — app/support.tsx's "New message" composer.
 export async function sendSupportMessage(body: string): Promise<SupportMessage> {
   const userId = await getCurrentUserId();
   if (!userId) throw new Error("Not authenticated");
@@ -57,6 +67,8 @@ export async function sendSupportMessage(body: string): Promise<SupportMessage> 
   return data as SupportMessage;
 }
 
+// Every ticket the caller has ever sent, newest first — app/support.tsx's
+// own ticket list (one row per entry, not collapsed to "the latest one").
 export async function fetchMySupportMessages(): Promise<SupportMessage[]> {
   const userId = await getCurrentUserId();
   if (!userId) return [];
@@ -70,9 +82,17 @@ export async function fetchMySupportMessages(): Promise<SupportMessage[]> {
   return data as SupportMessage[];
 }
 
+// One ticket by id — app/support/[id].tsx and app/admin/support/[id].tsx's
+// shared data source (RLS scopes which rows each side can actually reach).
+export async function fetchSupportMessageById(id: string): Promise<SupportMessage | null> {
+  const { data, error } = await supabase.from("support_messages").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data as SupportMessage | null;
+}
+
 // The full thread for one ticket — every reply, oldest first, from either
 // side. Rendered under the ticket's own original body (support_messages.body)
-// by both app/support.tsx (user) and app/admin/support/[userId].tsx (admin).
+// by both app/support/[id].tsx (user) and app/admin/support/[id].tsx (admin).
 export async function fetchSupportReplies(messageId: string): Promise<SupportReply[]> {
   const { data, error } = await supabase
     .from("support_message_replies")
@@ -97,17 +117,13 @@ export async function sendSupportReply(messageId: string, body: string): Promise
     .single();
   if (error) throw error;
 
-  await supabase
-    .from("support_messages")
-    .update({ status: "open" })
-    .eq("id", messageId)
-    .eq("status", "resolved");
+  await supabase.from("support_messages").update({ status: "open" }).eq("id", messageId).eq("status", "resolved");
 
   return data as SupportReply;
 }
 
-// Live updates for one ticket's thread (app/support.tsx and
-// app/admin/support/[userId].tsx both use this) — a channel per messageId,
+// Live updates for one ticket's thread (app/support/[id].tsx and
+// app/admin/support/[id].tsx both use this) — a channel per messageId,
 // filtered server-side so only inserts for this specific ticket are
 // delivered, instead of every reply in the whole support_message_replies
 // table. The caller is responsible for deduping against its own optimistic
@@ -144,123 +160,46 @@ export function mergeReply(prev: SupportReply[], incoming: SupportReply): Suppor
 }
 
 // Everything below is admin-only in practice (see the RLS policies in
-// supabase/schema.sql) — mirrors lib/reports.ts's own split.
+// supabase/schema.sql) — mirrors lib/reports.ts's own split, and now its
+// own ticket-list shape too: one row per ticket, exactly like fetchReports,
+// not one row per user.
 
-export interface SupportConversation {
-  // The user's most recent ticket — mirrors app/support.tsx's own "single
-  // running conversation" model, so the admin console lists one row per
-  // person, not per historical ticket.
-  ticketId: string;
-  userId: string;
+export interface SupportTicket extends SupportMessage {
   username: string;
   avatarUrl: string | null;
-  lastBody: string;
-  lastAt: string;
-  // True when there's activity since an admin last actually opened this
-  // conversation (see markSupportThreadRead) — opening it is what clears
-  // this, not sending a reply. Replaces the old open/resolved status tabs,
-  // which required a separate "mark resolved" action that didn't reflect
-  // whether anyone had actually read the message at all.
-  needsResponse: boolean;
 }
 
-// One row per user with at least one support ticket, newest activity first.
-// Three queries total regardless of how many users/tickets exist (messages,
-// their latest replies, and the profiles to label them with) rather than
-// one round trip per conversation.
-export async function fetchSupportConversationsForAdmin(): Promise<SupportConversation[]> {
-  const { data: messagesData, error: messagesError } = await supabase
-    .from("support_messages")
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (messagesError) throw messagesError;
-  const messages = messagesData as SupportMessage[];
+export async function fetchSupportTickets(status?: SupportStatus): Promise<SupportTicket[]> {
+  let query = supabase.from("support_messages").select("*").order("created_at", { ascending: false });
+  if (status) query = query.eq("status", status);
+  const { data, error } = await query;
+  if (error) throw error;
+  const tickets = data as SupportMessage[];
 
-  const latestByUser = new Map<string, SupportMessage>();
-  for (const m of messages) {
-    if (!latestByUser.has(m.user_id)) latestByUser.set(m.user_id, m);
-  }
-  const tickets = [...latestByUser.values()];
-  if (tickets.length === 0) return [];
+  const userIds = Array.from(new Set(tickets.map((t) => t.user_id)));
+  const profiles = await fetchProfiles(userIds).catch(() => []);
+  const profileById = new Map(profiles.map((p) => [p.user_id, p]));
 
-  const ticketIds = tickets.map((ticket) => ticket.id);
-  const { data: repliesData, error: repliesError } = await supabase
-    .from("support_message_replies")
-    .select("*")
-    .in("message_id", ticketIds)
-    .order("created_at", { ascending: false });
-  if (repliesError) throw repliesError;
-  const replies = repliesData as SupportReply[];
-
-  const lastReplyByTicket = new Map<string, SupportReply>();
-  for (const r of replies) {
-    if (!lastReplyByTicket.has(r.message_id)) lastReplyByTicket.set(r.message_id, r);
-  }
-
-  const userIds = tickets.map((ticket) => ticket.user_id);
-  const { data: profiles, error: profilesError } = await supabase
-    .from("profiles")
-    .select("user_id, username, avatar_url")
-    .in("user_id", userIds);
-  if (profilesError) throw profilesError;
-  const profileById = new Map((profiles ?? []).map((p) => [p.user_id, p]));
-
-  return tickets
-    .map((ticket) => {
-      const lastReply = lastReplyByTicket.get(ticket.id);
-      const profile = profileById.get(ticket.user_id);
-      const lastAt = lastReply?.created_at ?? ticket.created_at;
-      // A ticket answered under the old single-resolution_note model (no
-      // rows in support_message_replies, no admin_read_at either, since both
-      // are new) already has its answer — without this fallback it looked
-      // permanently unread forever, same as a genuinely fresh ticket.
-      const alreadyAnsweredLegacy = !lastReply && !ticket.admin_read_at && !!ticket.resolution_note;
-      return {
-        ticketId: ticket.id,
-        userId: ticket.user_id,
-        username: profile?.username ?? ticket.user_id.slice(0, 8),
-        avatarUrl: profile?.avatar_url ?? null,
-        lastBody: lastReply?.body ?? ticket.body,
-        lastAt,
-        needsResponse: !alreadyAnsweredLegacy && (!ticket.admin_read_at || ticket.admin_read_at < lastAt),
-      };
-    })
-    .sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
-}
-
-// Number of conversations whose last message is still the user's — the
-// admin-menu alert dot (see app/(tabs)/profile.tsx), replacing the old
-// status='open' count now that resolve/reopen no longer exists as a concept.
-export async function fetchSupportNeedsResponseCount(): Promise<number> {
-  return needsResponseCountCache.getOrFetch(async () => {
-    const conversations = await fetchSupportConversationsForAdmin();
-    return conversations.filter((c) => c.needsResponse).length;
+  return tickets.map((ticket) => {
+    const profile = profileById.get(ticket.user_id);
+    return { ...ticket, username: profile?.username ?? ticket.user_id.slice(0, 8), avatarUrl: profile?.avatar_url ?? null };
   });
 }
 
-// The one user's latest ticket + its full thread — app/admin/support/[userId].tsx's
-// data source, mirroring app/support.tsx's own shape on the user side.
-export async function fetchUserSupportThread(
-  userId: string
-): Promise<{ ticket: SupportMessage | null; replies: SupportReply[] }> {
-  const { data, error } = await supabase
-    .from("support_messages")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  const ticket = data as SupportMessage | null;
-  if (!ticket) return { ticket: null, replies: [] };
-  return { ticket, replies: await fetchSupportReplies(ticket.id) };
+// Admin-menu alert dot (see app/(tabs)/profile.tsx) — a ticket "needs
+// attention" exactly when it's still open, same convention
+// lib/reports.ts's fetchOpenReportCount uses, now that each support message
+// is its own tracked ticket rather than a standing conversation.
+export async function fetchSupportNeedsResponseCount(): Promise<number> {
+  return openTicketCountCache.getOrFetch(async () => {
+    const { count, error } = await supabase.from("support_messages").select("id", { count: "exact", head: true }).eq("status", "open");
+    if (error) throw error;
+    return count ?? 0;
+  });
 }
 
-// Admin-side reply — appends to the thread and bumps admin_read_at to now,
-// same as markSupportThreadRead below. Without this, sending a reply right
-// after opening the conversation would leave the reply itself timestamped
-// *after* the read marker set on open, making the admin's own message look
-// like new unread activity and flipping needsResponse back on immediately.
+// Admin-side reply — appends to the thread. Independent of resolve: an
+// admin can reply any time, before or after marking the ticket resolved.
 export async function sendAdminSupportReply(messageId: string, body: string): Promise<SupportReply> {
   const adminId = await getCurrentUserId();
   if (!adminId) throw new Error("Not authenticated");
@@ -271,20 +210,15 @@ export async function sendAdminSupportReply(messageId: string, body: string): Pr
     .select()
     .single();
   if (error) throw error;
-
-  await markSupportThreadRead(messageId);
-
   return data as SupportReply;
 }
 
-// Called when an admin opens a conversation (see
-// app/admin/support/[userId].tsx) — this alone is what clears the "needs
-// reply" badge, independent of whether they actually send a reply.
-export async function markSupportThreadRead(messageId: string): Promise<void> {
+export async function resolveSupportTicket(id: string): Promise<void> {
+  const adminId = await getCurrentUserId();
   const { error } = await supabase
     .from("support_messages")
-    .update({ admin_read_at: new Date().toISOString() })
-    .eq("id", messageId);
+    .update({ status: "resolved", resolved_by: adminId, resolved_at: new Date().toISOString() })
+    .eq("id", id);
   if (error) throw error;
-  needsResponseCountCache.invalidate();
+  openTicketCountCache.invalidate();
 }

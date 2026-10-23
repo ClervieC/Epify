@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.14",
+    date: "2026-10-23",
+    en: [
+      "\"Contact us\" is now ticket-based too, like reports: every message you send is its own tracked ticket (with its own reply thread) instead of all piling into one never-ending conversation. Send a new message any time — it starts a fresh ticket.",
+    ],
+    fr: [
+      "\"Nous contacter\" fonctionne maintenant aussi par tickets, comme les signalements : chaque message envoyé est son propre ticket suivi (avec son propre fil de réponses) au lieu de s'empiler dans une seule conversation sans fin. Envoie un nouveau message à tout moment — ça démarre un ticket tout neuf.",
+    ],
+  },
+  {
     version: "5.3.13",
     date: "2026-10-23",
     en: [

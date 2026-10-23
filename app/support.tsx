@@ -1,70 +1,37 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  TextInput,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-} from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
+import { View, Text, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
-import {
-  fetchMySupportMessages,
-  fetchSupportReplies,
-  sendSupportMessage,
-  sendSupportReply,
-  subscribeToSupportReplies,
-  mergeReply,
-  SupportMessage,
-  SupportReply,
-} from "../lib/support";
-import { supabase } from "../lib/supabase";
+import { fetchMySupportMessages, sendSupportMessage, SupportMessage } from "../lib/support";
+import { shortDate } from "../lib/dates";
 import { alert } from "../lib/alert";
+import { Pill } from "../components/Pill";
 import { useGoBack } from "../lib/useGoBack";
 import { enterToSubmit } from "../lib/enterToSubmit";
 import { EmptyState } from "../components/EmptyState";
 
-// One bubble in the conversation — either the current ticket's own original
-// message (support_messages.body, always "from" the user) or one of its
-// replies from either side. A legacy resolved ticket with a resolution_note
-// but no replies yet renders that note as a synthetic admin bubble, so
-// tickets answered before this threaded view existed still show their answer.
-interface ThreadItem {
-  key: string;
-  body: string;
-  isAdmin: boolean;
-}
-
-// A single running conversation with support, not a picker over several
-// separate tickets — simplest model for a user who just wants to talk to
-// the team and get an answer, same shape as any chat app. The most recent
-// support_messages row (if any) is "the" conversation; the first message
-// ever sent creates it, everything after that is a reply on it (see
-// lib/support.ts's sendSupportReply, which also reopens a resolved ticket).
+// A list of the user's own support tickets — each message to the team is
+// its own trackable ticket now (see lib/support.ts's own top comment for
+// why this replaced a single ever-growing conversation), not one ongoing
+// thread. Tapping a ticket opens its full conversation (app/support/[id].tsx);
+// the composer below always starts a brand new one.
 export default function SupportScreen() {
   const goBack = useGoBack("/(tabs)/profile");
+  const router = useRouter();
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
-  const [ticket, setTicket] = useState<SupportMessage | null>(null);
-  const [replies, setReplies] = useState<SupportReply[]>([]);
+  const [tickets, setTickets] = useState<SupportMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
 
-  const load = useCallback(async () => {
-    const tickets = await fetchMySupportMessages();
-    const current = tickets[0] ?? null;
-    setTicket(current);
-    setReplies(current ? await fetchSupportReplies(current.id) : []);
-    setLoading(false);
+  const load = useCallback(() => {
+    fetchMySupportMessages()
+      .then(setTickets)
+      .finally(() => setLoading(false));
   }, []);
 
   useFocusEffect(
@@ -73,53 +40,19 @@ export default function SupportScreen() {
     }, [load])
   );
 
-  // Live replies from support, without needing to leave/refocus the screen
-  // to see them — mergeReply drops the echo of the device's own just-sent
-  // reply instead of double-adding it.
-  useEffect(() => {
-    if (!ticket) return;
-    const channel = subscribeToSupportReplies(ticket.id, (reply) => {
-      setReplies((prev) => mergeReply(prev, reply));
-      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-    });
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [ticket?.id]);
-
   async function handleSend() {
     if (!body.trim() || sending) return;
     setSending(true);
     try {
-      if (ticket) {
-        const created = await sendSupportReply(ticket.id, body);
-        setReplies((prev) => [...prev, created]);
-        // A reply on a resolved ticket reopens it server-side (see
-        // sendSupportReply) — reflected here too so the status pill updates
-        // immediately instead of only after the next full reload.
-        setTicket((prev) => (prev ? { ...prev, status: "open" } : prev));
-      } else {
-        const created = await sendSupportMessage(body);
-        setTicket(created);
-      }
+      const created = await sendSupportMessage(body);
       setBody("");
-      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+      router.push({ pathname: "/support/[id]", params: { id: created.id } });
     } catch {
       alert(t.support.title, t.support.sendFailed);
     } finally {
       setSending(false);
     }
   }
-
-  const thread: ThreadItem[] = ticket
-    ? [
-        { key: "original", body: ticket.body, isAdmin: false },
-        ...(ticket.resolution_note && replies.length === 0
-          ? [{ key: "resolution", body: ticket.resolution_note, isAdmin: true }]
-          : []),
-        ...replies.map((r) => ({ key: r.id, body: r.body, isAdmin: r.is_admin })),
-      ]
-    : [];
 
   return (
     <KeyboardAvoidingView
@@ -132,38 +65,34 @@ export default function SupportScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>{t.support.title}</Text>
-        {ticket ? (
-          <View style={[styles.statusPill, ticket.status === "resolved" && styles.statusPillResolved]}>
-            <Text style={styles.statusPillText}>
-              {ticket.status === "resolved" ? t.support.statusResolved : t.support.statusOpen}
-            </Text>
-          </View>
-        ) : (
-          <View style={{ width: 24 }} />
-        )}
+        <View style={{ width: 24 }} />
       </View>
 
       {loading ? (
         <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
-      ) : thread.length === 0 ? (
+      ) : tickets.length === 0 ? (
         <View style={styles.emptyWrap}>
           <EmptyState icon="chatbubbles-outline" title={t.support.empty} />
         </View>
       ) : (
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={styles.thread}
-          onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
-        >
-          {thread.map((item) => (
-            <View key={item.key} style={[styles.bubbleRow, item.isAdmin ? styles.bubbleRowLeft : styles.bubbleRowRight]}>
-              <View style={[styles.bubble, item.isAdmin ? styles.bubbleAdmin : styles.bubbleUser]}>
-                <Text style={styles.bubbleAuthor}>{item.isAdmin ? t.support.team : t.support.you}</Text>
-                <Text style={[styles.bubbleText, item.isAdmin ? styles.bubbleTextAdmin : styles.bubbleTextUser]}>
-                  {item.body}
+        <ScrollView contentContainerStyle={styles.list}>
+          {tickets.map((ticket) => (
+            <Pressable
+              key={ticket.id}
+              style={styles.ticketRow}
+              onPress={() => router.push({ pathname: "/support/[id]", params: { id: ticket.id } })}
+            >
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.ticketPreview} numberOfLines={2}>
+                  {ticket.body}
                 </Text>
+                <Text style={styles.ticketDate}>{shortDate(ticket.created_at)}</Text>
               </View>
-            </View>
+              <Pill size="sm" color={ticket.status === "resolved" ? colors.greenLight : colors.pillBg} textColor={colors.textMuted}>
+                {ticket.status === "resolved" ? t.support.statusResolved : t.support.statusOpen}
+              </Pill>
+              <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+            </Pressable>
           ))}
         </ScrollView>
       )}
@@ -171,7 +100,7 @@ export default function SupportScreen() {
       <View style={styles.composer}>
         <TextInput
           style={styles.input}
-          placeholder={ticket ? t.support.replyPlaceholder : t.support.placeholder}
+          placeholder={t.support.placeholder}
           placeholderTextColor={colors.textFaint}
           value={body}
           onChangeText={setBody}
@@ -183,9 +112,9 @@ export default function SupportScreen() {
           onPress={handleSend}
           disabled={!body.trim() || sending}
           accessibilityRole="button"
-          accessibilityLabel={t.support.send}
+          accessibilityLabel={t.support.newMessage}
         >
-          {sending ? <ActivityIndicator size="small" color={colors.onAccent} /> : <Ionicons name="send" size={18} color={colors.onAccent} />}
+          {sending ? <ActivityIndicator size="small" color={colors.onAccent} /> : <Ionicons name="add" size={20} color={colors.onAccent} />}
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -206,21 +135,18 @@ function createStyles(colors: Colors) {
       borderBottomColor: colors.border,
     },
     title: { fontSize: type.title, fontWeight: "800", color: colors.text },
-    statusPill: { backgroundColor: colors.pillBg, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 3 },
-    statusPillResolved: { backgroundColor: colors.greenLight },
-    statusPillText: { fontSize: type.caption, fontWeight: "700", color: colors.textMuted },
     emptyWrap: { flex: 1, justifyContent: "center" },
-    thread: { padding: 16, gap: 10 },
-    bubbleRow: { flexDirection: "row" },
-    bubbleRowLeft: { justifyContent: "flex-start" },
-    bubbleRowRight: { justifyContent: "flex-end" },
-    bubble: { maxWidth: "80%", borderRadius: radius.lg, padding: 12 },
-    bubbleAdmin: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-    bubbleUser: { backgroundColor: colors.accent },
-    bubbleAuthor: { fontSize: type.micro, fontWeight: "800", color: colors.textFaint, marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.4 },
-    bubbleText: { fontSize: type.bodySm, lineHeight: 19 },
-    bubbleTextAdmin: { color: colors.text },
-    bubbleTextUser: { color: colors.onAccent },
+    list: { padding: 16, gap: 10 },
+    ticketRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      padding: 14,
+    },
+    ticketPreview: { fontSize: type.bodySm, color: colors.text, lineHeight: 18 },
+    ticketDate: { fontSize: type.caption, color: colors.textMuted, marginTop: 4 },
     composer: {
       flexDirection: "row",
       alignItems: "flex-end",
