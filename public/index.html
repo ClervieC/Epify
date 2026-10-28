@@ -62,6 +62,16 @@
       body {
         overflow: hidden;
       }
+      /* overflow:hidden alone still lets iOS rubber-band the whole page,
+         which is what let the tab bar be dragged around by hand. Pinning
+         html/body in place and disabling overscroll makes the page itself
+         immovable — every ScrollView inside still scrolls normally. */
+      html,
+      body {
+        position: fixed;
+        inset: 0;
+        overscroll-behavior: none;
+      }
       /* These styles make the root element full-height */
       #root {
         display: flex;
@@ -69,7 +79,52 @@
         height: 100dvh;
         flex: 1;
       }
+      /* iOS standalone only — see the script right below. */
+      html.app-height,
+      html.app-height body,
+      html.app-height #root {
+        height: var(--app-height);
+      }
     </style>
+
+    <script>
+      // iOS standalone PWA quirk, confirmed live: right after a cold launch
+      // from the Home Screen icon, window.innerHeight (and therefore 100dvh)
+      // can report ~43pt LESS than the real screen until the first
+      // scroll/drag makes WebKit recompute it — showing up as a blank strip
+      // below the tab bar that only went away once the user dragged the
+      // page. An earlier workaround tried to nudge WebKit into recomputing
+      // (scrollTo tricks) but wasn't reliable. Standalone mode has no
+      // browser chrome at all, so a full-screen window is exactly the
+      // screen's own size — use that directly instead of trusting the
+      // viewport measurement. iOS's screen.width/height never swap on
+      // rotation, hence min/max. Only applied when the window really spans
+      // the full screen width (not an iPad Stage Manager / split window,
+      // where the screen size would be wrong), otherwise falls back to
+      // 100dvh as before. Runs in <head> so the very first paint is right.
+      if (window.navigator.standalone) {
+        (function () {
+          var root = document.documentElement;
+          function applyAppHeight() {
+            var sw = screen.width;
+            var sh = screen.height;
+            var landscape = window.innerWidth > window.innerHeight;
+            var fullWidth = landscape ? Math.max(sw, sh) : Math.min(sw, sh);
+            var fullHeight = landscape ? Math.min(sw, sh) : Math.max(sw, sh);
+            if (Math.abs(window.innerWidth - fullWidth) <= 1) {
+              root.style.setProperty("--app-height", fullHeight + "px");
+              root.classList.add("app-height");
+            } else {
+              root.classList.remove("app-height");
+            }
+          }
+          applyAppHeight();
+          window.addEventListener("resize", applyAppHeight);
+          window.addEventListener("orientationchange", applyAppHeight);
+          window.addEventListener("pageshow", applyAppHeight);
+        })();
+      }
+    </script>
   </head>
 
   <body>
@@ -110,40 +165,5 @@
       }
     </script>
 
-    <script>
-      // iOS standalone PWA quirk, confirmed live via a temporary on-screen
-      // diagnostic overlay: right after a cold launch from the Home Screen
-      // icon, window.innerHeight (and therefore the 100dvh the #root style
-      // above uses) can briefly report a taller value than the one iOS
-      // settles on moments later — observed as 852pt vs. 809pt on the same
-      // phone/launch, a ~43pt gap that showed up as extra blank space below
-      // the bottom tab bar until it self-corrected. #root was never the
-      // wrong size for whatever height iOS was reporting at the time — iOS
-      // itself was reporting the wrong height initially. This nudges the
-      // viewport (toggling scrollability and scrolling by a sub-pixel
-      // amount, a common trick for forcing WebKit to recompute its viewport
-      // measurement) shortly after load so it settles immediately instead
-      // of waiting for the user's first scroll/interaction. Best-effort —
-      // this works around an engine timing quirk, not a bug in our own
-      // layout, so it isn't guaranteed to eliminate every case.
-      if (window.navigator.standalone) {
-        function nudgeViewport() {
-          try {
-            // body's own overflow:hidden (see the #expo-reset style above)
-            // is what actually blocks scrollTo from doing anything — toggle
-            // that, not html's, or this silently no-ops.
-            const prevOverflow = document.body.style.overflow;
-            document.body.style.overflow = "auto";
-            window.scrollTo(0, 1);
-            requestAnimationFrame(() => {
-              window.scrollTo(0, 0);
-              document.body.style.overflow = prevOverflow;
-            });
-          } catch (e) {}
-        }
-        window.addEventListener("load", () => requestAnimationFrame(nudgeViewport));
-        window.addEventListener("pageshow", nudgeViewport);
-      }
-    </script>
   </body>
 </html>
