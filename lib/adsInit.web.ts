@@ -4,3 +4,7 @@
 // static import in adsInit.ts fails to bundle for web regardless of whether
 // it's ever called).
 export function initAds() {}
+export function showAdPrivacyOptions() {}
+export function useAdPrivacyOptionsRequired(): boolean {
+  return false;
+}

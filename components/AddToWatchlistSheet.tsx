@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { View, Text, TextInput, Pressable, Image, StyleSheet } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
+import { Image } from "expo-image";
 import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { searchShows, TVMazeShow } from "../lib/tvmaze";

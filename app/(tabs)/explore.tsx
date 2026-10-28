@@ -8,8 +8,8 @@ import {
   Animated,
   StyleSheet,
   ActivityIndicator,
-  Image,
 } from "react-native";
+import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect, useNavigation } from "expo-router";
@@ -732,7 +732,7 @@ function ExploreCard({
             <Image
               source={{ uri: show.image.medium }}
               style={styles.cardImage}
-              resizeMode="cover"
+              contentFit="cover"
             />
           ) : (
             <View style={[styles.cardImage, styles.cardImagePlaceholder]} />
@@ -823,7 +823,7 @@ function ExploreTvCard({
       <Animated.View style={{ opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }}>
         <View style={styles.cardImageWrap}>
           {poster ? (
-            <Image source={{ uri: poster }} style={styles.cardImage} resizeMode="cover" />
+            <Image source={{ uri: poster }} style={styles.cardImage} contentFit="cover" />
           ) : (
             <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
               <Text style={styles.cardPlaceholderText}>{show.name[0]?.toUpperCase()}</Text>
@@ -907,7 +907,7 @@ function ExploreMovieCard({
       <Animated.View style={{ opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }}>
         <View style={styles.cardImageWrap}>
           {poster ? (
-            <Image source={{ uri: poster }} style={styles.cardImage} resizeMode="cover" />
+            <Image source={{ uri: poster }} style={styles.cardImage} contentFit="cover" />
           ) : (
             <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
               <Text style={styles.cardPlaceholderText}>{movie.title[0]?.toUpperCase()}</Text>

@@ -6,12 +6,12 @@ import {
   Pressable,
   Animated,
   StyleSheet,
-  Image,
   ActivityIndicator,
   Share,
   Platform,
   useWindowDimensions,
 } from "react-native";
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -34,6 +34,7 @@ import {
 import {
   fetchEpisodeFeelingCounts,
   fetchEpisodeWatchersAmongFollowing,
+  fetchShowWatchersAmongFollowing,
   fetchUserShows,
   getCachedUserShowsFast,
   fetchWatchedEpisodes,
@@ -60,6 +61,7 @@ import {
 } from "../../lib/animations";
 import { WatchedCheck } from "../../components/WatchedCheck";
 import { EpisodeWatchersRow } from "../../components/EpisodeWatchersRow";
+import { Avatar } from "../../components/Avatar";
 import { RoommateShareRow } from "../../components/RoommateShareRow";
 import { RoomShareToast, useRoomShareToast } from "../../components/RoomShareToast";
 import { fetchShareableRoomsCached, ShareableRoom } from "../../lib/rooms";
@@ -242,6 +244,22 @@ export default function EpisodeDetailScreen() {
     }
     return [...bySeason.entries()].sort((a, b) => a[0] - b[0]);
   }, [episodes]);
+
+  // Desktop sidebar only: who among the people you follow has seen each
+  // episode — same signal as the show page's season list (one query for the
+  // whole show, not one per row). The open episode's own full list is still
+  // EpisodeWatchersRow's job below.
+  const [watchersByEpisode, setWatchersByEpisode] = useState<Map<number, EpisodeWatcher[]>>(new Map());
+  useEffect(() => {
+    if (!isDesktopWeb || !showWatchActivity) return;
+    let active = true;
+    fetchShowWatchersAmongFollowing(showIdNum)
+      .then((data) => active && setWatchersByEpisode(data))
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [isDesktopWeb, showWatchActivity, showIdNum]);
 
   function goToIndex(i: number) {
     setCurrentIndex(Math.max(0, Math.min(episodes.length - 1, i)));
@@ -523,7 +541,11 @@ export default function EpisodeDetailScreen() {
             seasonGroups={seasonGroups}
             currentIndex={currentIndex}
             watchedMap={watchedMap}
+            watchersByEpisode={watchersByEpisode}
             onSelect={goToIndex}
+            onToggleWatched={toggleWatched}
+            onRewatch={rewatchEpisode}
+            onUndoRewatch={undoRewatchEpisode}
             colors={colors}
             styles={styles}
             t={t}
@@ -698,7 +720,11 @@ function EpisodeSidebar({
   seasonGroups,
   currentIndex,
   watchedMap,
+  watchersByEpisode,
   onSelect,
+  onToggleWatched,
+  onRewatch,
+  onUndoRewatch,
   colors,
   styles,
   t,
@@ -706,7 +732,11 @@ function EpisodeSidebar({
   seasonGroups: [number, TVMazeEpisode[]][];
   currentIndex: number;
   watchedMap: Record<number, WatchedEpisode | null>;
+  watchersByEpisode: Map<number, EpisodeWatcher[]>;
   onSelect: (index: number) => void;
+  onToggleWatched: (episode: TVMazeEpisode) => void;
+  onRewatch: (episode: TVMazeEpisode) => void;
+  onUndoRewatch: (episode: TVMazeEpisode) => void;
   colors: Colors;
   styles: EpisodeStyles;
   t: Translations;
@@ -758,7 +788,12 @@ function EpisodeSidebar({
           }
           const ep = row.episode;
           const selected = row.index === currentIndex;
-          const isWatched = !!watchedMap[ep.id];
+          const watched = watchedMap[ep.id];
+          const aired = !!ep.airstamp && new Date(ep.airstamp).getTime() <= Date.now();
+          // Same trailing block as the show page's season list (see
+          // SeasonSection in app/show/[id].tsx): up to 3 followed users who've
+          // seen it, then the check with its ×N rewatch count.
+          const episodeWatchers = watchersByEpisode.get(ep.id) ?? [];
           return (
             <Pressable
               key={ep.id}
@@ -787,12 +822,28 @@ function EpisodeSidebar({
                   {ep.name}
                 </Text>
               </View>
-              {isWatched && (
-                <Ionicons
-                  name="checkmark-circle"
-                  size={16}
-                  color={colors.green}
-                />
+              {aired && (
+                <View style={styles.sidebarTrailing}>
+                  {episodeWatchers.length > 0 && (
+                    <View style={styles.sidebarWatcherStack}>
+                      {episodeWatchers.slice(0, 3).map((w, i) => (
+                        <Tooltip key={w.user_id} label={w.username} placement="left">
+                          <View style={[styles.sidebarWatcherItem, i > 0 && styles.sidebarWatcherOverlap]}>
+                            <Avatar name={w.username} imageUri={w.avatar_url} size="xs" />
+                          </View>
+                        </Tooltip>
+                      ))}
+                    </View>
+                  )}
+                  <WatchedCheck
+                    watched={!!watched}
+                    timesWatched={watched?.times_watched}
+                    onToggle={() => onToggleWatched(ep)}
+                    onRewatch={() => onRewatch(ep)}
+                    onUndoRewatch={() => onUndoRewatch(ep)}
+                    size={22}
+                  />
+                </View>
               )}
             </Pressable>
           );
@@ -1405,6 +1456,10 @@ function createStyles(colors: Colors) {
       color: colors.text,
       marginTop: 2,
     },
+    sidebarTrailing: { flexDirection: "row", alignItems: "center", gap: 6 },
+    sidebarWatcherStack: { flexDirection: "row" },
+    sidebarWatcherItem: { borderRadius: radius.pill, borderWidth: 1.5, borderColor: colors.background },
+    sidebarWatcherOverlap: { marginLeft: -8 },
     dot: {
       width: 6,
       height: 6,

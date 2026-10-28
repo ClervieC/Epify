@@ -27,17 +27,26 @@ import * as Sentry from '@sentry/react-native';
 Sentry.init({
   dsn: 'https://03cff4521aa786cbcb584bdbedcd77f2@o4511932189114368.ingest.de.sentry.io/4511932194488400',
 
-  // Adds more context data to events (IP address, cookies, user, etc.)
-  // For more information, visit: https://docs.sentry.io/platforms/react-native/data-management/data-collected/
-  sendDefaultPii: true,
+  // Off on purpose (GDPR): with it on, every event carries the user's IP
+  // address and request data. Crash reports don't need either to be useful.
+  // See https://docs.sentry.io/platforms/react-native/data-management/data-collected/
+  sendDefaultPii: false,
 
   // Enable Logs
   enableLogs: true,
 
-  // Configure Session Replay
-  replaysSessionSampleRate: 0.1,
+  // Session Replay records the screen, which here means emails, usernames,
+  // support messages and avatars — so everything textual or visual is masked
+  // explicitly rather than relying on the SDK's defaults staying the same.
+  // Only sessions that actually hit an error are kept; the 10% random
+  // sampling of normal sessions is gone, there's no need to record users
+  // who never hit a bug.
+  replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 1,
-  integrations: [Sentry.mobileReplayIntegration(), Sentry.feedbackIntegration()],
+  integrations: [
+    Sentry.mobileReplayIntegration({ maskAllText: true, maskAllImages: true, maskAllVectors: true }),
+    Sentry.feedbackIntegration(),
+  ],
 
   // uncomment the line below to enable Spotlight (https://spotlightjs.com)
   // spotlight: __DEV__,

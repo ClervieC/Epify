@@ -19,6 +19,7 @@ import { APP_VERSION, CHANGELOG } from "../lib/changelog";
 import { getLastSeenChangelogVersion } from "../lib/lastSeenVersion";
 import { alert } from "../lib/alert";
 import { useGoBack } from "../lib/useGoBack";
+import { showAdPrivacyOptions, useAdPrivacyOptionsRequired } from "../lib/adsInit";
 import { Pill } from "../components/Pill";
 import { Sheet } from "../components/Sheet";
 
@@ -32,6 +33,7 @@ import { Sheet } from "../components/Sheet";
 export default function SettingsScreen() {
   const router = useRouter();
   const goBack = useGoBack("/(tabs)/profile");
+  const adPrivacyOptionsRequired = useAdPrivacyOptionsRequired();
   const colors = useColors();
   const styles = createStyles(colors);
   // react-native-web's <Switch> ignores thumbColor for the "on" state
@@ -343,6 +345,13 @@ export default function SettingsScreen() {
         <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.privacyPolicy}</Text>
         <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
       </Pressable>
+      {adPrivacyOptionsRequired && (
+        <Pressable style={styles.importRow} onPress={showAdPrivacyOptions}>
+          <Ionicons name="megaphone-outline" size={20} color={colors.text} />
+          <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.adPrivacyChoices}</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+        </Pressable>
+      )}
       <Pressable style={styles.importRow} onPress={() => router.push("/support")}>
         <Ionicons name="chatbubbles-outline" size={20} color={colors.text} />
         <Text style={[styles.importRowTitle, { flex: 1 }]}>{t.profile.contactUs}</Text>

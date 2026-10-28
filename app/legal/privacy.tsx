@@ -9,7 +9,7 @@ import { useGoBack } from "../../lib/useGoBack";
 const CONTENT = {
   en: {
     title: "Privacy Policy",
-    updated: "Last updated: July 2026",
+    updated: "Last updated: October 2026",
     sections: [
       {
         heading: "1. What's collected",
@@ -24,26 +24,30 @@ const CONTENT = {
         body: "App data is stored with Supabase, the backend provider Epify runs on. Show/movie artwork and metadata is fetched from TVmaze and TMDB at request time and isn't stored beyond normal caching.",
       },
       {
-        heading: "4. Who can see what",
+        heading: "4. Crash reports and ads",
+        body: "When the app crashes or hits an error, a technical report is sent to Sentry (error monitoring) so the bug can be fixed. It contains device and app details and, for errors only, a screen recording in which all text and images are masked. Your IP address is not attached. On iOS and Android, ads are served by Google AdMob. If you're in the EEA, the UK or Switzerland, you're asked for your consent first, and no ad is requested until you've answered. You can change that choice at any time from Settings.",
+      },
+      {
+        heading: "5. Who can see what",
         body: "Your email is only visible to you. Your username, favorites, and public activity may be visible to other users depending on the follow/social features you use.",
       },
       {
-        heading: "5. Your rights",
+        heading: "6. Your rights",
         body: "You can delete shows, lists, or your account data at any time from within the app. To request a full export or deletion of your account, contact clervie@bluedays.com.",
       },
       {
-        heading: "6. Changes to this policy",
+        heading: "7. Changes to this policy",
         body: "This policy may be updated occasionally to reflect changes to the app. Continuing to use Epify after a change means you accept the update.",
       },
       {
-        heading: "7. Contact",
+        heading: "8. Contact",
         body: "Questions about your data? Reach out at clervie@bluedays.com.",
       },
     ],
   },
   fr: {
     title: "Politique de confidentialité",
-    updated: "Dernière mise à jour : juillet 2026",
+    updated: "Dernière mise à jour : octobre 2026",
     sections: [
       {
         heading: "1. Ce qui est collecté",
@@ -58,19 +62,23 @@ const CONTENT = {
         body: "Les données de l'application sont stockées chez Supabase, le prestataire backend utilisé par Epify. Les images et métadonnées des séries/films proviennent de TVmaze et TMDB, récupérées à la demande, sans stockage au-delà d'une mise en cache classique.",
       },
       {
-        heading: "4. Qui voit quoi",
+        heading: "4. Rapports de plantage et publicité",
+        body: "Quand l'application plante ou rencontre une erreur, un rapport technique est envoyé à Sentry (suivi des erreurs) pour pouvoir corriger le bug. Il contient des infos sur l'appareil et l'application et, uniquement en cas d'erreur, un enregistrement de l'écran où tous les textes et images sont masqués. Ton adresse IP n'y est pas jointe. Sur iOS et Android, les publicités sont fournies par Google AdMob. Si tu es dans l'EEE, au Royaume-Uni ou en Suisse, ton consentement t'est demandé d'abord et aucune publicité n'est chargée avant ta réponse. Tu peux modifier ce choix à tout moment depuis les Réglages.",
+      },
+      {
+        heading: "5. Qui voit quoi",
         body: "Ton email n'est visible que par toi. Ton pseudo, tes favoris et ton activité publique peuvent être visibles par d'autres utilisateurs selon les fonctionnalités sociales (abonnements) que tu utilises.",
       },
       {
-        heading: "5. Tes droits",
+        heading: "6. Tes droits",
         body: "Tu peux supprimer des séries, des listes ou les données de ton compte à tout moment depuis l'application. Pour demander un export complet ou la suppression de ton compte, contacte clervie@bluedays.com.",
       },
       {
-        heading: "6. Modifications de cette politique",
+        heading: "7. Modifications de cette politique",
         body: "Cette politique peut être mise à jour occasionnellement pour refléter des changements de l'application. Continuer à utiliser Epify après une modification signifie que tu acceptes la mise à jour.",
       },
       {
-        heading: "7. Contact",
+        heading: "8. Contact",
         body: "Des questions sur tes données ? Écris à clervie@bluedays.com.",
       },
     ],

@@ -15,6 +15,16 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.17",
+    date: "2026-10-28",
+    en: [
+      "On a computer, the episode list on the right of an episode page now shows how many times you've watched each episode and which of the people you follow have seen it — just like a show's own page. You can also mark episodes watched (or rewatched) straight from that list. Thanks for the report!",
+    ],
+    fr: [
+      "Sur ordinateur, la liste des épisodes à droite de la page d'un épisode affiche maintenant combien de fois tu as vu chaque épisode et lesquelles des personnes que tu suis l'ont vu — comme sur la page d'une série. Tu peux aussi marquer un épisode vu (ou revu) directement depuis cette liste. Merci pour le signalement !",
+    ],
+  },
+  {
     version: "5.3.16",
     date: "2026-10-23",
     en: [
