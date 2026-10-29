@@ -390,6 +390,14 @@ function groupActivityItems(items: ActivityItem[]): FeedRow[] {
   return rows;
 }
 
+// Belt and braces on top of loadMore's in-flight guard: an item id is
+// unique per underlying row (see fetchFollowingActivity), so never let the
+// same one into the list twice, whatever order pages/chunks arrive in.
+function appendNewItems(prev: ActivityItem[], chunk: ActivityItem[]): ActivityItem[] {
+  const seen = new Set(prev.map((i) => i.id));
+  return [...prev, ...chunk.filter((i) => !seen.has(i.id))];
+}
+
 type ActivityTab = "activity" | "suggested";
 type SuggestedRow = {
   user_id: string;
@@ -432,6 +440,15 @@ export default function ActivityScreen() {
   // scroll).
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // The actual in-flight guard for loadMore — `loadingMore` state alone let
+  // duplicates through (found live: a followed user's whole season showing
+  // every episode 2-3 times in their group row). Two onEndReached calls
+  // before React re-rendered both saw loadingMore === false and fetched the
+  // same page; and loadingMore flips back to false on a page's FIRST
+  // enriched chunk, so a new loadMore could start while the rest of that
+  // page was still arriving, with a cursor from the partial list. This ref
+  // is set synchronously and only cleared once the whole page has landed.
+  const loadingMoreRef = useRef(false);
 
   // Bumped on every load()/loadMore() — an enrich pass (see below) that's
   // still in flight when a newer one starts (fast re-focus, pull-to-refresh
@@ -484,7 +501,7 @@ export default function ActivityScreen() {
             setLoading(false);
             first = false;
           }
-          setItems((prev) => [...prev, ...chunk]);
+          setItems((prev) => appendNewItems(prev, chunk));
         }
       );
     } finally {
@@ -497,7 +514,8 @@ export default function ActivityScreen() {
   // from a focus/refresh, so it reads its cursor off the current `items`
   // state directly rather than needing it threaded through as a parameter.
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore || items.length === 0) return;
+    if (loadingMoreRef.current || !hasMore || items.length === 0) return;
+    loadingMoreRef.current = true;
     const myVersion = loadVersionRef.current;
     setLoadingMore(true);
     try {
@@ -521,13 +539,14 @@ export default function ActivityScreen() {
             setLoadingMore(false);
             first = false;
           }
-          setItems((prev) => [...prev, ...chunk]);
+          setItems((prev) => appendNewItems(prev, chunk));
         }
       );
     } finally {
+      loadingMoreRef.current = false;
       if (loadVersionRef.current === myVersion) setLoadingMore(false);
     }
-  }, [loadingMore, hasMore, items]);
+  }, [hasMore, items]);
 
   useFocusEffect(
     useCallback(() => {

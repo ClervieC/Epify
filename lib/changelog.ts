@@ -19,9 +19,11 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-10-28",
     en: [
       "On a computer, the episode list on the right of an episode page now shows how many times you've watched each episode and which of the people you follow have seen it — just like a show's own page. You can also mark episodes watched (or rewatched) straight from that list. Thanks for the report!",
+      "Fixed the Social feed sometimes showing someone's episodes two or three times over when scrolling down — it looked like they'd rewatched a whole season, but it was just the same activity loaded twice.",
     ],
     fr: [
       "Sur ordinateur, la liste des épisodes à droite de la page d'un épisode affiche maintenant combien de fois tu as vu chaque épisode et lesquelles des personnes que tu suis l'ont vu — comme sur la page d'une série. Tu peux aussi marquer un épisode vu (ou revu) directement depuis cette liste. Merci pour le signalement !",
+      "Correction du fil Social qui affichait parfois les épisodes de quelqu'un en double ou en triple en faisant défiler — on aurait dit qu'il avait revu toute une saison, mais c'était juste la même activité chargée deux fois.",
     ],
   },
   {
