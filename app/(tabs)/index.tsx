@@ -494,6 +494,8 @@ const UPCOMING_LOAD_THRESHOLD = 40;
 // instead of waiting on onLayout/measurement, which was never reliably ready
 // in time once the list had more than a handful of rows.
 const HEADER_HEIGHT = 45;
+// styles.content's padding — the FlatList's row offsets start below it.
+const CONTENT_PADDING = 16;
 const EMPTY_ROW_HEIGHT = 40;
 // Badges (PREMIERE/NEW/AIRED) now render inline on the code line (see
 // EpisodeRow's positionRow) instead of a separate row below the title, so
@@ -657,10 +659,11 @@ export default function ShowsScreen() {
   // run's own fresh fetch for the show is authoritative once it lands.
   const locallyEditedRef = useRef<Set<number>>(new Set());
   const upcomingScrollY = useRef(0);
-  // My list's current scroll offset and visible height — loadMoreHistory
-  // needs both to land the viewport on the newest just-loaded episodes.
-  const watchListScrollY = useRef(0);
+  // My list's visible height, and the newest episode of a history page that
+  // just loaded (set by loadMoreHistory, consumed by the effect after
+  // watchListData) — together they land the viewport on that episode.
   const watchListHeight = useRef(0);
+  const pendingHistoryScrollTo = useRef<number | null>(null);
   // Cooldown between past-Upcoming loads — without it every small
   // settle/bounce scroll event near the top after a load finishes
   // immediately queues another one.
@@ -776,7 +779,6 @@ export default function ShowsScreen() {
     // scrolling toward the top on the very next scroll event, spuriously
     // re-triggering the past-upcoming load.
     upcomingScrollY.current = 0;
-    watchListScrollY.current = 0;
 
     // Seeded from whatever's already on screen (the previous load, or the
     // on-disk snapshot) so the full list paints from storage before any
@@ -1138,25 +1140,14 @@ export default function ShowsScreen() {
       // very top), i.e. above everything that was already there. Left alone
       // the view would show the OLDEST of what just loaded; by request it
       // should show the newest instead — the bottom of history, the last
-      // episode you watched — so scroll down by what was added, minus half
-      // a screen: the newest just-loaded episodes in the top half, what was
-      // already below them (Watch Next, or the previous history page) in
-      // the bottom half.
-      const addedHeight =
-        (historyItems.length === 0 && enriched.length > 0 ? HEADER_HEIGHT : 0) +
-        enriched.length * EPISODE_ROW_HEIGHT;
-      const revealed = Math.min(addedHeight, watchListHeight.current / 2);
+      // episode you watched. See the effect after watchListData below for
+      // where it actually scrolls to.
+      if (enriched.length > 0) {
+        pendingHistoryScrollTo.current = enriched[enriched.length - 1].episode.id;
+      }
       setHistoryItems((prev) => [...enriched, ...prev]);
       setHistoryOffset(offset);
       if (!more) setHasMoreHistory(false);
-      if (addedHeight > 0) {
-        requestAnimationFrame(() => {
-          listRef.current?.scrollToOffset({
-            offset: Math.max(0, watchListScrollY.current + addedHeight - revealed),
-            animated: false,
-          });
-        });
-      }
     } catch {
       // Leave hasMoreHistory as-is so the button stays to retry.
     } finally {
@@ -1612,6 +1603,29 @@ export default function ShowsScreen() {
     return { watchListData: rows, watchListOffsets: offsets };
   }, [historyItems, hasMoreHistory, watchNext, haventStarted, followedShowsSettled]);
 
+  // Scrolls to an ABSOLUTE position computed from the rendered rows, once
+  // they're actually in watchListData — not "current offset + height just
+  // added": on web the browser's own scroll anchoring already shifts the
+  // view down by the inserted height when rows go in above it, so adding
+  // it again on top overshot by a whole page, straight into the middle of
+  // Watch Next (found live). Puts the newest just-loaded episode's bottom
+  // edge at the middle of the screen: the latest history above it, what
+  // was already there (Watch Next, or the previous history page) below.
+  useEffect(() => {
+    const episodeId = pendingHistoryScrollTo.current;
+    if (episodeId == null) return;
+    const index = watchListData.findIndex((r) => r.type === "historyItem" && r.item.episode.id === episodeId);
+    if (index === -1) return;
+    pendingHistoryScrollTo.current = null;
+    const rowBottom = CONTENT_PADDING + watchListOffsets[index] + EPISODE_ROW_HEIGHT;
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({
+        offset: Math.max(0, rowBottom - watchListHeight.current / 2),
+        animated: false,
+      });
+    });
+  }, [watchListData, watchListOffsets]);
+
   function watchListKey(row: WatchListRow, index: number) {
     switch (row.type) {
       case "historyLoadMore":
@@ -2014,10 +2028,6 @@ export default function ShowsScreen() {
             })}
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}
-            onScroll={(e) => {
-              watchListScrollY.current = e.nativeEvent.contentOffset.y;
-            }}
-            scrollEventThrottle={32}
             onLayout={(e) => {
               watchListHeight.current = e.nativeEvent.layout.height;
             }}
@@ -2180,7 +2190,7 @@ function createStyles(colors: Colors) {
       backgroundColor: colors.backgroundAlt,
     },
     upcomingViewToggleBtnActive: { backgroundColor: colors.accent },
-    content: { padding: 16 },
+    content: { padding: CONTENT_PADDING },
     groupHeaderRow: {
       height: HEADER_HEIGHT,
       flexDirection: "row",
