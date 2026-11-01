@@ -7,6 +7,8 @@ import { RoomSharePicker } from "./RoomSharePicker";
 interface RoommateShareRowProps {
   rooms: ShareableRoom[];
   onShare: (roomIds: string[], userIds: string[]) => void | Promise<void>;
+  showId?: number;
+  movieTmdbId?: number;
 }
 
 // The always-visible counterpart to FeelingSheet's room-share block — for
@@ -16,7 +18,7 @@ interface RoommateShareRowProps {
 // so this needs no visibility condition beyond "is the viewer in any
 // rooms." No section label of its own — RoomSharePicker's own tappable
 // header already says what this is.
-export function RoommateShareRow({ rooms, onShare }: RoommateShareRowProps) {
+export function RoommateShareRow({ rooms, onShare, showId, movieTmdbId }: RoommateShareRowProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -25,7 +27,7 @@ export function RoommateShareRow({ rooms, onShare }: RoommateShareRowProps) {
   return (
     <>
       <View style={styles.divider} />
-      <RoomSharePicker rooms={rooms} onShare={onShare} />
+      <RoomSharePicker rooms={rooms} onShare={onShare} showId={showId} movieTmdbId={movieTmdbId} />
     </>
   );
 }

@@ -325,6 +325,7 @@ export default function TmdbMovieDetailScreen() {
           feelingCounts={feelingCounts}
           rooms={rooms}
           onShareRoom={handleShareRoom}
+          tmdbId={tmdbId}
           comments={comments}
           commentsLoading={commentsLoading}
           myUserId={myUserId}

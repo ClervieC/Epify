@@ -86,6 +86,7 @@ import {
 } from "../../lib/characterVotes";
 import { FEELING_EMOJIS } from "../../lib/feelings";
 import { Pill } from "../../components/Pill";
+import { SWIPE_DISMISS_NATIVE_ID } from "../../lib/swipeDismiss";
 
 const MAX_DOTS = 5;
 const SIDEBAR_WIDTH = 340;
@@ -1072,7 +1073,7 @@ function EpisodePage({
       showsVerticalScrollIndicator={false}
     >
       <GestureDetector gesture={heroGesture}>
-        <Reanimated.View style={[styles.hero, swipeDownStyle]}>
+        <Reanimated.View nativeID={SWIPE_DISMISS_NATIVE_ID} style={[styles.hero, swipeDownStyle]}>
           {episode.image ? (
             <Image
               source={{ uri: episode.image.original }}
@@ -1230,7 +1231,7 @@ function EpisodePage({
               ))}
             </View>
 
-            <RoommateShareRow rooms={rooms} onShare={onShareRoom} />
+            <RoommateShareRow rooms={rooms} onShare={onShareRoom} showId={showId} />
           </>
         )}
 

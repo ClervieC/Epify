@@ -21,6 +21,11 @@ interface RoomSharePickerProps {
   // (the emoji grid in FeelingSheet, the rating section in episode/movie
   // detail), which doesn't apply when the picker *is* the whole sheet.
   defaultExpanded?: boolean;
+  // What's being shared — any room that has it on one of its lists (see
+  // ShareableRoom.showIds/movieTmdbIds) starts checked, and the picker
+  // starts open so that's visible, not hidden behind the collapsed header.
+  showId?: number;
+  movieTmdbId?: number;
 }
 
 // The actual "share with room" checklist — reused by both FeelingSheet (as
@@ -34,15 +39,35 @@ interface RoomSharePickerProps {
 // Collapsed by default behind a single tappable header, not shown open —
 // this is what keeps a tall FeelingSheet (full emoji grid + this block)
 // from needing the room list on screen it used to when it was always
-// expanded. Nothing is pre-checked either, by explicit request — sharing
-// is always a deliberate per-room opt-in, never a default someone has to
-// notice and undo.
-export function RoomSharePicker({ rooms, onShare, defaultExpanded = false }: RoomSharePickerProps) {
+// expanded. Rooms that already have this show/movie on one of their lists
+// start checked (and the picker open), by request: if you're watching it
+// with that room, sharing is the likely answer and unchecking the odd time
+// you watched alone is less work than checking it every time. Any other
+// room stays unchecked — sharing with a room the show has nothing to do
+// with is still a deliberate opt-in.
+export function RoomSharePicker({
+  rooms,
+  onShare,
+  defaultExpanded = false,
+  showId,
+  movieTmdbId,
+}: RoomSharePickerProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t } = useLanguage();
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [selected, setSelected] = useState<Set<string>>(
+    () =>
+      new Set(
+        rooms
+          .filter(
+            (r) =>
+              (showId != null && r.showIds.includes(showId)) ||
+              (movieTmdbId != null && r.movieTmdbIds.includes(movieTmdbId))
+          )
+          .map((r) => r.id)
+      )
+  );
+  const [expanded, setExpanded] = useState(defaultExpanded || selected.size > 0);
   // Guards against the exact bug this shipped to fix: tapping "Share"
   // doesn't visibly do anything on its own (the sheet hosting this is
   // usually closed by the caller the moment onShare resolves — see

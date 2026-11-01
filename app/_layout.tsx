@@ -22,6 +22,7 @@ import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { NewMonthRecapToast } from "../components/NewMonthRecapToast";
 import { WatchActivityPrompt } from "../components/WatchActivityPrompt";
+import { PullToRefresh } from "../components/PullToRefresh";
 import * as Sentry from '@sentry/react-native';
 
 Sentry.init({
@@ -223,7 +224,9 @@ export default Sentry.wrap(function RootLayout() {
                           <PreviousEpisodesPromptProvider>
                             <AddToListPromptProvider>
                               <BadgeUnlockProvider>
-                                <RootNavigation />
+                                <PullToRefresh>
+                                  <RootNavigation />
+                                </PullToRefresh>
                               </BadgeUnlockProvider>
                             </AddToListPromptProvider>
                           </PreviousEpisodesPromptProvider>

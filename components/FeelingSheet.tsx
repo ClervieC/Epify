@@ -19,13 +19,16 @@ interface FeelingSheetProps {
   // with the feeling-reaction setting.
   rooms?: ShareableRoom[];
   onShareRoom?: (roomIds: string[], userIds: string[]) => void | Promise<void>;
+  // The show the just-watched episode belongs to — pre-checks any room that
+  // has it on one of its lists (see RoomSharePicker).
+  showId?: number;
 }
 
 // Quick-capture popup shown right after marking an episode watched from a
 // list row (Watch List, Upcoming) — a lighter touch than navigating to the
 // episode's own page just to log how it felt. Tapping outside (Sheet's
 // backdrop) dismisses without saving, same as picking nothing.
-export function FeelingSheet({ visible, onClose, onSelect, rooms, onShareRoom }: FeelingSheetProps) {
+export function FeelingSheet({ visible, onClose, onSelect, rooms, onShareRoom, showId }: FeelingSheetProps) {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { t, showFeelingPrompt } = useLanguage();
@@ -44,7 +47,7 @@ export function FeelingSheet({ visible, onClose, onSelect, rooms, onShareRoom }:
       )}
       {rooms && rooms.length > 0 && onShareRoom && (
         <View style={showFeelingPrompt ? styles.roomBlock : undefined}>
-          <RoomSharePicker rooms={rooms} onShare={onShareRoom} />
+          <RoomSharePicker rooms={rooms} onShare={onShareRoom} showId={showId} />
         </View>
       )}
     </Sheet>

@@ -15,6 +15,20 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.18",
+    date: "2026-11-01",
+    en: [
+      "Marking an episode watched now pre-selects any room that has that show on one of its lists, with the \"watch with\" picker already open — just uncheck it if you watched alone this time.",
+      "Pull down from the top of any screen to reload the app.",
+      "Your history is back: tap \"Show earlier episodes\" at the top of My list. It now includes shows you've finished, paused or dropped, which used to be left out (so for many of you it never loaded anything).",
+    ],
+    fr: [
+      "Quand tu marques un épisode comme vu, les rooms qui ont cette série dans une de leurs listes sont maintenant présélectionnées, avec le choix \"regarder avec\" déjà ouvert — décoche si tu l'as regardé seul cette fois.",
+      "Tire vers le bas depuis le haut de n'importe quel écran pour recharger l'app.",
+      "Ton historique est de retour : touche \"Voir l'historique\" en haut de Ma liste. Il inclut maintenant les séries terminées, en pause ou abandonnées, qui en étaient exclues (pour beaucoup d'entre vous, il ne chargeait donc rien).",
+    ],
+  },
+  {
     version: "5.3.17",
     date: "2026-10-28",
     en: [

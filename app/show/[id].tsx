@@ -89,6 +89,7 @@ import {
   toggleCommentReaction,
   EnrichedComment,
 } from "../../lib/comments";
+import { SWIPE_DISMISS_NATIVE_ID } from "../../lib/swipeDismiss";
 
 function stripHtml(html: string | null) {
   if (!html) return "";
@@ -792,7 +793,7 @@ export default function ShowDetailScreen() {
     <View style={styles.screen}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <GestureDetector gesture={swipeDownGesture}>
-          <Reanimated.View style={[styles.hero, swipeDownStyle]}>
+          <Reanimated.View nativeID={SWIPE_DISMISS_NATIVE_ID} style={[styles.hero, swipeDownStyle]}>
             {show.image && <Image source={{ uri: show.image.original }} style={styles.heroImage} contentFit="cover" />}
             <LinearGradient colors={["transparent", colors.background]} style={[styles.heroGradient, { pointerEvents: "none" }]} />
             <View style={[styles.heroTopRow, { top: 16 + insets.top }]}>
@@ -1178,10 +1179,11 @@ export default function ShowDetailScreen() {
         onSelect={handleEpisodeQuickFeeling}
         rooms={feelingPrompt.rooms}
         onShareRoom={handleEpisodeShareRoom}
+        showId={showId}
       />
 
       <Sheet visible={!!seasonShareEpisodes} onClose={() => setSeasonShareEpisodes(null)}>
-        <RoomSharePicker rooms={feelingPrompt.rooms} onShare={handleSeasonShareRoom} defaultExpanded />
+        <RoomSharePicker rooms={feelingPrompt.rooms} onShare={handleSeasonShareRoom} defaultExpanded showId={showId} />
       </Sheet>
 
       <Sheet visible={listPickerOpen} onClose={() => setListPickerOpen(false)}>

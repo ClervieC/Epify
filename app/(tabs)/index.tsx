@@ -23,6 +23,7 @@ import {
   fetchWatchedEpisodes,
   fetchWatchedEpisodesForShows,
   fetchWatchedEpisodesPage,
+  getCachedUserShowsFast,
   incrementRewatch,
   markEpisodeWatchedForRoom,
   rateEpisode,
@@ -435,6 +436,7 @@ type UpcomingRow =
   | { type: "groupChild"; item: EnrichedEpisode };
 
 type WatchListRow =
+  | { type: "historyLoadMore" }
   | { type: "historyHeader" }
   | { type: "historyItem"; item: EnrichedEpisode }
   | { type: "watchNextHeader" }
@@ -471,9 +473,12 @@ const HISTORY_PAGE_SIZE = 20;
 // Scrolling within this many pixels of the top triggers loading the next
 // (older) page of history — the natural "pull up for more" gesture instead
 // of a tap button, without ever holding the full history in memory at once.
-const HISTORY_LOAD_THRESHOLD = 40;
-// Minimum gap between two history loads — see lastHistoryLoadAt below.
+// Minimum gap between two past-Upcoming loads — see lastPastUpcomingLoadAt.
 const HISTORY_LOAD_COOLDOWN_MS = 700;
+// A page of watched_episodes can legitimately hydrate to zero rows (every
+// episode in it belongs to a show no longer in user_shows at all) — keep
+// going up to this many pages per tap rather than "doing nothing".
+const HISTORY_MAX_PAGES_PER_LOAD = 5;
 
 // Upcoming only preloads a week of past episodes; scrolling further up
 // reveals more, the same "lazy load on swipe up" gesture as Watch List's
@@ -504,6 +509,7 @@ function upcomingRowHeight(row: UpcomingRow) {
 
 function watchListRowHeight(row: WatchListRow) {
   if (
+    row.type === "historyLoadMore" ||
     row.type === "historyHeader" ||
     row.type === "watchNextHeader" ||
     row.type === "notStartedHeader"
@@ -650,25 +656,17 @@ export default function ShowsScreen() {
   // instead. Cleared at the start of every new loadData() run, since that
   // run's own fresh fetch for the show is authoritative once it lands.
   const locallyEditedRef = useRef<Set<number>>(new Set());
-  const watchListScrollY = useRef(0);
   const upcomingScrollY = useRef(0);
-  // Same cooldown as lastHistoryLoadAt below, same reason — without it every
-  // small settle/bounce scroll event near the top after a load finishes
+  // Cooldown between past-Upcoming loads — without it every small
+  // settle/bounce scroll event near the top after a load finishes
   // immediately queues another one.
   const lastPastUpcomingLoadAt = useRef(0);
   const pendingPastLoad = useRef<number | null>(null);
-  // React state updates aren't synchronous — two onScroll events dispatched
-  // in the same batching window could both read loadingHistory as still
-  // false and both fire a fetch for the same page. This ref closes that gap;
-  // loadingHistory state stays too, purely to drive the spinner.
+  // React state updates aren't synchronous — a double tap on "Show history"
+  // could read loadingHistory as still false twice and fetch the same page
+  // twice. This ref closes that gap; loadingHistory state stays too, purely
+  // to drive the button's spinner.
   const loadingHistoryRef = useRef(false);
-  // Cooldown between history loads — without it, the tiny residual bounce/
-  // settle scroll events that follow *any* touch near the top of the list
-  // (not just a real "pull up for history" gesture) each satisfy the
-  // threshold check the moment the previous load's loadingHistoryRef clears,
-  // chaining several page loads back-to-back and visibly climbing several
-  // screens into history from what felt like barely touching the list.
-  const lastHistoryLoadAt = useRef(0);
   // Per-show cache for the watchNext/haventStarted memo below, keyed by
   // tvmaze_id. computeEnrichedForShow is always called fresh (see the memo
   // below) so this never serves stale, time-dependent data (a newly-aired
@@ -763,17 +761,16 @@ export default function ShowsScreen() {
     // arrives, instead of mixing fresh data with the previous load's stale
     // history/upcoming state until the whole batch finishes.
     // Watched history is intentionally not loaded here — it's fetched lazily,
-    // a page at a time, only once the user scrolls up toward it.
+    // a page at a time, only when the user taps "Show history".
     setHistoryItems([]);
     setHistoryOffset(0);
     setHasMoreHistory(true);
     setUpcomingPastDays(UPCOMING_INITIAL_PAST_DAYS);
-    // The FlatLists below remount at offset 0 on every load (see loadGeneration
-    // in their key), but these refs weren't reset with them — leaving a stale
-    // scroll position from before the refresh made onWatchListScroll think it
-    // was scrolling toward the top on the very next scroll event, spuriously
-    // re-triggering the history/past-upcoming load.
-    watchListScrollY.current = 0;
+    // The FlatList below remounts at offset 0 on every load (see loadGeneration
+    // in its key), but this ref wasn't reset with it — leaving a stale scroll
+    // position from before the refresh made onUpcomingScroll think it was
+    // scrolling toward the top on the very next scroll event, spuriously
+    // re-triggering the past-upcoming load.
     upcomingScrollY.current = 0;
 
     // Seeded from whatever's already on screen (the previous load, or the
@@ -1069,102 +1066,85 @@ export default function ShowsScreen() {
     loadData();
   }
 
+  // Explicitly tapped ("Show history" at the top of My list), not a pull
+  // gesture anymore: the old "keep pulling up past the top" trigger relied on
+  // iOS's native elastic overscroll driving contentOffset negative, which a
+  // scrolling div on the web/PWA never reliably reports — so history simply
+  // never loaded there — and that same pull now means "reload" app-wide (see
+  // components/PullToRefresh.web.tsx).
   async function loadMoreHistory() {
     if (loadingHistoryRef.current || !hasMoreHistory) return;
-    // History is the lowest priority of this screen's three sections (Watch
-    // Next, then Not Started, then History) — the FlatList can fire a
-    // scroll event (and so reach the "near the top" check below) from
-    // nothing more than its own content size changing as loadData() below
-    // progressively flushes Watch Next/Not Started rows in, well before the
-    // user has actually scrolled anywhere. Without this, History's own
-    // Supabase round trip used to fire right alongside that, competing for
-    // bandwidth with the two sections that actually matter first. History
-    // used to also load its first page automatically the moment loadData()
-    // settled, with no scroll at all — explicitly removed by request: a
-    // whole section materializing unprompted read as "just touching the
-    // screen reveals history," when it should only ever load on a real
-    // pull-up gesture (see onWatchListScroll's own comment below).
-    if (!followedShowsSettled) return;
-    if (Date.now() - lastHistoryLoadAt.current < HISTORY_LOAD_COOLDOWN_MS)
-      return;
-    lastHistoryLoadAt.current = Date.now();
     loadingHistoryRef.current = true;
     setLoadingHistory(true);
     try {
-      const page = await fetchWatchedEpisodesPage(
-        historyOffset,
-        HISTORY_PAGE_SIZE,
-      );
-      if (page.length < HISTORY_PAGE_SIZE) setHasMoreHistory(false);
-
-      const enriched: EnrichedEpisode[] = [];
-      for (const w of page) {
+      // episodeIndex only covers watching/want_to_watch shows (what this
+      // screen loads anyway) — but history is every watched episode, and a
+      // finished, paused or dropped show's episodes used to be silently
+      // skipped here, so a history made mostly of those (e.g. right after a
+      // TV Time import) came back as empty page after empty page. Those get
+      // hydrated from the user_shows cache + the per-show episodes cache
+      // instead (network only on a cold cache miss).
+      let userShowsById: Map<number, UserShow> | null = null;
+      const extraEpisodes = new Map<number, Map<number, TVMazeEpisode>>();
+      async function lookup(w: WatchedEpisode) {
         const hit = episodeIndex.get(w.tvmaze_episode_id);
-        if (!hit) continue;
-        enriched.push({
-          show: hit.show,
-          episode: hit.episode,
-          watched: true,
-          watchedAt: w.watched_at,
-          timesWatched: w.times_watched,
-          isSeriesFinale: hit.isSeriesFinale,
-        });
+        if (hit) return hit;
+        if (!userShowsById) {
+          const shows = (await getCachedUserShowsFast()) ?? (await fetchUserShows());
+          userShowsById = new Map(shows.map((s) => [s.tvmaze_id, s]));
+        }
+        const show = userShowsById.get(w.tvmaze_show_id);
+        if (!show) return null;
+        let byId = extraEpisodes.get(show.tvmaze_id);
+        if (!byId) {
+          const eps = await getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id)).catch(
+            () => [] as TVMazeEpisode[],
+          );
+          byId = new Map(eps.map((e) => [e.id, e]));
+          extraEpisodes.set(show.tvmaze_id, byId);
+        }
+        const episode = byId.get(w.tvmaze_episode_id);
+        return episode ? { show, episode, isSeriesFinale: false } : null;
+      }
+
+      let offset = historyOffset;
+      let more = true;
+      const enriched: EnrichedEpisode[] = [];
+      for (let i = 0; i < HISTORY_MAX_PAGES_PER_LOAD && more && enriched.length === 0; i++) {
+        const page = await fetchWatchedEpisodesPage(offset, HISTORY_PAGE_SIZE);
+        offset += page.length;
+        if (page.length < HISTORY_PAGE_SIZE) more = false;
+        for (const w of page) {
+          const hit = await lookup(w);
+          if (!hit) continue;
+          enriched.push({
+            show: hit.show,
+            episode: hit.episode,
+            watched: true,
+            watchedAt: w.watched_at,
+            timesWatched: w.times_watched,
+            isSeriesFinale: hit.isSeriesFinale,
+          });
+        }
       }
       enriched.reverse(); // oldest-of-this-page first, so it reads top-to-bottom chronologically
 
-      // Prepending content above the current viewport would otherwise shove
-      // everything down and visually "jump" the user to the top of what just
-      // loaded. Compensate by scrolling down by exactly the height we added,
-      // so the view stays put and the newly loaded page sits above, ready to
-      // be revealed by scrolling up again — i.e. it "starts from the bottom".
-      const addedHeaderHeight = historyItems.length === 0 ? HEADER_HEIGHT : 0;
-      const addedHeight =
-        addedHeaderHeight + enriched.length * EPISODE_ROW_HEIGHT;
-
+      // Inserted right under the "Show history" button, which stays at the
+      // very top — so what just loaded is what's on screen, no scroll
+      // compensation needed (unlike the old pull-to-load, which kept the
+      // viewport anchored and revealed history only on a further scroll up).
       setHistoryItems((prev) => [...enriched, ...prev]);
-      setHistoryOffset((prev) => prev + page.length);
-
-      requestAnimationFrame(() => {
-        listRef.current?.scrollToOffset({
-          offset: watchListScrollY.current + addedHeight,
-          animated: false,
-        });
-      });
+      setHistoryOffset(offset);
+      if (!more) setHasMoreHistory(false);
+    } catch {
+      // Leave hasMoreHistory as-is so the button stays to retry.
     } finally {
       loadingHistoryRef.current = false;
       setLoadingHistory(false);
     }
   }
-
-  function onWatchListScroll(e: NativeSyntheticEvent<NativeScrollEvent>) {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    const previousY = watchListScrollY.current;
-    const newY = contentOffset.y;
-    watchListScrollY.current = newY;
-
-    // Only a genuinely scrollable list can meaningfully be "near the top" —
-    // otherwise (e.g. just a couple of shows, nothing to scroll) the offset
-    // sits at 0 permanently and any touch/bounce would spuriously trigger
-    // a history load and jump the page around.
-    const isScrollable =
-      contentSize.height > layoutMeasurement.height + HISTORY_LOAD_THRESHOLD;
-    // Direction matters, not just position: starting a scroll from the very
-    // top and swiping down the page (offset climbing away from 0) passes
-    // through this same threshold zone as actually pulling up toward the
-    // top for older history — only the latter (offset decreasing) means it.
-    const isMovingTowardTop = newY <= previousY;
-    // newY must go *negative* past the threshold, not just land near 0 —
-    // merely being at/near the top (newY <= HISTORY_LOAD_THRESHOLD, true the
-    // instant the list settles at offset 0 from any ordinary scroll, even a
-    // light touch) used to fire this on its own, with no real "pull" at all.
-    // A genuine pull-past-the-top gesture is what actually drives contentOffset
-    // negative during iOS's elastic overscroll — requiring that distinguishes
-    // "I deliberately kept pulling up past the boundary" from "I'm just at
-    // the top," by explicit request.
-    if (isScrollable && isMovingTowardTop && newY <= -HISTORY_LOAD_THRESHOLD) {
-      loadMoreHistory();
-    }
-  }
+  const loadMoreHistoryRef = useRef(loadMoreHistory);
+  loadMoreHistoryRef.current = loadMoreHistory;
 
   function loadMorePastUpcoming() {
     if (upcomingPastDays >= UPCOMING_MAX_PAST_DAYS) return;
@@ -1577,6 +1557,7 @@ export default function ShowsScreen() {
 
   const { watchListData, watchListOffsets } = useMemo(() => {
     const rows: WatchListRow[] = [];
+    if (hasMoreHistory) rows.push({ type: "historyLoadMore" });
     if (historyItems.length > 0) {
       rows.push({ type: "historyHeader" });
       for (const item of historyItems) rows.push({ type: "historyItem", item });
@@ -1608,10 +1589,12 @@ export default function ShowsScreen() {
     }
 
     return { watchListData: rows, watchListOffsets: offsets };
-  }, [historyItems, watchNext, haventStarted, followedShowsSettled]);
+  }, [historyItems, hasMoreHistory, watchNext, haventStarted, followedShowsSettled]);
 
   function watchListKey(row: WatchListRow, index: number) {
     switch (row.type) {
+      case "historyLoadMore":
+        return "history-load-more";
       case "historyHeader":
         return "history-header";
       case "historyItem":
@@ -1634,6 +1617,26 @@ export default function ShowsScreen() {
   const renderWatchListRow = useCallback(
     ({ item: row }: { item: WatchListRow }) => {
       switch (row.type) {
+        case "historyLoadMore":
+          return (
+            <View style={styles.groupHeaderRow}>
+              <Pressable
+                style={styles.historyLoadMoreBtn}
+                onPress={() => loadMoreHistoryRef.current()}
+                disabled={loadingHistory}
+                accessibilityRole="button"
+              >
+                {loadingHistory ? (
+                  <ActivityIndicator size="small" color={colors.textFaint} />
+                ) : (
+                  <>
+                    <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.historyLoadMoreText}>{t.shows.showHistory}</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          );
         case "historyHeader":
           return (
             <View style={styles.groupHeaderRow}>
@@ -1703,7 +1706,7 @@ export default function ShowsScreen() {
           );
       }
     },
-    [styles, t, toggleWatched, rewatchEpisode, undoRewatchEpisode],
+    [styles, t, colors, loadingHistory, toggleWatched, rewatchEpisode, undoRewatchEpisode],
   );
 
   // Keyed by the actual calendar date (or LATER/EARLIER) so dates that share
@@ -1990,16 +1993,7 @@ export default function ShowsScreen() {
             })}
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}
-            onScroll={onWatchListScroll}
-            scrollEventThrottle={32}
           />
-          {loadingHistory && (
-            <View
-              style={[styles.historyLoadingOverlay, { pointerEvents: "none" }]}
-            >
-              <ActivityIndicator color={colors.textFaint} size="small" />
-            </View>
-          )}
         </Animated.View>
       ) : tracked.length === 0 ? (
         <View style={styles.fullEmpty}>
@@ -2087,6 +2081,7 @@ export default function ShowsScreen() {
         onSelect={handleQuickFeeling}
         rooms={feelingPrompt.rooms}
         onShareRoom={handleShareRoom}
+        showId={feelingPrompt.promptItem?.show.tvmaze_id}
       />
       {finaleToast.visible && (
         <FinaleToast showName={finaleToast.showName} translateY={finaleToast.translateY} />
@@ -2164,13 +2159,17 @@ function createStyles(colors: Colors) {
       alignItems: "center",
       justifyContent: "center",
     },
-    historyLoadingOverlay: {
-      position: "absolute",
-      top: 8,
-      left: 0,
-      right: 0,
+    historyLoadMoreBtn: {
+      flexDirection: "row",
       alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: radius.pill,
+      minWidth: 44,
+      justifyContent: "center",
     },
+    historyLoadMoreText: { fontSize: 13, fontWeight: "700", color: colors.textMuted },
     empty: {
       color: colors.textMuted,
       textAlign: "center",

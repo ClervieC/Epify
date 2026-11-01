@@ -22,6 +22,7 @@ import { ReportModal } from "./ReportModal";
 import { Tooltip } from "./Tooltip";
 import { WatchInfo } from "./WatchInfo";
 import { RecommendationsRow, RecommendationItem } from "./RecommendationsRow";
+import { SWIPE_DISMISS_NATIVE_ID } from "../lib/swipeDismiss";
 
 interface MovieDetailViewProps {
   title: string;
@@ -109,7 +110,7 @@ export function MovieDetailView({
     <View style={styles.screen}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
         <GestureDetector gesture={swipeDownGesture}>
-          <Reanimated.View style={[styles.hero, swipeDownStyle]}>
+          <Reanimated.View nativeID={SWIPE_DISMISS_NATIVE_ID} style={[styles.hero, swipeDownStyle]}>
             {heroImage ? (
               <>
                 <Image source={{ uri: heroImage }} style={styles.heroImage} contentFit="cover" />

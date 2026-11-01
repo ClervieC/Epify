@@ -329,6 +329,7 @@ export default function MovieDetailScreen() {
           feelingCounts={feelingCounts}
           rooms={rooms}
           onShareRoom={handleShareRoom}
+          tmdbId={commentTmdbId ?? undefined}
           comments={comments}
           commentsLoading={commentsLoading}
           myUserId={myUserId}

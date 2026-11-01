@@ -23,6 +23,8 @@ interface MovieRatingSectionProps {
   feelingCounts: Record<string, number>;
   rooms: ShareableRoom[];
   onShareRoom: (roomIds: string[], userIds: string[]) => void;
+  // Pre-checks rooms that have this movie on one of their lists.
+  tmdbId?: number;
   comments: CommentLike[];
   commentsLoading: boolean;
   myUserId: string | null;
@@ -44,6 +46,7 @@ export function MovieRatingSection({
   feelingCounts,
   rooms,
   onShareRoom,
+  tmdbId,
   comments,
   commentsLoading,
   myUserId,
@@ -100,7 +103,7 @@ export function MovieRatingSection({
             ))}
           </View>
 
-          <RoommateShareRow rooms={rooms} onShare={onShareRoom} />
+          <RoommateShareRow rooms={rooms} onShare={onShareRoom} movieTmdbId={tmdbId} />
         </>
       )}
 

@@ -47,6 +47,12 @@ export interface ShareableRoom {
   // mark_episode_watched_for_room/mark_movie_watched_for_room when this
   // room is checked.
   memberUserIds: string[];
+  // Every show/movie on any of this room's lists — the linked "Currently
+  // watching" show, the "Want to watch together" queue, and what's already
+  // been "Watched together" (room_watch_log). RoomSharePicker pre-checks a
+  // room whose lists contain what was just marked watched.
+  showIds: number[];
+  movieTmdbIds: number[];
 }
 
 // Two ways to set a room's expires_at at creation time. Linking a room to a
@@ -243,22 +249,54 @@ async function fetchShareableRooms(): Promise<ShareableRoom[]> {
 
   const { data: rooms, error: roomsError } = await supabase
     .from("rooms")
-    .select("id, name, emoji, expires_at")
+    .select("id, name, emoji, expires_at, linked_tvmaze_show_id")
     .in("id", roomIds);
   if (roomsError) throw roomsError;
-  const activeRooms = (rooms as { id: string; name: string; emoji: string | null; expires_at: string | null }[]).filter(
+  const activeRooms = (
+    rooms as {
+      id: string;
+      name: string;
+      emoji: string | null;
+      expires_at: string | null;
+      linked_tvmaze_show_id: number | null;
+    }[]
+  ).filter(
     (r) => !r.expires_at || new Date(r.expires_at).getTime() > Date.now()
   );
   if (activeRooms.length === 0) return [];
   const activeRoomIds = activeRooms.map((r) => r.id);
 
-  const { data: members, error: membersError } = await supabase
-    .from("room_members")
-    .select("room_id, user_id")
-    .in("room_id", activeRoomIds)
-    .eq("status", "accepted")
-    .neq("user_id", userId);
+  const [membersRes, watchlistRes, watchLogRes] = await Promise.all([
+    supabase
+      .from("room_members")
+      .select("room_id, user_id")
+      .in("room_id", activeRoomIds)
+      .eq("status", "accepted")
+      .neq("user_id", userId),
+    supabase.from("room_watchlist").select("room_id, tvmaze_show_id, tmdb_id").in("room_id", activeRoomIds),
+    supabase.from("room_watch_log").select("room_id, tvmaze_show_id, tmdb_id").in("room_id", activeRoomIds),
+  ]);
+  const { data: members, error: membersError } = membersRes;
   if (membersError) throw membersError;
+  // Only used to pre-check rooms in the share picker — a failure here
+  // shouldn't take the whole share option down with it, just the pre-check.
+  const showIdsByRoom = new Map<string, Set<number>>();
+  const movieIdsByRoom = new Map<string, Set<number>>();
+  function addTo(map: Map<string, Set<number>>, roomId: string, id: number | null) {
+    if (id == null) return;
+    const set = map.get(roomId);
+    if (set) set.add(id);
+    else map.set(roomId, new Set([id]));
+  }
+  for (const r of activeRooms) addTo(showIdsByRoom, r.id, r.linked_tvmaze_show_id);
+  for (const row of [...(watchlistRes.data ?? []), ...(watchLogRes.data ?? [])] as {
+    room_id: string;
+    tvmaze_show_id: number | null;
+    tmdb_id: number | null;
+  }[]) {
+    addTo(showIdsByRoom, row.room_id, row.tvmaze_show_id);
+    addTo(movieIdsByRoom, row.room_id, row.tmdb_id);
+  }
   const membersByRoom = new Map<string, string[]>();
   for (const m of members as { room_id: string; user_id: string }[]) {
     const list = membersByRoom.get(m.room_id);
@@ -267,7 +305,14 @@ async function fetchShareableRooms(): Promise<ShareableRoom[]> {
   }
 
   return activeRooms
-    .map((r) => ({ id: r.id, name: r.name, emoji: r.emoji, memberUserIds: membersByRoom.get(r.id) ?? [] }))
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      emoji: r.emoji,
+      memberUserIds: membersByRoom.get(r.id) ?? [],
+      showIds: [...(showIdsByRoom.get(r.id) ?? [])],
+      movieTmdbIds: [...(movieIdsByRoom.get(r.id) ?? [])],
+    }))
     .filter((r) => r.memberUserIds.length > 0);
 }
 
@@ -496,6 +541,7 @@ export async function addShowToRoomWatchlist(roomId: string, show: TVMazeShow): 
     image_url: show.image?.medium ?? null,
   });
   if (error && error.code !== "23505") throw error;
+  shareableRoomsCache.invalidate();
 
   const { error: fanoutError } = await supabase.rpc("add_show_to_watchlist_for_room", {
     p_room_id: roomId,
@@ -518,6 +564,7 @@ export async function addMovieToRoomWatchlist(roomId: string, movie: TMDBSearchR
     image_url: movie.poster_path,
   });
   if (error && error.code !== "23505") throw error;
+  shareableRoomsCache.invalidate();
 
   const year = movie.release_date ? Number(movie.release_date.slice(0, 4)) : null;
   const { error: fanoutError } = await supabase.rpc("add_movie_to_watchlist_for_room", {
@@ -533,6 +580,7 @@ export async function addMovieToRoomWatchlist(roomId: string, movie: TMDBSearchR
 export async function removeFromRoomWatchlist(entryId: string): Promise<void> {
   const { error } = await supabase.from("room_watchlist").delete().eq("id", entryId);
   if (error) throw error;
+  shareableRoomsCache.invalidate();
 }
 
 // Undoes a "watched together" share — in case someone tapped it by
