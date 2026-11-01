@@ -657,6 +657,10 @@ export default function ShowsScreen() {
   // run's own fresh fetch for the show is authoritative once it lands.
   const locallyEditedRef = useRef<Set<number>>(new Set());
   const upcomingScrollY = useRef(0);
+  // My list's current scroll offset and visible height — loadMoreHistory
+  // needs both to land the viewport on the newest just-loaded episodes.
+  const watchListScrollY = useRef(0);
+  const watchListHeight = useRef(0);
   // Cooldown between past-Upcoming loads — without it every small
   // settle/bounce scroll event near the top after a load finishes
   // immediately queues another one.
@@ -772,6 +776,7 @@ export default function ShowsScreen() {
     // scrolling toward the top on the very next scroll event, spuriously
     // re-triggering the past-upcoming load.
     upcomingScrollY.current = 0;
+    watchListScrollY.current = 0;
 
     // Seeded from whatever's already on screen (the previous load, or the
     // on-disk snapshot) so the full list paints from storage before any
@@ -1129,13 +1134,29 @@ export default function ShowsScreen() {
       }
       enriched.reverse(); // oldest-of-this-page first, so it reads top-to-bottom chronologically
 
-      // Inserted right under the "Show history" button, which stays at the
-      // very top — so what just loaded is what's on screen, no scroll
-      // compensation needed (unlike the old pull-to-load, which kept the
-      // viewport anchored and revealed history only on a further scroll up).
+      // Inserted right under the "Show history" button (which stays at the
+      // very top), i.e. above everything that was already there. Left alone
+      // the view would show the OLDEST of what just loaded; by request it
+      // should show the newest instead — the bottom of history, the last
+      // episode you watched — so scroll down by what was added, minus half
+      // a screen: the newest just-loaded episodes in the top half, what was
+      // already below them (Watch Next, or the previous history page) in
+      // the bottom half.
+      const addedHeight =
+        (historyItems.length === 0 && enriched.length > 0 ? HEADER_HEIGHT : 0) +
+        enriched.length * EPISODE_ROW_HEIGHT;
+      const revealed = Math.min(addedHeight, watchListHeight.current / 2);
       setHistoryItems((prev) => [...enriched, ...prev]);
       setHistoryOffset(offset);
       if (!more) setHasMoreHistory(false);
+      if (addedHeight > 0) {
+        requestAnimationFrame(() => {
+          listRef.current?.scrollToOffset({
+            offset: Math.max(0, watchListScrollY.current + addedHeight - revealed),
+            animated: false,
+          });
+        });
+      }
     } catch {
       // Leave hasMoreHistory as-is so the button stays to retry.
     } finally {
@@ -1993,6 +2014,13 @@ export default function ShowsScreen() {
             })}
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}
+            onScroll={(e) => {
+              watchListScrollY.current = e.nativeEvent.contentOffset.y;
+            }}
+            scrollEventThrottle={32}
+            onLayout={(e) => {
+              watchListHeight.current = e.nativeEvent.layout.height;
+            }}
           />
         </Animated.View>
       ) : tracked.length === 0 ? (
