@@ -32,6 +32,16 @@
     -->
     <link rel="icon" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!--
+      The manifest's display: "standalone" is what iOS 26 (and Android)
+      actually read to open the Home Screen icon as an app. Without one,
+      some iPhones only had the deprecated apple-mobile-web-app-capable
+      meta below to go on and still opened the icon with Safari's address
+      bar (seen on an iPhone 17, even with "Open as Web App" on). Kept the
+      meta too for older iOS versions.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Epify" />
