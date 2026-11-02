@@ -1138,6 +1138,12 @@ function EpisodePage({
               />
               <Text style={styles.metaText}>{episode.airdate}</Text>
             </View>
+            {!!episode.runtime && (
+              <View style={styles.metaItem}>
+                <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                <Text style={styles.metaText}>{t.common.duration(episode.runtime)}</Text>
+              </View>
+            )}
             <View style={styles.metaItem}>
               <Ionicons name="eye-outline" size={14} color={colors.textMuted} />
               <Text style={styles.metaText}>

@@ -25,6 +25,14 @@ export type { Language };
 
 const en = {
   common: {
+    // "45m", "3h 20m", "2d 5h" — days past 24h so a whole backlog stays readable.
+    duration: (minutes: number) => {
+      const m = Math.round(minutes);
+      if (m < 60) return `${m}m`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+      return h % 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${Math.floor(h / 24)}d`;
+    },
     offline: "No internet connection",
     cancel: "Cancel",
     watchTrailer: "Watch trailer",
@@ -144,6 +152,8 @@ const en = {
     avgPerMonth: (n: string) => `${n} avg/month`,
     totalEpisodesWatched: "Total episodes watched",
     totalEpisodesWatchedSubtitle: "Across every show you've tracked",
+    timeToWatchAll: "Time to watch everything",
+    timeToWatchAllSubtitle: "Every aired episode you haven't seen yet, in shows you're watching or haven't started",
     remainingEpisodes: "Episodes left to watch",
     remainingEpisodesSubtitle: "Across shows you're currently watching",
     notStartedEpisodes: "Episodes waiting for you",
@@ -544,6 +554,10 @@ const en = {
     present: "Present",
     resumeTracking: "Resume tracking",
     stopShow: "Stop show",
+    stopRewatch: "Stop rewatching",
+    stopRewatchShort: "Stop",
+    rewatchingTitle: (n: number) => `Rewatch #${n - 1} in progress`,
+    rewatchingNext: (code: string) => `Next up: ${code}`,
     pauseShow: "Pause show",
     resumeFromPause: "Resume show",
     removeFavorite: "Remove from favorites",
@@ -750,6 +764,13 @@ const en = {
 
 const fr: typeof en = {
   common: {
+    duration: (minutes: number) => {
+      const m = Math.round(minutes);
+      if (m < 60) return `${m} min`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return m % 60 ? `${h} h ${String(m % 60).padStart(2, "0")}` : `${h} h`;
+      return h % 24 ? `${Math.floor(h / 24)} j ${h % 24} h` : `${Math.floor(h / 24)} j`;
+    },
     offline: "Aucune connexion internet",
     cancel: "Annuler",
     watchTrailer: "Voir la bande-annonce",
@@ -865,6 +886,8 @@ const fr: typeof en = {
     avgPerMonth: (n: string) => `${n} moy./mois`,
     totalEpisodesWatched: "Total d'épisodes vus",
     totalEpisodesWatchedSubtitle: "Sur toutes les séries suivies",
+    timeToWatchAll: "Temps pour tout voir",
+    timeToWatchAllSubtitle: "Tous les épisodes sortis que tu n'as pas encore vus, sur tes séries en cours et pas commencées",
     remainingEpisodes: "Épisodes restants à voir",
     remainingEpisodesSubtitle: "Sur les séries en cours de visionnage",
     notStartedEpisodes: "Épisodes qui t'attendent",
@@ -1245,6 +1268,10 @@ const fr: typeof en = {
     present: "Présent",
     resumeTracking: "Reprendre le suivi",
     stopShow: "Arrêter la série",
+    stopRewatch: "Arrêter de revoir la suite",
+    stopRewatchShort: "Arrêter",
+    rewatchingTitle: (n: number) => `Revisionnage n°${n - 1} en cours`,
+    rewatchingNext: (code: string) => `Prochain : ${code}`,
     pauseShow: "Mettre en pause",
     resumeFromPause: "Reprendre la série",
     removeFavorite: "Retirer des favoris",

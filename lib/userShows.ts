@@ -89,6 +89,9 @@ export interface UserShow {
   // reliably answers "how long has this actually been sitting unwatched,"
   // which lib/staleWatchlist.ts relies on.
   want_to_watch_since: string | null;
+  // See computeRewatchNext in lib/rewatch.ts. Optional only because rows
+  // cached before this column existed don't carry it.
+  rewatch_stopped_level?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -193,6 +196,20 @@ export async function setShowStatus(tvmazeId: number, status: ShowStatus) {
   // see showsCompleted in lib/streaks.ts — so no point rechecking for any
   // other status transition.
   if (status === "watched") checkBadgesNow();
+  return data as UserShow;
+}
+
+// "Stop rewatching": records the pilot's current times_watched as the level
+// at which this rewatch ended (see computeRewatchNext in lib/rewatch.ts), so
+// the rest of the show stops coming back in Watch Next.
+export async function stopRewatch(tvmazeId: number, pilotTimes: number) {
+  const { data, error } = await supabase
+    .from("user_shows")
+    .update({ rewatch_stopped_level: pilotTimes })
+    .eq("tvmaze_id", tvmazeId)
+    .select()
+    .single();
+  if (error) throw error;
   return data as UserShow;
 }
 

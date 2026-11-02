@@ -75,6 +75,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
 import { computeStreakData, loadLocalStreakData } from "../../lib/streaks";
 import { useBadgeUnlockToast } from "../../context/BadgeUnlockContext";
+import { computeRewatchNext } from "../../lib/rewatch";
 
 type ViewTab = "list" | "upcoming";
 
@@ -112,32 +113,6 @@ type EnrichedShowResult =
   | { kind: "started"; item: EnrichedEpisode }
   | { kind: "notStarted"; item: EnrichedEpisode };
 
-// Detects "I'm rewatching this show" purely from watch counts, with no
-// explicit rewatch button anywhere: the signal is the pilot (S1E1) having
-// been watched again (times_watched >= 2) while some other aired episode is
-// still behind that count. Only reachable once every aired episode has been
-// watched at least once (see the `!nextEpisode` branch below) — rewatching
-// the pilot from the show detail page is still a manual first step, but
-// every episode after that surfaces back in Watch Next on its own, so the
-// user isn't stuck re-finding the show to advance a rewatch already in
-// progress.
-function computeRewatchNext(
-  aired: TVMazeEpisode[],
-  watchedList: WatchedEpisode[],
-): { episode: TVMazeEpisode; timesWatched: number } | null {
-  const pilot = aired.find((e) => e.season === 1 && e.number === 1);
-  if (!pilot) return null;
-  const timesById = new Map(watchedList.map((w) => [w.tvmaze_episode_id, w.times_watched]));
-  const pilotTimes = timesById.get(pilot.id) ?? 0;
-  if (pilotTimes < 2) return null;
-  const behind = [...aired]
-    .filter((e) => e.id !== pilot.id)
-    .sort((a, b) => a.season - b.season || a.number - b.number)
-    .find((e) => (timesById.get(e.id) ?? 0) < pilotTimes);
-  if (!behind) return null;
-  return { episode: behind, timesWatched: timesById.get(behind.id) ?? 0 };
-}
-
 // Pure function of one show's tracked data — factored out of the watchNext/
 // haventStarted useMemo so it can be called only for shows that actually
 // changed (see enrichedCacheRef), rather than for every tracked show on
@@ -165,7 +140,7 @@ function computeEnrichedForShow(
     .sort((a, b) => a.season - b.season || a.number - b.number)
     .find((e) => !watchedIds.has(e.id));
   if (!nextEpisode) {
-    const rewatchNext = computeRewatchNext(aired, watchedList);
+    const rewatchNext = computeRewatchNext(aired, watchedList, show.rewatch_stopped_level);
     if (!rewatchNext) return { kind: "none" };
     return {
       kind: "started",

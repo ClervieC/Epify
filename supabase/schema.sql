@@ -2588,3 +2588,7 @@ begin
     alter publication supabase_realtime add table public.report_replies;
   end if;
 end $$;
+
+-- "Stop rewatching" (v5.3.18): the S1E1 times_watched at which the user ended
+-- a rewatch — see computeRewatchNext in lib/rewatch.ts. Null = never stopped.
+alter table public.user_shows add column if not exists rewatch_stopped_level integer;

@@ -5,6 +5,7 @@ import { getCachedShow, getCachedEpisodes } from "./showDataCache";
 import { getShow, getShowEpisodes } from "./tvmaze";
 import { mapWithConcurrency } from "./concurrency";
 import { todayISODate, realBingeCount } from "./dates";
+import { averageRuntime, totalRuntime } from "./runtime";
 
 // IndexedDB-backed (see the same comment in lib/showDataCache.ts for why —
 // not the default AsyncStorage export, which is a localStorage-backed
@@ -24,12 +25,13 @@ const MONTH_COUNT = 6;
 const STATS_FETCH_CONCURRENCY = 4;
 const PAGE_SIZE = 1000;
 
-// Bumped whenever ShowStats's shape changes (last: adding episodesPerMonth) —
+// Bumped whenever ShowStats's shape changes (last: adding remainingMinutes/
+// notStartedMinutes) —
 // a row cached under an older version is missing fields the UI now assumes
 // exist unconditionally (e.g. episodesPerMonth.map crashing on undefined), so
 // fetchCachedShowStats() below treats a version mismatch as "no cache" and
 // triggers an immediate recompute instead of returning the stale shape as-is.
-const STATS_SCHEMA_VERSION = 7;
+const STATS_SCHEMA_VERSION = 8;
 
 export interface WeekBucket {
   weekStart: string; // ISO date (Monday) of that bucket
@@ -70,6 +72,10 @@ export interface ShowStats {
   totalEpisodesWatched: number;
   remainingEpisodes: number;
   notStartedEpisodes: number;
+  // Time it'd take to watch those episodes, from each episode's own TVmaze
+  // runtime (see lib/runtime.ts for the fallback when it's missing).
+  remainingMinutes: number;
+  notStartedMinutes: number;
   genreBreakdown: GenreCount[];
   topShows: TopShow[];
   totalMoviesWatched: number;
@@ -139,6 +145,7 @@ export async function computeShowStats(): Promise<ShowStats> {
   const monthBucketIndex = new Map(monthBuckets.map((b, i) => [b.monthStart, i]));
 
   const watchedCountByShow = new Map<number, number>();
+  const watchedEpisodeIds = new Set(watched.map((w) => w.tvmaze_episode_id));
   // Show id + calendar day -> that show/day's raw watched_at timestamps, for
   // the "most binge-watched" ranking below — a real binge session (a dozen
   // episodes in one sitting) should outrank a show watched at a slow steady
@@ -191,6 +198,8 @@ export async function computeShowStats(): Promise<ShowStats> {
   const showInfoById = new Map<number, { name: string; image: string | null }>();
   let remainingEpisodes = 0;
   let notStartedEpisodes = 0;
+  let remainingMinutes = 0;
+  let notStartedMinutes = 0;
 
   await mapWithConcurrency(
     // Union of both lists (a show can be in both) so each only gets fetched once.
@@ -212,8 +221,14 @@ export async function computeShowStats(): Promise<ShowStats> {
       if (show.status === "watching") {
         try {
           const episodes = await getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id));
-          const aired = episodes.filter((e) => e.airdate && e.airdate <= todayIso).length;
-          remainingEpisodes += Math.max(0, aired - watchedForShow);
+          const aired = episodes.filter((e) => e.airdate && e.airdate <= todayIso);
+          remainingEpisodes += Math.max(0, aired.length - watchedForShow);
+          // By episode id rather than the count above — the minutes need to
+          // be the actual unwatched episodes' own runtimes.
+          remainingMinutes += totalRuntime(
+            aired.filter((e) => !watchedEpisodeIds.has(e.id)),
+            averageRuntime(episodes),
+          );
         } catch {
           // Episode list unavailable — skip this show's remaining count.
         }
@@ -224,7 +239,9 @@ export async function computeShowStats(): Promise<ShowStats> {
   await mapWithConcurrency(notStartedShows, STATS_FETCH_CONCURRENCY, async (show) => {
     try {
       const episodes = await getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id));
-      notStartedEpisodes += episodes.filter((e) => e.airdate && e.airdate <= todayIso).length;
+      const aired = episodes.filter((e) => e.airdate && e.airdate <= todayIso);
+      notStartedEpisodes += aired.length;
+      notStartedMinutes += totalRuntime(aired, averageRuntime(episodes));
     } catch {
       // Episode list unavailable — skip this show's count.
     }
@@ -265,6 +282,8 @@ export async function computeShowStats(): Promise<ShowStats> {
     totalEpisodesWatched,
     remainingEpisodes,
     notStartedEpisodes,
+    remainingMinutes,
+    notStartedMinutes,
     genreBreakdown,
     topShows,
     totalMoviesWatched,

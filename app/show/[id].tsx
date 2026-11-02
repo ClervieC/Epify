@@ -51,6 +51,7 @@ import {
   setEpisodesWatched,
   setShowFavorite,
   setShowStatus,
+  stopRewatch,
   rateShow,
   fetchShowFeelingCounts,
   fetchShowWatchersAmongFollowing,
@@ -90,6 +91,8 @@ import {
   EnrichedComment,
 } from "../../lib/comments";
 import { SWIPE_DISMISS_NATIVE_ID } from "../../lib/swipeDismiss";
+import { computeRewatchNext } from "../../lib/rewatch";
+import { averageRuntime, totalRuntime } from "../../lib/runtime";
 
 function stripHtml(html: string | null) {
   if (!html) return "";
@@ -471,6 +474,29 @@ export default function ShowDetailScreen() {
     setMenuOpen(false);
   }
 
+  // Same rule Watch Next uses to keep offering the next rewatch episode (see
+  // lib/rewatch.ts) — only once every aired episode has been seen at least
+  // once, otherwise it's a regular first watch, not a rewatch.
+  const rewatchInProgress = useMemo(() => {
+    const now = Date.now();
+    const aired = episodes.filter((e) => !!e.airstamp && new Date(e.airstamp).getTime() <= now);
+    const watchedIdSet = new Set(watched.map((w) => w.tvmaze_episode_id));
+    if (aired.some((e) => !watchedIdSet.has(e.id))) return null;
+    return computeRewatchNext(aired, watched, userShow?.rewatch_stopped_level);
+  }, [episodes, watched, userShow?.rewatch_stopped_level]);
+
+  // Per-show fallback for episodes TVmaze has no runtime for (see
+  // lib/runtime.ts), shared by the series total below and every season row.
+  const runtimeFallback = useMemo(() => averageRuntime(episodes), [episodes]);
+  const seriesMinutes = useMemo(() => totalRuntime(episodes, runtimeFallback), [episodes, runtimeFallback]);
+
+  async function handleStopRewatch() {
+    if (!show || !rewatchInProgress) return;
+    const result = await stopRewatch(show.id, rewatchInProgress.pilotTimes);
+    setUserShow(result);
+    setMenuOpen(false);
+  }
+
   async function handlePause() {
     if (!show) return;
     const nextStatus = userShow?.status === "paused" ? "watching" : "paused";
@@ -842,6 +868,7 @@ export default function ShowDetailScreen() {
           <Text style={styles.heroMeta}>
             {show.network?.name ?? show.webChannel?.name ?? ""}
             {show.rating.average ? ` · ⭐ ${show.rating.average}` : ""}
+            {episodes.length > 0 ? ` · ${t.common.duration(seriesMinutes)}` : ""}
           </Text>
 
           <View style={styles.progressRow}>
@@ -866,6 +893,33 @@ export default function ShowDetailScreen() {
             <Ionicons name={userShow ? "checkmark-circle" : "add-circle-outline"} size={20} color={userShow ? colors.green : colors.accent} />
             <Text style={styles.addLabel}>{userShow ? t.showDetail.inMyList : t.showDetail.addToMyList}</Text>
           </Pressable>
+
+          {/* Shown right under the list toggle rather than tucked in the ⋯
+              menu — someone rewatching one season shouldn't have to go
+              looking for how to stop the rest of the show coming back in
+              Watch Next. pilotTimes counts the first watch too, hence the
+              "- 1" in rewatchingTitle. */}
+          {userShow && rewatchInProgress && (
+            <View style={styles.rewatchCard}>
+              <Ionicons name="repeat" size={20} color={colors.accent} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rewatchTitle}>{t.showDetail.rewatchingTitle(rewatchInProgress.pilotTimes)}</Text>
+                <Text style={styles.rewatchNext}>
+                  {t.showDetail.rewatchingNext(
+                    `S${String(rewatchInProgress.episode.season).padStart(2, "0")}E${String(rewatchInProgress.episode.number).padStart(2, "0")}`,
+                  )}
+                </Text>
+              </View>
+              <Pressable
+                style={styles.rewatchStopBtn}
+                onPress={handleStopRewatch}
+                accessibilityRole="button"
+                accessibilityLabel={t.showDetail.stopRewatch}
+              >
+                <Text style={styles.rewatchStopText}>{t.showDetail.stopRewatchShort}</Text>
+              </Pressable>
+            </View>
+          )}
 
           <View style={styles.tabsRow}>
             <Pressable style={styles.tabBtn} onPress={() => setTab("about")}>
@@ -1049,6 +1103,7 @@ export default function ShowDetailScreen() {
                       key={seasonNum}
                       seasonNum={seasonNum}
                       eps={eps}
+                      runtimeFallback={runtimeFallback}
                       watchedCount={watchedCount}
                       complete={complete}
                       expanded={expanded}
@@ -1315,6 +1370,7 @@ function FeelingChip({
 function SeasonSection({
   seasonNum,
   eps,
+  runtimeFallback,
   watchedCount,
   complete,
   expanded,
@@ -1333,6 +1389,7 @@ function SeasonSection({
 }: {
   seasonNum: number;
   eps: TVMazeEpisode[];
+  runtimeFallback: number;
   watchedCount: number;
   complete: boolean;
   expanded: boolean;
@@ -1369,6 +1426,7 @@ function SeasonSection({
         <Animated.View style={[styles.seasonRow, { transform: [{ scale }] }]}>
           <View style={styles.seasonLeft}>
             <Text style={styles.seasonTitle}>{t.showDetail.season(seasonNum)}</Text>
+            <Text style={styles.seasonDuration}>{t.common.duration(totalRuntime(eps, runtimeFallback))}</Text>
             <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={16} color={colors.text} />
           </View>
           <Text style={styles.seasonCount}>
@@ -1509,6 +1567,29 @@ function createStyles(colors: Colors) {
   },
   addRowActive: { backgroundColor: colors.accentSoft },
   addLabel: { fontWeight: "700", fontSize: 13, color: colors.text },
+  rewatchCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+  },
+  rewatchTitle: { fontWeight: "800", fontSize: 13, color: colors.text },
+  rewatchNext: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  rewatchStopBtn: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  rewatchStopText: { fontWeight: "700", fontSize: 13, color: colors.text },
   tabsRow: { flexDirection: "row", borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border, marginTop: 16 },
   tabBtn: { flex: 1, alignItems: "center", paddingVertical: 14 },
   tabText: { fontWeight: "800", fontSize: 13, color: colors.textFaint, letterSpacing: 0.4 },
@@ -1577,6 +1658,7 @@ function createStyles(colors: Colors) {
   seasonLeft: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
   seasonTitle: { fontWeight: "800", fontSize: type.body, color: colors.text },
   seasonCount: { color: colors.textMuted, fontSize: 13, marginRight: 10 },
+  seasonDuration: { color: colors.textFaint, fontSize: 12, fontWeight: "600" },
   seasonCheck: {
     width: 26,
     height: 26,

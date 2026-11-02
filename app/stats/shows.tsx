@@ -181,12 +181,29 @@ export default function ShowStatsScreen() {
           <View style={styles.card}>
             <View style={styles.remainingRow}>
               <View style={styles.remainingIcon}>
+                <Ionicons name="time-outline" size={20} color={colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.remainingValue}>
+                  {t.common.duration((stats?.remainingMinutes ?? 0) + (stats?.notStartedMinutes ?? 0))}
+                </Text>
+                <Text style={styles.cardTitle}>{t.showStats.timeToWatchAll}</Text>
+                <Text style={styles.cardSubtitle}>{t.showStats.timeToWatchAllSubtitle}</Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <View style={styles.remainingRow}>
+              <View style={styles.remainingIcon}>
                 <Ionicons name="hourglass-outline" size={20} color={colors.accent} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.remainingValue}>{(stats?.remainingEpisodes ?? 0).toLocaleString()}</Text>
                 <Text style={styles.cardTitle}>{t.showStats.remainingEpisodes}</Text>
-                <Text style={styles.cardSubtitle}>{t.showStats.remainingEpisodesSubtitle}</Text>
+                <Text style={styles.cardSubtitle}>
+                  {t.showStats.remainingEpisodesSubtitle} · {t.common.duration(stats?.remainingMinutes ?? 0)}
+                </Text>
               </View>
             </View>
           </View>
@@ -199,7 +216,9 @@ export default function ShowStatsScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.remainingValue}>{(stats?.notStartedEpisodes ?? 0).toLocaleString()}</Text>
                 <Text style={styles.cardTitle}>{t.showStats.notStartedEpisodes}</Text>
-                <Text style={styles.cardSubtitle}>{t.showStats.notStartedEpisodesSubtitle}</Text>
+                <Text style={styles.cardSubtitle}>
+                  {t.showStats.notStartedEpisodesSubtitle} · {t.common.duration(stats?.notStartedMinutes ?? 0)}
+                </Text>
               </View>
             </View>
           </View>

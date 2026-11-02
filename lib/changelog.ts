@@ -21,11 +21,15 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Marking an episode watched now pre-selects any room that has that show on one of its lists, with the \"watch with\" picker already open — just uncheck it if you watched alone this time.",
       "Pull down from the top of any screen to reload the app.",
       "Your history is back: tap \"Show earlier episodes\" at the top of My list. It now includes shows you've finished, paused or dropped, which used to be left out (so for many of you it never loaded anything).",
+      "Rewatching a show but don't want to go further? A card on the show's page now tells you a rewatch is in progress and which episode is next — tap \"Stop\" on it and the rest stops coming back in Watch Next. Rewatching the first episode again later starts a new rewatch.",
+      "See how long things take: each episode's runtime, each season's and the whole show's total, and in your stats, how long it'd take to watch every episode you have left.",
     ],
     fr: [
       "Quand tu marques un épisode comme vu, les rooms qui ont cette série dans une de leurs listes sont maintenant présélectionnées, avec le choix \"regarder avec\" déjà ouvert — décoche si tu l'as regardé seul cette fois.",
       "Tire vers le bas depuis le haut de n'importe quel écran pour recharger l'app.",
       "Ton historique est de retour : touche \"Voir l'historique\" en haut de Ma liste. Il inclut maintenant les séries terminées, en pause ou abandonnées, qui en étaient exclues (pour beaucoup d'entre vous, il ne chargeait donc rien).",
+      "Tu revois une série mais tu ne veux pas aller plus loin ? Une carte sur la page de la série indique maintenant que tu es en plein revisionnage et quel épisode est le prochain — touche \"Arrêter\" dessus et la suite ne revient plus dans Watch Next. Revoir le premier épisode plus tard relance un nouveau revisionnage.",
+      "Vois combien de temps ça prend : la durée de chaque épisode, le total de chaque saison et de la série, et dans tes stats, le temps qu'il te faudrait pour voir tous les épisodes qui te restent.",
     ],
   },
   {
