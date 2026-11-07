@@ -12,6 +12,7 @@ import { shortDate } from "../lib/dates";
 import { Avatar } from "../components/Avatar";
 import { EmptyState } from "../components/EmptyState";
 import { useGoBack } from "../lib/useGoBack";
+import { episodeCode } from "../lib/share";
 
 export default function NotificationsScreen() {
   const router = useRouter();
@@ -68,6 +69,18 @@ export default function NotificationsScreen() {
     }
   }
 
+  function openShare(item: EnrichedNotification) {
+    if (item.tvmaze_show_id == null) return;
+    if (item.share_episode_id != null) {
+      router.push({
+        pathname: "/episode/[id]",
+        params: { id: String(item.share_episode_id), showId: String(item.tvmaze_show_id) },
+      });
+    } else {
+      router.push(`/show/${item.tvmaze_show_id}`);
+    }
+  }
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
@@ -100,7 +113,29 @@ export default function NotificationsScreen() {
           data={notifications}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) =>
-            item.type === "room_share" ? (
+            item.type === "share" ? (
+              <Pressable style={styles.row} onPress={() => openShare(item)}>
+                <Avatar name={item.actor?.username} imageUri={item.actor?.avatar_url} size="sm" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.text}>
+                    <Text style={styles.bold}>{item.actor?.username ?? "?"}</Text>{" "}
+                    {item.share_episode_id != null && item.share_season != null && item.share_number != null
+                      ? t.share.sharedEpisode(item.show_name ?? "", episodeCode(item.share_season, item.share_number))
+                      : t.share.sharedShow(item.show_name ?? "")}
+                  </Text>
+                  {!!item.share_message && (
+                    <Text style={styles.shareMessage} numberOfLines={3}>
+                      “{item.share_message}”
+                    </Text>
+                  )}
+                  <Text style={styles.date}>{shortDate(item.created_at)}</Text>
+                </View>
+                {item.show_image ? (
+                  <Image source={{ uri: item.show_image }} style={styles.showThumb} />
+                ) : null}
+                {!item.read && <View style={styles.unreadDot} />}
+              </Pressable>
+            ) : item.type === "room_share" ? (
               <Pressable style={styles.row} onPress={() => openRoomShare(item)}>
                 <Avatar name={item.actor?.username} imageUri={item.actor?.avatar_url} size="sm" />
                 <View style={{ flex: 1 }}>
@@ -255,6 +290,7 @@ function createStyles(colors: Colors) {
     showThumb: { width: 40, height: 56, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
     showThumbPlaceholder: { alignItems: "center", justifyContent: "center" },
     reportThumb: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.accentSoft },
+    shareMessage: { fontSize: type.bodySm, color: colors.text, fontStyle: "italic", marginTop: 2 },
     reportPreview: { fontSize: type.caption, color: colors.textMuted, marginTop: 1 },
     date: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
     unreadDot: { width: 8, height: 8, borderRadius: 999, backgroundColor: colors.accent },

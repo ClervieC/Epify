@@ -7,7 +7,6 @@ import {
   Animated,
   StyleSheet,
   ActivityIndicator,
-  Share,
   Platform,
   useWindowDimensions,
 } from "react-native";
@@ -15,6 +14,8 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { ShareSheet } from "../../components/ShareSheet";
+import { ShareTarget } from "../../lib/share";
 import { Gesture, GestureDetector, ScrollView as GestureScrollView } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -391,10 +392,21 @@ export default function EpisodeDetailScreen() {
     }));
   }
 
-  async function shareEpisode(episode: TVMazeEpisode) {
-    const code = `S${String(episode.season).padStart(2, "0")}E${String(episode.number).padStart(2, "0")}`;
-    const showName = show?.name ? `${show.name} — ` : "";
-    await Share.share({ message: `${showName}${code} · ${episode.name}` });
+  // Which episode the share sheet is open for — captured at tap time, so
+  // swiping to another episode underneath doesn't change what gets sent.
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+
+  function shareEpisode(episode: TVMazeEpisode) {
+    setShareTarget({
+      kind: "episode",
+      showId: showIdNum,
+      showName: show?.name ?? "",
+      showImage: show?.image?.medium ?? null,
+      episodeId: episode.id,
+      season: episode.season,
+      number: episode.number,
+      episodeName: episode.name,
+    });
   }
 
   async function setFeeling(episode: TVMazeEpisode, key: string) {
@@ -561,6 +573,7 @@ export default function EpisodeDetailScreen() {
             targetTvmazeEpisodeId: currentEpisode.id,
           }}
         />
+        <ShareSheet visible={!!shareTarget} onClose={() => setShareTarget(null)} target={shareTarget} />
         {finaleToastVisible && show && (
           <FinaleToast showName={show.name} translateY={finaleToastY} t={t} colors={colors} styles={styles} />
         )}
@@ -666,6 +679,7 @@ export default function EpisodeDetailScreen() {
           targetTvmazeEpisodeId: currentEpisode.id,
         }}
       />
+      <ShareSheet visible={!!shareTarget} onClose={() => setShareTarget(null)} target={shareTarget} />
       {finaleToastVisible && show && (
         <FinaleToast showName={show.name} translateY={finaleToastY} t={t} colors={colors} styles={styles} />
       )}

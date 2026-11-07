@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { View } from "react-native";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useGlobalSearchParams, usePathname, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import { initAds } from "../lib/adsInit";
@@ -65,6 +65,12 @@ function RootNavigation() {
   const router = useRouter();
   const nativeSplashHidden = useRef(false);
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
+  const searchParams = useGlobalSearchParams();
+  // Where a logged-out visitor was headed (a shared show/episode link — see
+  // lib/share.ts) before being bounced to login, so logging in lands them
+  // there instead of on the Shows tab.
+  const redirectAfterLogin = useRef<{ pathname: string; params: Record<string, string> } | null>(null);
 
   useEffect(() => {
     if (loading) return;
@@ -76,9 +82,23 @@ function RootNavigation() {
     const isOnboardingRoute = segments[0] === "onboarding";
 
     if (!session && !inAuthGroup && !isLegalRoute) {
+      if (pathname !== "/" && !isOnboardingRoute) {
+        const params: Record<string, string> = {};
+        // Global params also include the route's own dynamic segments (the
+        // [id] of /episode/[id]), already baked into pathname — only the
+        // real query string (showId) needs carrying over.
+        for (const [k, v] of Object.entries(searchParams)) {
+          if (typeof v === "string" && !(segments as string[]).includes(`[${k}]`)) params[k] = v;
+        }
+        redirectAfterLogin.current = { pathname, params };
+      }
       router.replace("/(auth)/login");
     } else if (session && inAuthGroup) {
-      router.replace(needsOnboarding ? "/onboarding" : "/(tabs)");
+      const target = redirectAfterLogin.current;
+      redirectAfterLogin.current = null;
+      if (needsOnboarding) router.replace("/onboarding");
+      else if (target) router.replace({ pathname: target.pathname as never, params: target.params });
+      else router.replace("/(tabs)");
     } else if (session && needsOnboarding && !isOnboardingRoute && !isLegalRoute) {
       router.replace("/onboarding");
     }

@@ -760,6 +760,20 @@ const en = {
     rewatchConfirmText: (show: string, code: string) => `marked ${show} ${code} watched again — did you rewatch it together?`,
     aheadBadge: (n: number) => `+${n} ahead`,
   },
+  share: {
+    copyLink: "Copy link",
+    linkCopied: "Link copied",
+    shareVia: "Share via…",
+    sendToFriends: "SEND TO A FRIEND",
+    noFriends: "Follow people to send them shows and episodes directly.",
+    searchFriends: "Search",
+    messagePlaceholder: "Add a message (optional)",
+    send: (n: number) => (n > 1 ? `Send to ${n} people` : "Send"),
+    sent: "Sent!",
+    sendFailed: "Couldn't send. Try again.",
+    sharedShow: (show: string) => `sent you ${show}`,
+    sharedEpisode: (show: string, code: string) => `sent you ${show} ${code}`,
+  },
 };
 
 const fr: typeof en = {
@@ -1471,6 +1485,20 @@ const fr: typeof en = {
       `Annuler "${title}" comme vu ensemble ? Ça le retire de la liste vue de tout le monde dans cette room.`,
     rewatchConfirmText: (show: string, code: string) => `a remarqué ${show} ${code} comme vu — tu l'as revu avec le groupe ?`,
     aheadBadge: (n: number) => `+${n} d'avance`,
+  },
+  share: {
+    copyLink: "Copier le lien",
+    linkCopied: "Lien copié",
+    shareVia: "Partager via…",
+    sendToFriends: "ENVOYER À UN AMI",
+    noFriends: "Suis des gens pour pouvoir leur envoyer des séries et des épisodes directement.",
+    searchFriends: "Rechercher",
+    messagePlaceholder: "Ajouter un message (facultatif)",
+    send: (n: number) => (n > 1 ? `Envoyer à ${n} personnes` : "Envoyer"),
+    sent: "Envoyé !",
+    sendFailed: "L'envoi a échoué. Réessaie.",
+    sharedShow: (show: string) => `t'a envoyé ${show}`,
+    sharedEpisode: (show: string, code: string) => `t'a envoyé ${show} ${code}`,
   },
 };
 

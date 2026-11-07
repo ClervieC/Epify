@@ -15,6 +15,20 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.19",
+    date: "2026-11-07",
+    en: [
+      "Sharing a show or an episode is all new: copy its link, send it through Messages, WhatsApp and the rest, or send it straight to people you follow (with a message if you like). They get a notification that opens it.",
+      "Shows now have their own Share button at the top of their page.",
+      "Opening a shared link while logged out now takes you to that show or episode once you've logged in, instead of the home screen.",
+    ],
+    fr: [
+      "Le partage d'une série ou d'un épisode a été entièrement refait : copie son lien, envoie-le par Messages, WhatsApp et les autres, ou envoie-le directement aux gens que tu suis (avec un message si tu veux). Ils reçoivent une notification qui l'ouvre.",
+      "Les séries ont maintenant leur propre bouton Partager en haut de leur page.",
+      "Ouvrir un lien partagé sans être connecté t'amène maintenant sur la série ou l'épisode une fois connecté, au lieu de l'accueil.",
+    ],
+  },
+  {
     version: "5.3.18",
     date: "2026-11-01",
     en: [

@@ -2592,3 +2592,58 @@ end $$;
 -- "Stop rewatching" (v5.3.18): the S1E1 times_watched at which the user ended
 -- a rewatch — see computeRewatchNext in lib/rewatch.ts. Null = never stopped.
 alter table public.user_shows add column if not exists rewatch_stopped_level integer;
+
+-- Sharing a show or an episode straight to someone (components/ShareSheet.tsx).
+-- Lands as a 'share' notification. tvmaze_show_id/show_name/show_image are
+-- reused from stale_watchlist; the share_* columns are only set for an
+-- episode share (and the optional message). Same sparse-column convention
+-- as every other notification type.
+alter table public.notifications add column if not exists share_episode_id integer;
+alter table public.notifications add column if not exists share_season integer;
+alter table public.notifications add column if not exists share_number integer;
+alter table public.notifications add column if not exists share_episode_name text;
+alter table public.notifications add column if not exists share_message text;
+
+-- Only to people you follow or who follow you, so this can't be used to
+-- spam arbitrary accounts; recipients outside that set are silently dropped.
+-- Capped at 50 recipients and a 300-character message per call.
+create or replace function public.share_with_users(
+  p_recipient_ids uuid[],
+  p_show_id int,
+  p_show_name text,
+  p_show_image text,
+  p_episode_id int default null,
+  p_season int default null,
+  p_number int default null,
+  p_episode_name text default null,
+  p_message text default null
+) returns int language plpgsql security definer set search_path = public as $$
+declare
+  inserted int;
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+  if coalesce(array_length(p_recipient_ids, 1), 0) > 50 then
+    raise exception 'too many recipients';
+  end if;
+
+  insert into public.notifications (
+    user_id, type, actor_id, tvmaze_show_id, show_name, show_image,
+    share_episode_id, share_season, share_number, share_episode_name, share_message
+  )
+  select distinct r.id, 'share', auth.uid(), p_show_id, left(p_show_name, 200), p_show_image,
+    p_episode_id, p_season, p_number, left(p_episode_name, 200), nullif(left(trim(p_message), 300), '')
+  from unnest(p_recipient_ids) as r(id)
+  where r.id <> auth.uid()
+    and exists (
+      select 1 from public.follows f
+      where (f.follower_id = auth.uid() and f.followed_id = r.id)
+         or (f.follower_id = r.id and f.followed_id = auth.uid())
+    );
+  get diagnostics inserted = row_count;
+  return inserted;
+end;
+$$;
+
+grant execute on function public.share_with_users(uuid[], int, text, text, int, int, int, text, text) to authenticated;

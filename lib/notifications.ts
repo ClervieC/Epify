@@ -57,6 +57,15 @@ export interface AppNotification {
   rewatch_confirmation_id: string | null;
   rewatch_season: number | null;
   rewatch_number: number | null;
+  // Set for type === "share" (see share_with_users in supabase/schema.sql)
+  // — someone sent the recipient a show (tvmaze_show_id/show_name/
+  // show_image above, reused) or, when share_episode_id is set, one episode
+  // of it. share_message is their optional note.
+  share_episode_id: number | null;
+  share_season: number | null;
+  share_number: number | null;
+  share_episode_name: string | null;
+  share_message: string | null;
   read: boolean;
   created_at: string;
 }

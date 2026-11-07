@@ -13,6 +13,7 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { ShareSheet } from "../../components/ShareSheet";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -134,6 +135,7 @@ export default function ShowDetailScreen() {
   // non-null while the room-share Sheet for them is open (see
   // handleSeasonShareRoom below).
   const [seasonShareEpisodes, setSeasonShareEpisodes] = useState<TVMazeEpisode[] | null>(null);
+  const [sharing, setSharing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -832,6 +834,16 @@ export default function ShowDetailScreen() {
                 <Ionicons name="chevron-down" size={22} color="#fff" />
               </Pressable>
               <View style={{ flexDirection: "row", gap: 10 }}>
+                <Tooltip label={t.common.share}>
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={() => setSharing(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel={t.common.share}
+                  >
+                    <Ionicons name="share-outline" size={19} color="#fff" />
+                  </Pressable>
+                </Tooltip>
                 {userShow && (
                   <Tooltip label={userShow.is_favorite ? t.showDetail.removeFavorite : t.showDetail.addFavorite}>
                     <Pressable
@@ -1237,6 +1249,11 @@ export default function ShowDetailScreen() {
         showId={showId}
       />
 
+      <ShareSheet
+        visible={sharing}
+        onClose={() => setSharing(false)}
+        target={{ kind: "show", showId: show.id, showName: show.name, showImage: show.image?.medium ?? null }}
+      />
       <Sheet visible={!!seasonShareEpisodes} onClose={() => setSeasonShareEpisodes(null)}>
         <RoomSharePicker rooms={feelingPrompt.rooms} onShare={handleSeasonShareRoom} defaultExpanded showId={showId} />
       </Sheet>
