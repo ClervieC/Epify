@@ -21,11 +21,13 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Sharing a show or an episode is all new: copy its link, send it through Messages, WhatsApp and the rest, or send it straight to people you follow (with a message if you like). They get a notification that opens it.",
       "Shows now have their own Share button at the top of their page.",
       "Opening a shared link while logged out now takes you to that show or episode once you've logged in, instead of the home screen.",
+      "A room's \"Currently watching\" now fills itself in: it shows every show the room is watching together, not just the one picked in the room's settings, and a show drops out once everyone has finished it. Several at once sit side by side in a row you can swipe.",
     ],
     fr: [
       "Le partage d'une série ou d'un épisode a été entièrement refait : copie son lien, envoie-le par Messages, WhatsApp et les autres, ou envoie-le directement aux gens que tu suis (avec un message si tu veux). Ils reçoivent une notification qui l'ouvre.",
       "Les séries ont maintenant leur propre bouton Partager en haut de leur page.",
       "Ouvrir un lien partagé sans être connecté t'amène maintenant sur la série ou l'épisode une fois connecté, au lieu de l'accueil.",
+      "Le \"En cours de visionnage\" d'une room se remplit maintenant tout seul : il affiche toutes les séries que vous regardez ensemble, pas seulement celle choisie dans les réglages de la room, et une série disparaît dès que tout le monde l'a finie. Quand il y en a plusieurs, elles sont côte à côte dans une rangée qu'on fait défiler.",
     ],
   },
   {

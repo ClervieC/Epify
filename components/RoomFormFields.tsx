@@ -10,10 +10,10 @@ import { Ionicons } from "@expo/vector-icons";
 
 export type ExpiryChoice = "none" | "days";
 
-// A show linked for "Currently watching" (see fetchLinkedShowProgress in
+// A show linked for "Currently watching" (see fetchRoomShowsProgress in
 // lib/rooms.ts) — deliberately not the full TVMazeShow shape, since the edit
 // form (app/rooms/[id].tsx) only ever has the already-fetched {id, name,
-// imageUrl} from the room's existing linkedProgress, not a fresh search
+// imageUrl} from the room's existing showsProgress, not a fresh search
 // result, to prefill with.
 export interface LinkedShowChoice {
   id: number;

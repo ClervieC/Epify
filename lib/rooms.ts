@@ -57,7 +57,7 @@ export interface ShareableRoom {
 
 // Two ways to set a room's expires_at at creation time. Linking a room to a
 // show (for the "Currently watching" progress section — see
-// fetchLinkedShowProgress below) is a separate, independent choice from
+// fetchRoomShowsProgress below) is a separate, independent choice from
 // this — it used to also drive expires_at (the room would expire the moment
 // an already-ended show's latest known episode air date was in the past,
 // which meant a room linked to a finished show was "Ended" the instant it
@@ -331,42 +331,77 @@ export interface LinkedShowProgress {
   // it shouldn't count against anyone's denominator.
   totalEpisodes: number;
   memberProgress: { user_id: string; username: string; avatar_url: string | null; watchedCount: number }[];
+  // Every member has seen every aired episode.
+  finished: boolean;
 }
 
-// For a room linked to a show at creation (independent of its expiry — see
-// RoomExpiry above) — the room detail screen's "Currently watching" section
-// (app/rooms/[id].tsx), showing each member's progress through that one show
-// side by side, since that's implicitly what the room is about. Returns null
-// for a room with no linked show.
-export async function fetchLinkedShowProgress(room: RoomWithMembers): Promise<LinkedShowProgress | null> {
-  if (!room.linked_tvmaze_show_id) return null;
-  const showId = room.linked_tvmaze_show_id;
-  const [show, episodes] = await Promise.all([getCachedShow(showId, () => getShow(showId)), getShowEpisodes(showId)]);
-  const totalEpisodes = episodes.filter((e) => !!e.airstamp && new Date(e.airstamp).getTime() <= Date.now()).length;
+// The room detail screen's "Currently watching" section (app/rooms/[id].tsx).
+// Used to be only the one show linked in the room's settings — which stayed
+// pinned at the top even once everyone had finished it, and meant editing
+// the room every time the group moved on to something else. Now it's every
+// show the room has actually been watching together (room_watch_log), most
+// recently watched first, with the linked show (if any) always considered
+// too. Finished shows are still returned (finished: true) so the edit form
+// can find the linked show's name — the screen only shows the rest.
+const CURRENTLY_WATCHING_MAX_SHOWS = 10;
+
+export async function fetchRoomShowsProgress(room: RoomWithMembers): Promise<LinkedShowProgress[]> {
+  const { data: logRows, error: logError } = await supabase
+    .from("room_watch_log")
+    .select("tvmaze_show_id, created_at")
+    .eq("room_id", room.id)
+    .eq("content_type", "episode")
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (logError) throw logError;
+
+  const showIds: number[] = [];
+  if (room.linked_tvmaze_show_id) showIds.push(room.linked_tvmaze_show_id);
+  for (const row of logRows as { tvmaze_show_id: number | null }[]) {
+    if (row.tvmaze_show_id != null && !showIds.includes(row.tvmaze_show_id)) showIds.push(row.tvmaze_show_id);
+    if (showIds.length >= CURRENTLY_WATCHING_MAX_SHOWS) break;
+  }
+  if (showIds.length === 0) return [];
 
   const accepted = room.members.filter((m) => m.status === "accepted");
   const memberIds = accepted.map((m) => m.user_id);
-  const { data, error } = await supabase
-    .from("watched_episodes")
-    .select("user_id")
-    .eq("tvmaze_show_id", showId)
-    .in("user_id", memberIds);
-  if (error) throw error;
-  const countByUser = new Map<string, number>();
-  for (const row of data as { user_id: string }[]) {
-    countByUser.set(row.user_id, (countByUser.get(row.user_id) ?? 0) + 1);
+  const [showData, watchedRes] = await Promise.all([
+    Promise.all(
+      showIds.map((id) =>
+        Promise.all([getCachedShow(id, () => getShow(id)), getShowEpisodes(id)]).catch(() => null)
+      )
+    ),
+    supabase.from("watched_episodes").select("user_id, tvmaze_show_id").in("tvmaze_show_id", showIds).in("user_id", memberIds),
+  ]);
+  if (watchedRes.error) throw watchedRes.error;
+
+  const countByShowUser = new Map<string, number>();
+  for (const row of watchedRes.data as { user_id: string; tvmaze_show_id: number }[]) {
+    const key = `${row.tvmaze_show_id}:${row.user_id}`;
+    countByShowUser.set(key, (countByShowUser.get(key) ?? 0) + 1);
   }
 
-  return {
-    show: { id: show.id, name: show.name, imageUrl: show.image?.medium ?? null },
-    totalEpisodes,
-    memberProgress: accepted.map((m) => ({
+  const now = Date.now();
+  const result: LinkedShowProgress[] = [];
+  showIds.forEach((id, i) => {
+    const loaded = showData[i];
+    if (!loaded) return;
+    const [show, episodes] = loaded;
+    const totalEpisodes = episodes.filter((e) => !!e.airstamp && new Date(e.airstamp).getTime() <= now).length;
+    const memberProgress = accepted.map((m) => ({
       user_id: m.user_id,
       username: m.profile?.username ?? "?",
       avatar_url: m.profile?.avatar_url ?? null,
-      watchedCount: countByUser.get(m.user_id) ?? 0,
-    })),
-  };
+      watchedCount: Math.min(totalEpisodes, countByShowUser.get(`${id}:${m.user_id}`) ?? 0),
+    }));
+    result.push({
+      show: { id: show.id, name: show.name, imageUrl: show.image?.medium ?? null },
+      totalEpisodes,
+      memberProgress,
+      finished: totalEpisodes > 0 && memberProgress.every((m) => m.watchedCount >= totalEpisodes),
+    });
+  });
+  return result;
 }
 
 export interface RoomWatchLogEntry {

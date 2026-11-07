@@ -14,7 +14,7 @@ import {
   updateRoom,
   removeMember,
   fetchGroupedRoomWatchLog,
-  fetchLinkedShowProgress,
+  fetchRoomShowsProgress,
   fetchRoomWatchlist,
   removeFromRoomWatchlist,
   unmarkWatchGroupForRoom,
@@ -52,7 +52,7 @@ export default function RoomDetailScreen() {
   const [watchLog, setWatchLog] = useState<RoomWatchGroup[]>([]);
   const [watchlist, setWatchlist] = useState<RoomWatchlistEntry[]>([]);
   const [addToWatchlistOpen, setAddToWatchlistOpen] = useState(false);
-  const [linkedProgress, setLinkedProgress] = useState<LinkedShowProgress | null>(null);
+  const [showsProgress, setShowsProgress] = useState<LinkedShowProgress[]>([]);
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [inviteQuery, setInviteQuery] = useState("");
   const [inviteResults, setInviteResults] = useState<Profile[]>([]);
@@ -84,7 +84,7 @@ export default function RoomDetailScreen() {
       fetchRoom(id).then((data) => {
         if (!active) return;
         setRoom(data);
-        if (data) fetchLinkedShowProgress(data).then((p) => active && setLinkedProgress(p));
+        if (data) fetchRoomShowsProgress(data).then((p) => active && setShowsProgress(p));
       });
       fetchGroupedRoomWatchLog(id).then((data) => active && setWatchLog(data));
       fetchRoomWatchlist(id).then((data) => active && setWatchlist(data));
@@ -110,8 +110,8 @@ export default function RoomDetailScreen() {
     setWatchLog((prev) => prev.filter((g) => g.key !== target.key));
     await unmarkWatchGroupForRoom(id, target).catch(() => fetchGroupedRoomWatchLog(id).then(setWatchLog));
     // Progress shown in "Currently watching" reads from watched_episodes
-    // too — stale otherwise if the undone show is the room's linked one.
-    if (room) fetchLinkedShowProgress(room).then(setLinkedProgress);
+    // too — stale otherwise if the undone show is one of the ones listed.
+    if (room) fetchRoomShowsProgress(room).then(setShowsProgress);
   }
 
   function toggleShowExpanded(key: string) {
@@ -133,7 +133,7 @@ export default function RoomDetailScreen() {
         .filter((g) => g.episodeCount > 0)
     );
     await unmarkEpisodeFromRoom(id, entry.tvmaze_episode_id!).catch(() => fetchGroupedRoomWatchLog(id).then(setWatchLog));
-    if (room) fetchLinkedShowProgress(room).then(setLinkedProgress);
+    if (room) fetchRoomShowsProgress(room).then(setShowsProgress);
   }
 
   function onInviteQueryChange(text: string) {
@@ -176,8 +176,9 @@ export default function RoomDetailScreen() {
     setEditDays(
       room.expires_at ? String(Math.max(1, Math.ceil((new Date(room.expires_at).getTime() - Date.now()) / 86400000))) : "",
     );
-    setEditSelectedShow(linkedProgress ? { id: linkedProgress.show.id, name: linkedProgress.show.name, imageUrl: linkedProgress.show.imageUrl } : null);
-    setEditShowQuery(linkedProgress?.show.name ?? "");
+    const linked = showsProgress.find((p) => p.show.id === room.linked_tvmaze_show_id);
+    setEditSelectedShow(linked ? { id: linked.show.id, name: linked.show.name, imageUrl: linked.show.imageUrl } : null);
+    setEditShowQuery(linked?.show.name ?? "");
     setEditOpen(true);
   }
 
@@ -192,7 +193,7 @@ export default function RoomDetailScreen() {
       setEditOpen(false);
       const fresh = await fetchRoom(id);
       setRoom(fresh);
-      if (fresh) fetchLinkedShowProgress(fresh).then(setLinkedProgress);
+      if (fresh) fetchRoomShowsProgress(fresh).then(setShowsProgress);
     } finally {
       setSaving(false);
     }
@@ -208,7 +209,7 @@ export default function RoomDetailScreen() {
     // Otherwise "Currently watching" kept showing the removed member's
     // progress row — it's derived from room.members at the time it was
     // fetched, not live, same as handleSaveEdit already has to re-fetch it.
-    if (fresh) fetchLinkedShowProgress(fresh).then(setLinkedProgress);
+    if (fresh) fetchRoomShowsProgress(fresh).then(setShowsProgress);
   }
 
   // After AddWatchTogetherSheet marks something watched for the room — room
@@ -217,7 +218,7 @@ export default function RoomDetailScreen() {
   // a fresh fetch, not the room/members.
   function refreshAfterAdd() {
     fetchGroupedRoomWatchLog(id).then(setWatchLog);
-    if (room) fetchLinkedShowProgress(room).then(setLinkedProgress);
+    if (room) fetchRoomShowsProgress(room).then(setShowsProgress);
   }
 
   if (!room) return <View style={styles.container} />;
@@ -237,6 +238,65 @@ export default function RoomDetailScreen() {
     : t.rooms.expiryNone;
 
   const heroHue = colors[hueForTitle(room.name)];
+
+  // Finished shows (everyone has seen every aired episode) drop out — they
+  // already live on in "Watched together" below.
+  const inProgress = showsProgress.filter((p) => !p.finished);
+
+  function renderShowProgress(p: LinkedShowProgress, compact: boolean) {
+    const myWatchedCount = p.memberProgress.find((m) => m.user_id === myUserId)?.watchedCount ?? 0;
+    return (
+      <>
+        <Pressable style={styles.watchRow} onPress={() => router.push(`/show/${p.show.id}`)}>
+          {p.show.imageUrl ? (
+            <Image source={{ uri: p.show.imageUrl }} style={compact ? styles.watchThumbSmall : styles.watchThumb} />
+          ) : (
+            <View style={[compact ? styles.watchThumbSmall : styles.watchThumb, styles.watchThumbPlaceholder]}>
+              <Ionicons name="tv-outline" size={18} color={colors.textFaint} />
+            </View>
+          )}
+          <Text style={[styles.watchTitle, { flex: 1 }]} numberOfLines={compact ? 2 : 1}>
+            {p.show.name}
+          </Text>
+        </Pressable>
+        {p.memberProgress.map((m) => {
+          const pct = p.totalEpisodes > 0 ? Math.min(100, (m.watchedCount / p.totalEpisodes) * 100) : 0;
+          // Flagged once someone's at least 2 episodes past where the
+          // viewer is — a 1-episode gap is just normal pacing, not
+          // worth calling out, but a bigger one is the "they're
+          // bingeing ahead of us" moment the user asked to surface.
+          const aheadCount = m.user_id !== myUserId ? m.watchedCount - myWatchedCount : 0;
+          const isAhead = aheadCount >= 2;
+          return (
+            <View key={m.user_id} style={[styles.progressRow, compact && styles.progressRowCompact]}>
+              <Avatar name={m.username} imageUri={m.avatar_url} size={compact ? "xs" : "sm"} />
+              <View style={{ flex: 1 }}>
+                <View style={styles.progressNameRow}>
+                  <View style={styles.progressNameWithBadge}>
+                    <Text style={[styles.progressName, compact && styles.progressNameCompact]} numberOfLines={1}>
+                      {m.username}
+                    </Text>
+                    {isAhead && (
+                      <View style={styles.aheadBadge}>
+                        <Ionicons name="play-skip-forward" size={10} color={colors.yellow} />
+                        <Text style={styles.aheadBadgeText}>{t.rooms.aheadBadge(aheadCount)}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.progressCount}>
+                    {m.watchedCount}/{p.totalEpisodes}
+                  </Text>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${pct}%` }]} />
+                </View>
+              </View>
+            </View>
+          );
+        })}
+      </>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -277,59 +337,29 @@ export default function RoomDetailScreen() {
         </View>
 
         <View style={styles.body}>
-          {linkedProgress && (
+          {inProgress.length > 0 && (
             <View style={styles.card}>
               <Text style={styles.sectionLabel}>{t.rooms.currentlyWatching}</Text>
-              <Pressable style={styles.watchRow} onPress={() => router.push(`/show/${linkedProgress.show.id}`)}>
-                {linkedProgress.show.imageUrl ? (
-                  <Image source={{ uri: linkedProgress.show.imageUrl }} style={styles.watchThumb} />
-                ) : (
-                  <View style={[styles.watchThumb, styles.watchThumbPlaceholder]}>
-                    <Ionicons name="tv-outline" size={18} color={colors.textFaint} />
-                  </View>
-                )}
-                <Text style={styles.watchTitle} numberOfLines={1}>
-                  {linkedProgress.show.name}
-                </Text>
-              </Pressable>
-              {(() => {
-                const myWatchedCount = linkedProgress.memberProgress.find((m) => m.user_id === myUserId)?.watchedCount ?? 0;
-                return linkedProgress.memberProgress.map((m) => {
-                  const pct = linkedProgress.totalEpisodes > 0 ? Math.min(100, (m.watchedCount / linkedProgress.totalEpisodes) * 100) : 0;
-                  // Flagged once someone's at least 2 episodes past where the
-                  // viewer is — a 1-episode gap is just normal pacing, not
-                  // worth calling out, but a bigger one is the "they're
-                  // bingeing ahead of us" moment the user asked to surface.
-                  const aheadCount = m.user_id !== myUserId ? m.watchedCount - myWatchedCount : 0;
-                  const isAhead = aheadCount >= 2;
-                  return (
-                    <View key={m.user_id} style={styles.progressRow}>
-                      <Avatar name={m.username} imageUri={m.avatar_url} size="sm" />
-                      <View style={{ flex: 1 }}>
-                        <View style={styles.progressNameRow}>
-                          <View style={styles.progressNameWithBadge}>
-                            <Text style={styles.progressName} numberOfLines={1}>
-                              {m.username}
-                            </Text>
-                            {isAhead && (
-                              <View style={styles.aheadBadge}>
-                                <Ionicons name="play-skip-forward" size={10} color={colors.yellow} />
-                                <Text style={styles.aheadBadgeText}>{t.rooms.aheadBadge(aheadCount)}</Text>
-                              </View>
-                            )}
-                          </View>
-                          <Text style={styles.progressCount}>
-                            {m.watchedCount}/{linkedProgress.totalEpisodes}
-                          </Text>
-                        </View>
-                        <View style={styles.progressTrack}>
-                          <View style={[styles.progressFill, { width: `${pct}%` }]} />
-                        </View>
-                      </View>
+              {inProgress.length === 1 ? (
+                renderShowProgress(inProgress[0], false)
+              ) : (
+                // Several shows going at once: one compact tile each, side
+                // by side, so the section stays one tile tall however many
+                // the group has on the go instead of pushing everything
+                // else down the page.
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.progressCarousel}
+                  contentContainerStyle={styles.progressCarouselContent}
+                >
+                  {inProgress.map((p) => (
+                    <View key={p.show.id} style={styles.progressTile}>
+                      {renderShowProgress(p, true)}
                     </View>
-                  );
-                });
-              })()}
+                  ))}
+                </ScrollView>
+              )}
             </View>
           )}
 
@@ -720,6 +750,7 @@ function createStyles(colors: Colors) {
     emptyText: { fontSize: type.caption, color: colors.textFaint, paddingVertical: 4 },
     watchRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8 },
     watchThumb: { width: 40, height: 56, borderRadius: radius.sm, backgroundColor: colors.backgroundAlt },
+    watchThumbSmall: { width: 32, height: 46, borderRadius: radius.sm, backgroundColor: colors.background },
     watchThumbPlaceholder: { alignItems: "center", justifyContent: "center" },
     watchTitle: { fontWeight: "700", fontSize: type.body, color: colors.text },
     watchSubtitle: { fontSize: type.caption, color: colors.textMuted, marginTop: 2 },
@@ -734,6 +765,13 @@ function createStyles(colors: Colors) {
     },
     episodeText: { fontSize: type.bodySm, fontWeight: "700", color: colors.textMuted },
     progressRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
+    progressRowCompact: { gap: 8, paddingVertical: 4 },
+    progressNameCompact: { fontSize: type.bodySm },
+    // Bleeds to the card's edges so tiles scroll edge to edge, then pads
+    // back in so the first tile still lines up with the section label.
+    progressCarousel: { marginHorizontal: -14 },
+    progressCarouselContent: { paddingHorizontal: 14, gap: 10 },
+    progressTile: { width: 230, padding: 10, borderRadius: radius.md, backgroundColor: colors.backgroundAlt },
     progressNameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
     progressNameWithBadge: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
     progressName: { flexShrink: 1, fontWeight: "700", fontSize: type.body, color: colors.text },
