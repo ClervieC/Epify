@@ -44,6 +44,10 @@ export interface CalendarItem {
   // watched state (e.g. shows, which have their own richer per-episode
   // status elsewhere) aren't affected.
   watched?: boolean;
+  // The color of the room this belongs to (see fetchRoomTagsByContent in
+  // lib/rooms.ts), drawn as a ring around its poster — "watch this with
+  // the room", same cue as the Watch List's outlined rows.
+  roomColor?: string;
   onPress?: () => void;
 }
 
@@ -92,6 +96,7 @@ interface DayGroup {
   // watched state to begin with; shows never set `groupKey` so each group
   // is always exactly one item anyway.
   watched?: boolean;
+  roomColor?: string;
 }
 
 // Collapses same-show items (matched by `groupKey`, falling back to `id` —
@@ -113,6 +118,7 @@ function groupDayItems(items: CalendarItem[]): DayGroup[] {
         label: item.badge ?? item.title,
         count: 1,
         watched: item.watched,
+        roomColor: item.roomColor,
       };
       index.set(key, group);
       groups.push(group);
@@ -488,8 +494,9 @@ function MonthDayGroups({
   if (groups.length === 0) return null;
 
   function bubble(group: DayGroup) {
-    const ring =
-      group.watched === true
+    const ring = group.roomColor
+      ? { borderWidth: 2, borderColor: group.roomColor }
+      : group.watched === true
         ? styles.dayGroupBubbleWatched
         : group.watched === false
           ? styles.dayGroupBubbleUnwatched
@@ -719,7 +726,11 @@ function CalendarItemRow({
         {item.imageUrl ? (
           <Image
             source={{ uri: item.imageUrl }}
-            style={[styles.itemThumb, compact && styles.itemThumbCompact]}
+            style={[
+              styles.itemThumb,
+              compact && styles.itemThumbCompact,
+              item.roomColor ? { borderWidth: 2, borderColor: item.roomColor } : null,
+            ]}
             contentFit="cover"
           />
         ) : (

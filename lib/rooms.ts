@@ -320,6 +320,29 @@ export function fetchShareableRoomsCached(): Promise<ShareableRoom[]> {
   return shareableRoomsCache.getOrFetch(fetchShareableRooms);
 }
 
+// Which room each show/movie belongs to, for flagging it in the viewer's
+// own lists (the Watch List row, a To Watch movie card) — something on a
+// room's list is meant to be watched with the others, not started alone.
+// Built from the same cached ShareableRoom list (so expired rooms and rooms
+// nobody else has joined yet don't count); when a title is on several
+// rooms' lists, the first one wins.
+export interface RoomTag {
+  name: string;
+  emoji: string | null;
+}
+
+export async function fetchRoomTagsByContent(): Promise<{ shows: Map<number, RoomTag>; movies: Map<number, RoomTag> }> {
+  const shows = new Map<number, RoomTag>();
+  const movies = new Map<number, RoomTag>();
+  const rooms = await fetchShareableRoomsCached().catch(() => [] as ShareableRoom[]);
+  for (const r of rooms) {
+    const tag: RoomTag = { name: r.name, emoji: r.emoji };
+    for (const id of r.showIds) if (!shows.has(id)) shows.set(id, tag);
+    for (const id of r.movieTmdbIds) if (!movies.has(id)) movies.set(id, tag);
+  }
+  return { shows, movies };
+}
+
 // Called on sign-out (see context/AuthContext.tsx) — not scoped by user id.
 export function clearShareableRoomsCache() {
   shareableRoomsCache.invalidate();

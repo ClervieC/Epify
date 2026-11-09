@@ -66,6 +66,10 @@ export interface AppNotification {
   share_number: number | null;
   share_episode_name: string | null;
   share_message: string | null;
+  // type === "room_ahead" (notify_room_ahead in supabase/schema.sql) reuses
+  // room_id/room_name, tvmaze_show_id/show_name/show_image, share_season/
+  // share_number/share_episode_id (the episode they reached) and
+  // room_watch_episode_count (how many episodes ahead).
   read: boolean;
   created_at: string;
 }

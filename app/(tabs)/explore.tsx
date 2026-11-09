@@ -32,9 +32,13 @@ import {
   getUpcomingTv,
   findTvmazeShowFromTmdbTv,
   fetchResolvedTvmazeShows,
+  getTvWatchProviderList,
+  getMovieWatchProviderList,
+  providerLogoUrl,
   posterUrl,
   TMDBSearchResult,
   TMDBTvResult,
+  TMDBWatchProviderOption,
 } from "../../lib/tmdb";
 import { fetchUserMovieTmdbMap, addMovieToWatchlist, removeUserMovie, setMovieFavorite, UserMovie } from "../../lib/userMovies";
 import { fetchForYou } from "../../lib/forYou";
@@ -136,7 +140,7 @@ export default function ExploreScreen() {
   const [movieCategories, setMovieCategories] = useState<Category<TMDBSearchResult>[]>([]);
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors, CARD_WIDTH, GRID_GAP, GRID_PADDING), [colors]);
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const underlineGrow = useGrowIn(subTab);
   // A plain `let` here would be reassigned on every render, so a debounce
   // scheduled in one render could never be cancelled by clearTimeout in a
@@ -244,6 +248,56 @@ export default function ExploreScreen() {
       },
     );
   }, [t]);
+
+  // Streaming platforms for the viewer's region, right at the top of
+  // Explore — tapping one opens everything on that platform (app/
+  // browse.tsx with its platform filter already set), no search needed.
+  // Same cached list browse.tsx's own platform chips use.
+  const [tvProviders, setTvProviders] = useState<TMDBWatchProviderOption[]>([]);
+  const [movieProviders, setMovieProviders] = useState<TMDBWatchProviderOption[]>([]);
+  useEffect(() => {
+    getTvWatchProviderList(language).then(setTvProviders).catch(() => {});
+    getMovieWatchProviderList(language).then(setMovieProviders).catch(() => {});
+  }, [language]);
+
+  function openProvider(kind: "tv" | "movie", provider: TMDBWatchProviderOption) {
+    router.push({
+      pathname: "/browse",
+      params: { kind, providerId: String(provider.provider_id), title: provider.provider_name },
+    });
+  }
+
+  function renderProviders(kind: "tv" | "movie") {
+    const providers = kind === "tv" ? tvProviders : movieProviders;
+    if (providers.length === 0) return null;
+    return (
+      <View style={styles.categorySection}>
+        <View style={styles.categoryHeaderRow}>
+          <Text style={styles.categoryTitle}>{t.explore.platforms}</Text>
+        </View>
+        <HorizontalScrollRow contentContainerStyle={styles.providerRow}>
+          {providers.map((p) => (
+            <Pressable
+              key={p.provider_id}
+              style={styles.providerTile}
+              onPress={() => openProvider(kind, p)}
+              accessibilityRole="button"
+              accessibilityLabel={p.provider_name}
+            >
+              {p.logo_path ? (
+                <Image source={{ uri: providerLogoUrl(p.logo_path, "w92")! }} style={styles.providerLogo} contentFit="cover" />
+              ) : (
+                <View style={[styles.providerLogo, styles.cardImagePlaceholder]} />
+              )}
+              <Text style={styles.providerName} numberOfLines={1}>
+                {p.provider_name}
+              </Text>
+            </Pressable>
+          ))}
+        </HorizontalScrollRow>
+      </View>
+    );
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -606,6 +660,7 @@ export default function ExploreScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.categoriesScroll}
         >
+          {renderProviders("tv")}
           {showCategories.length === 0 ? (
             <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
           ) : (
@@ -649,6 +704,7 @@ export default function ExploreScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.categoriesScroll}
         >
+          {renderProviders("movie")}
           {movieCategories.length === 0 ? (
             <ActivityIndicator color={colors.black} style={{ marginTop: 24 }} />
           ) : (
@@ -1028,6 +1084,10 @@ function createStyles(colors: Colors, CARD_WIDTH: number, GRID_GAP: number, GRID
     viewAllLink: { fontSize: 13, fontWeight: "700", color: colors.accent },
     categoryRow: { paddingHorizontal: 16, gap: 12 },
     categoryCard: { width: 130 },
+    providerRow: { paddingHorizontal: 16, gap: 14 },
+    providerTile: { width: 68, alignItems: "center", gap: 6 },
+    providerLogo: { width: 60, height: 60, borderRadius: radius.md, backgroundColor: colors.backgroundAlt },
+    providerName: { fontSize: type.micro, fontWeight: "700", color: colors.textMuted, textAlign: "center", width: "100%" },
     card: { flex: 1 },
     cardImageWrap: { position: "relative" },
     cardImage: {

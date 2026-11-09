@@ -2647,3 +2647,149 @@ end;
 $$;
 
 grant execute on function public.share_with_users(uuid[], int, text, text, int, int, int, text, text) to authenticated;
+
+-- ============================================================
+-- Live sync between a user's own devices (lib/liveSync.ts): marking an
+-- episode watched on the computer shows up on the phone within a second
+-- instead of after the next app restart. Same self-hosted publication
+-- opt-in as support_message_replies above. A DELETE (unwatching) only
+-- carries the row's primary key over realtime when RLS is on, which is
+-- enough — the client finds which show that row belonged to in its own
+-- cache.
+-- ============================================================
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['watched_episodes', 'user_shows'] loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
+
+-- ============================================================
+-- "Someone in your room is getting ahead" (notification type
+-- 'room_ahead'): when a member marks an episode of a room show (the
+-- room's linked show, its "want to watch together" list, or something
+-- already watched together) on their own — not shared with the room —
+-- and ends up 2+ episodes ahead of another accepted member, that member
+-- gets told. Only the person's own marking counts: a room share inserts
+-- the others' rows with auth.uid() = the sharer, so sharing never
+-- triggers it (and keeps everyone level anyway). One live notification
+-- per (recipient, room, show, ahead member): while it's unread it's just
+-- updated with the new gap; once read, a new one only comes after 12h,
+-- so bingeing a season doesn't send a notification per episode.
+-- room_watch_episode_count holds the gap; share_season/share_number/
+-- share_episode_id the episode they reached.
+-- ============================================================
+create or replace function public.notify_room_ahead()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor_count int;
+  v_other_count int;
+  v_name text;
+  v_image text;
+  v_existing record;
+  r record;
+begin
+  if auth.uid() is null or auth.uid() <> new.user_id then
+    return new;
+  end if;
+
+  select count(*) into v_actor_count
+  from public.watched_episodes
+  where user_id = new.user_id and tvmaze_show_id = new.tvmaze_show_id and watched;
+  if v_actor_count < 2 then
+    return new;
+  end if;
+
+  select show_name, show_image into v_name, v_image
+  from public.user_shows
+  where user_id = new.user_id and tvmaze_id = new.tvmaze_show_id;
+
+  for r in
+    select distinct on (rm_other.user_id) rm_other.user_id as other_id, ro.id as room_id, ro.name as room_name
+    from public.room_members rm_me
+    join public.rooms ro on ro.id = rm_me.room_id and (ro.expires_at is null or ro.expires_at > now())
+    join public.room_members rm_other
+      on rm_other.room_id = ro.id and rm_other.status = 'accepted' and rm_other.user_id <> new.user_id
+    where rm_me.user_id = new.user_id
+      and rm_me.status = 'accepted'
+      and (
+        ro.linked_tvmaze_show_id = new.tvmaze_show_id
+        or exists (select 1 from public.room_watchlist w where w.room_id = ro.id and w.tvmaze_show_id = new.tvmaze_show_id)
+        or exists (select 1 from public.room_watch_log l where l.room_id = ro.id and l.tvmaze_show_id = new.tvmaze_show_id)
+      )
+    order by rm_other.user_id, ro.created_at
+  loop
+    select count(*) into v_other_count
+    from public.watched_episodes
+    where user_id = r.other_id and tvmaze_show_id = new.tvmaze_show_id and watched;
+    -- Someone who never started the show isn't "behind" on it yet.
+    if v_other_count = 0 or v_actor_count - v_other_count < 2 then
+      continue;
+    end if;
+
+    select id, read, created_at into v_existing
+    from public.notifications
+    where user_id = r.other_id and type = 'room_ahead' and room_id = r.room_id
+      and actor_id = new.user_id and tvmaze_show_id = new.tvmaze_show_id
+    order by created_at desc
+    limit 1;
+
+    if found and (not v_existing.read or v_existing.created_at > now() - interval '12 hours') then
+      update public.notifications
+      set room_watch_episode_count = v_actor_count - v_other_count,
+          share_season = new.season,
+          share_number = new.number,
+          share_episode_id = new.tvmaze_episode_id
+      where id = v_existing.id;
+    else
+      delete from public.notifications
+      where user_id = r.other_id and type = 'room_ahead' and room_id = r.room_id
+        and actor_id = new.user_id and tvmaze_show_id = new.tvmaze_show_id;
+      insert into public.notifications (
+        user_id, type, actor_id, room_id, room_name, tvmaze_show_id, show_name, show_image,
+        room_watch_episode_count, share_season, share_number, share_episode_id
+      ) values (
+        r.other_id, 'room_ahead', new.user_id, r.room_id, r.room_name, new.tvmaze_show_id, v_name, v_image,
+        v_actor_count - v_other_count, new.season, new.number, new.tvmaze_episode_id
+      );
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_watched_episode_room_ahead on public.watched_episodes;
+create trigger on_watched_episode_room_ahead
+  after insert on public.watched_episodes
+  for each row execute function public.notify_room_ahead();
+
+-- ============================================================
+-- More live sync: movies between a user's own devices (lib/liveSync.ts),
+-- and a room's lists and members between its members (app/rooms/[id].tsx)
+-- — same publication opt-in as watched_episodes/user_shows above.
+-- ============================================================
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['user_movies', 'room_watchlist', 'room_watch_log', 'room_members'] loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;

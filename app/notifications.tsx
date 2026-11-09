@@ -135,6 +135,22 @@ export default function NotificationsScreen() {
                 ) : null}
                 {!item.read && <View style={styles.unreadDot} />}
               </Pressable>
+            ) : item.type === "room_ahead" ? (
+              // A room member watched a room show on their own and is now
+              // 2+ episodes ahead (notify_room_ahead in supabase/schema.sql)
+              // — opens the room, where everyone's progress is.
+              <Pressable style={styles.row} onPress={() => item.room_id && router.push(`/rooms/${item.room_id}`)}>
+                <Avatar name={item.actor?.username} imageUri={item.actor?.avatar_url} size="sm" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.text}>
+                    <Text style={styles.bold}>{item.actor?.username ?? "?"}</Text>{" "}
+                    {t.rooms.aheadNotification(item.room_watch_episode_count, item.show_name ?? "", item.room_name ?? "")}
+                  </Text>
+                  <Text style={styles.date}>{shortDate(item.created_at)}</Text>
+                </View>
+                {item.show_image ? <Image source={{ uri: item.show_image }} style={styles.showThumb} /> : null}
+                {!item.read && <View style={styles.unreadDot} />}
+              </Pressable>
             ) : item.type === "room_share" ? (
               <Pressable style={styles.row} onPress={() => openRoomShare(item)}>
                 <Avatar name={item.actor?.username} imageUri={item.actor?.avatar_url} size="sm" />

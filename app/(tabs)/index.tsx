@@ -68,7 +68,7 @@ import {
   CalendarItem,
   Granularity as CalendarGranularity,
 } from "../../components/UpcomingCalendar";
-import { useColors, radius, Colors } from "../../lib/theme";
+import { useColors, radius, hueForTitle, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
 import { useGrowIn, useFadeIn } from "../../lib/animations";
 import { useAuth } from "../../context/AuthContext";
@@ -76,6 +76,8 @@ import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
 import { computeStreakData, loadLocalStreakData } from "../../lib/streaks";
 import { useBadgeUnlockToast } from "../../context/BadgeUnlockContext";
 import { computeRewatchNext } from "../../lib/rewatch";
+import { useLiveSync } from "../../lib/liveSync";
+import { fetchRoomTagsByContent, RoomTag } from "../../lib/rooms";
 
 type ViewTab = "list" | "upcoming";
 
@@ -268,6 +270,7 @@ interface WatchListEpisodeRowProps {
   onToggleWatched: (item: EnrichedEpisode) => void;
   onRewatch?: (item: EnrichedEpisode) => void;
   onUndoRewatch?: (item: EnrichedEpisode) => void;
+  room?: RoomTag;
   styles: ShowsStyles;
 }
 
@@ -282,6 +285,7 @@ const WatchListEpisodeRow = memo(function WatchListEpisodeRow({
   onToggleWatched,
   onRewatch,
   onUndoRewatch,
+  room,
   styles,
 }: WatchListEpisodeRowProps) {
   return (
@@ -304,6 +308,8 @@ const WatchListEpisodeRow = memo(function WatchListEpisodeRow({
         onToggleWatched={() => onToggleWatched(item)}
         onRewatch={onRewatch ? () => onRewatch(item) : undefined}
         onUndoRewatch={onUndoRewatch ? () => onUndoRewatch(item) : undefined}
+        roomName={room?.name}
+        roomEmoji={room?.emoji}
       />
     </View>
   );
@@ -319,6 +325,7 @@ interface UpcomingEpisodeRowProps {
   onRewatch?: (item: EnrichedEpisode) => void;
   onUndoRewatch?: (item: EnrichedEpisode) => void;
   onToggleGroup?: (key: string) => void;
+  room?: RoomTag;
   styles: ShowsStyles;
 }
 
@@ -337,6 +344,7 @@ const UpcomingEpisodeRow = memo(function UpcomingEpisodeRow({
   onRewatch,
   onUndoRewatch,
   onToggleGroup,
+  room,
   styles,
 }: UpcomingEpisodeRowProps) {
   const isFuture = new Date(item.episode.airstamp).getTime() > Date.now();
@@ -396,6 +404,8 @@ const UpcomingEpisodeRow = memo(function UpcomingEpisodeRow({
             ? () => onToggleGroup(groupKey)
             : undefined
         }
+        roomName={room?.name}
+        roomEmoji={room?.emoji}
       />
     </View>
   );
@@ -436,13 +446,6 @@ const TRACKED_SHOW_FETCH_CONCURRENCY = 10;
 // IndexedDB read stays unthrottled below (no network call, instant paint);
 // only the actual Supabase recompute is gated by this.
 const MIN_STREAK_RELOAD_INTERVAL_MS = 15_000;
-
-// How long a web browser tab has to have been hidden before coming back to
-// it triggers a reload (see the visibilitychange effect below) — long
-// enough that switching to another window for a few seconds (checking a
-// notification, say) doesn't refetch everything, short enough that a tab
-// left in the background over a lunch break or longer reliably catches up.
-const STALE_TAB_REFRESH_MS = 5 * 60 * 1000;
 
 const HISTORY_PAGE_SIZE = 20;
 // Scrolling within this many pixels of the top triggers loading the next
@@ -1008,35 +1011,28 @@ export default function ShowsScreen() {
     }, [loadData]),
   );
 
-  // Web only: useFocusEffect above only fires on *in-app* navigation focus
-  // (React Navigation's own concept — switching between this app's tabs) —
-  // it has no idea whether the browser tab itself has been sitting hidden
-  // in the background for days/weeks. Without this, someone who leaves an
-  // Epify browser tab open for a long time and then switches back to it
-  // keeps seeing whatever `tracked` looked like the last time this screen
-  // actually gained in-app focus — stale Watch Next entries for anything
-  // watched from another device since, even though watched_episodes itself
-  // is fully up to date (see lib/streaks.ts and friends, which always
-  // revalidate watched status live — this is purely about nothing ever
-  // asking them to). Mirrors lib/versionCheck.ts's own visibilitychange
-  // listener for the same class of problem. Only refires after a real gap
-  // (STALE_TAB_REFRESH_MS), not on every quick alt-tab.
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
-    let hiddenAt: number | null = null;
-    function onVisibilityChange() {
-      if (document.visibilityState === "hidden") {
-        hiddenAt = Date.now();
-        return;
-      }
-      if (hiddenAt !== null && Date.now() - hiddenAt > STALE_TAB_REFRESH_MS) {
-        loadData();
-      }
-      hiddenAt = null;
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [loadData]);
+  // useFocusEffect above only fires on *in-app* navigation focus. Changes
+  // made on another device (or while this one sat in the background) come
+  // through lib/liveSync.ts instead — it has already dropped the stale
+  // watched cache by the time this fires, so loadData() refetches just
+  // what changed.
+  useLiveSync(() => {
+    loadData();
+  });
+
+  // Shows on one of the viewer's rooms' lists, flagged in Watch Next / Not
+  // started so they're not mistaken for something to watch alone. Cheap on
+  // repeat focuses — lib/rooms.ts caches the underlying room list for 20s.
+  const [roomByShow, setRoomByShow] = useState<Map<number, RoomTag>>(new Map());
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      fetchRoomTagsByContent().then(({ shows }) => active && setRoomByShow(shows));
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
 
   function goToWatchList() {
     setTab("list");
@@ -1347,21 +1343,26 @@ export default function ShowsScreen() {
   // EpisodeRow's own default onPress.
   const upcomingCalendarItems = useMemo<CalendarItem[]>(
     () =>
-      upcomingCalendarSource.map((item) => ({
-        id: String(item.episode.id),
-        dateKey: localDateKey(item.episode.airstamp),
-        title: item.episode.name || `S${item.episode.season}E${item.episode.number}`,
-        subtitle: item.show.show_name,
-        imageUrl: item.show.show_image,
-        badge: `S${item.episode.season}E${item.episode.number}`,
-        groupKey: String(item.show.tvmaze_id),
-        onPress: () =>
-          router.push({
-            pathname: "/episode/[id]",
-            params: { id: String(item.episode.id), showId: String(item.show.tvmaze_id) },
-          }),
-      })),
-    [upcomingCalendarSource, router]
+      upcomingCalendarSource.map((item) => {
+        // Room shows get the room's ring and name (see roomByShow above).
+        const room = roomByShow.get(item.show.tvmaze_id);
+        return {
+          id: String(item.episode.id),
+          dateKey: localDateKey(item.episode.airstamp),
+          title: item.episode.name || `S${item.episode.season}E${item.episode.number}`,
+          subtitle: room ? `${item.show.show_name} · ${room.emoji ? `${room.emoji} ` : ""}${room.name}` : item.show.show_name,
+          imageUrl: item.show.show_image,
+          badge: `S${item.episode.season}E${item.episode.number}`,
+          groupKey: String(item.show.tvmaze_id),
+          roomColor: room ? colors[hueForTitle(room.name)] : undefined,
+          onPress: () =>
+            router.push({
+              pathname: "/episode/[id]",
+              params: { id: String(item.episode.id), showId: String(item.show.tvmaze_id) },
+            }),
+        };
+      }),
+    [upcomingCalendarSource, router, roomByShow, colors]
   );
 
   // Stable (empty deps) so that WatchListEpisodeRow's memo() below can
@@ -1697,6 +1698,7 @@ export default function ShowsScreen() {
               onToggleWatched={toggleWatched}
               onRewatch={rewatchEpisode}
               onUndoRewatch={undoRewatchEpisode}
+              room={roomByShow.get(row.item.show.tvmaze_id)}
               styles={styles}
             />
           );
@@ -1711,12 +1713,13 @@ export default function ShowsScreen() {
             <WatchListEpisodeRow
               item={row.item}
               onToggleWatched={toggleWatched}
+              room={roomByShow.get(row.item.show.tvmaze_id)}
               styles={styles}
             />
           );
       }
     },
-    [styles, t, colors, loadingHistory, toggleWatched, rewatchEpisode, undoRewatchEpisode],
+    [styles, t, colors, loadingHistory, toggleWatched, rewatchEpisode, undoRewatchEpisode, roomByShow],
   );
 
   // Keyed by the actual calendar date (or LATER/EARLIER) so dates that share
@@ -1858,6 +1861,7 @@ export default function ShowsScreen() {
             groupKey={row.key}
             onToggleWatched={toggleWatched}
             onToggleGroup={toggleGroup}
+            room={roomByShow.get(row.items[0].show.tvmaze_id)}
             styles={styles}
           />
         );
@@ -1870,6 +1874,7 @@ export default function ShowsScreen() {
             onToggleWatched={toggleWatched}
             onRewatch={rewatchEpisode}
             onUndoRewatch={undoRewatchEpisode}
+            room={roomByShow.get(row.item.show.tvmaze_id)}
             styles={styles}
           />
         );
@@ -1881,6 +1886,7 @@ export default function ShowsScreen() {
           onToggleWatched={toggleWatched}
           onRewatch={rewatchEpisode}
           onUndoRewatch={undoRewatchEpisode}
+          room={roomByShow.get(row.item.show.tvmaze_id)}
           styles={styles}
         />
       );
@@ -1894,6 +1900,7 @@ export default function ShowsScreen() {
       styles,
       colors,
       t,
+      roomByShow,
     ],
   );
 

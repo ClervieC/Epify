@@ -20,6 +20,7 @@ import { clearOpenReportCountCache } from "../lib/reports";
 import { clearSupportNeedsResponseCountCache } from "../lib/support";
 import { clearLocalRecapCache } from "../lib/recap";
 import { alert } from "../lib/alert";
+import { startLiveSync } from "../lib/liveSync";
 import { shouldShowOnboarding } from "../lib/onboarding";
 
 // None of these caches' storage keys are scoped by user id (see each
@@ -118,6 +119,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
   // revocation set up: a banned account's session stays technically valid,
   // this just signs it back out immediately on the next app open/session
   // check, same as any other client-side gate in this app.
+  // Realtime + foreground re-check of watched status across this account's
+  // devices — see lib/liveSync.ts. Keyed on the user id, not the session
+  // object, which is replaced on every token refresh.
+  const sessionUserId = session?.user.id ?? null;
+  useEffect(() => {
+    if (!sessionUserId) return;
+    return startLiveSync(sessionUserId);
+  }, [sessionUserId]);
+
   useEffect(() => {
     if (!session) return;
     let active = true;

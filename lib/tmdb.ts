@@ -1,4 +1,5 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
+import { getCalendars, getLocales } from "expo-localization";
 import { lookupShowByTvdbId, TVMazeShow, Priority } from "./tvmaze";
 import { fetchWithTimeout } from "./fetchTimeout";
 import { supabase } from "./supabase";
@@ -387,13 +388,60 @@ export interface WatchProviders {
 
 const EMPTY_PROVIDERS: WatchProviders = { link: null, flatrate: [], rent: [], buy: [] };
 
-// TMDB (via JustWatch) only has this per-country, not globally — there's no
-// user-configurable region in this app (just an en/fr language toggle, not
-// a locale), so this guesses a region from that: a genuine "which country's
-// availability do I want" setting would be more correct, but this is a
-// reasonable default until/unless that's asked for.
+// TMDB (via JustWatch) only has this per-country, not globally. Used to be
+// guessed from the app's en/fr toggle alone, which put anyone living in
+// France with the app in English on the US catalog (and its platforms).
+// Now from the device itself: the time zone first, since it follows where
+// the person actually is (an English-language browser in Paris still says
+// Europe/Paris), then the system locale's region, then the old language
+// guess. Computed once — none of these change during a session.
+const TIME_ZONE_REGIONS: Record<string, string> = {
+  "Europe/Paris": "FR",
+  "Europe/Monaco": "MC",
+  "Europe/Brussels": "BE",
+  "Europe/Luxembourg": "LU",
+  "Europe/Zurich": "CH",
+  "Europe/London": "GB",
+  "Europe/Dublin": "IE",
+  "Europe/Madrid": "ES",
+  "Europe/Lisbon": "PT",
+  "Europe/Berlin": "DE",
+  "Europe/Vienna": "AT",
+  "Europe/Rome": "IT",
+  "Europe/Amsterdam": "NL",
+  "America/Toronto": "CA",
+  "America/Montreal": "CA",
+  "America/Vancouver": "CA",
+  "Indian/Reunion": "RE",
+  "America/Guadeloupe": "GP",
+  "America/Martinique": "MQ",
+  "Pacific/Tahiti": "PF",
+  "Africa/Casablanca": "MA",
+  "Africa/Abidjan": "CI",
+  "Africa/Dakar": "SN",
+  "Africa/Tunis": "TN",
+  "Africa/Algiers": "DZ",
+};
+
+let deviceRegion: string | null | undefined;
+function detectDeviceRegion(): string | null {
+  if (deviceRegion !== undefined) return deviceRegion;
+  deviceRegion = null;
+  try {
+    const tz = getCalendars()[0]?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz && TIME_ZONE_REGIONS[tz]) deviceRegion = TIME_ZONE_REGIONS[tz];
+    else {
+      const code = getLocales().find((l) => !!l.regionCode)?.regionCode;
+      if (code && /^[A-Z]{2}$/.test(code)) deviceRegion = code;
+    }
+  } catch {
+    // No locale info available — fall back to the language guess below.
+  }
+  return deviceRegion;
+}
+
 export function regionForLanguage(language: "en" | "fr"): string {
-  return language === "fr" ? "FR" : "US";
+  return detectDeviceRegion() ?? (language === "fr" ? "FR" : "US");
 }
 
 export function providerLogoUrl(path: string | null, size: "w45" | "w92" = "w45") {
@@ -404,7 +452,9 @@ function pickRegion(
   results: Record<string, { link: string; flatrate?: WatchProvider[]; rent?: WatchProvider[]; buy?: WatchProvider[] }>,
   language: "en" | "fr"
 ): WatchProviders {
-  const region = results[regionForLanguage(language)] ?? results["US"];
+  // A small territory JustWatch doesn't cover (Réunion, Martinique…) falls
+  // back to the language's country before the US.
+  const region = results[regionForLanguage(language)] ?? results[language === "fr" ? "FR" : "US"] ?? results["US"];
   if (!region) return EMPTY_PROVIDERS;
   return {
     link: region.link,

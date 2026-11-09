@@ -15,6 +15,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ShareSheet } from "../../components/ShareSheet";
+import { useLiveSync } from "../../lib/liveSync";
 import { ShareTarget } from "../../lib/share";
 import { Gesture, GestureDetector, ScrollView as GestureScrollView } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
@@ -235,6 +236,23 @@ export default function EpisodeDetailScreen() {
       };
     }, [initialEpisodeId, showIdNum]),
   );
+
+  // Watched status or tracking changed on another device (or while this
+  // one was in the background) — refresh just those, keeping the current
+  // episode in place. See lib/liveSync.ts.
+  useLiveSync(() => {
+    if (!showIdNum) return;
+    getCachedWatchedEpisodes(showIdNum, () => fetchWatchedEpisodes(showIdNum))
+      .then((watchedList) => {
+        const map: Record<number, WatchedEpisode | null> = {};
+        for (const w of watchedList) map[w.tvmaze_episode_id] = w;
+        setWatchedMap(map);
+      })
+      .catch(() => {});
+    fetchUserShows()
+      .then((shows) => setUserShow(shows.find((s) => s.tvmaze_id === showIdNum) ?? null))
+      .catch(() => {});
+  }, showIdNum || undefined);
 
   // Only used by the desktop sidebar, but computed unconditionally since
   // hooks can't be called after the early loading return below.

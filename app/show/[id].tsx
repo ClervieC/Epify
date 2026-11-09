@@ -14,6 +14,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ShareSheet } from "../../components/ShareSheet";
+import { useLiveSync } from "../../lib/liveSync";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -315,6 +316,13 @@ export default function ShowDetailScreen() {
     posterUrl: posterUrl(r.poster_path, "w200"),
     onPress: () => openRecommendation(r),
   }));
+
+  // Watched status or tracking changed on another device (or while this
+  // one was in the background) — silent refresh, no spinner. See
+  // lib/liveSync.ts.
+  useLiveSync(() => {
+    load().catch(() => {});
+  }, showId);
 
   useFocusEffect(
     useCallback(() => {

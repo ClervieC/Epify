@@ -15,6 +15,36 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.20",
+    date: "2026-11-09",
+    en: [
+      "Your devices now stay in sync in real time: mark an episode watched on your computer and it shows up on your phone within a second, no restart needed. Coming back to the app after a while also checks for anything you did elsewhere in the meantime.",
+      "Explore now opens with the streaming platforms: tap Netflix, Disney+ or any other to see everything on it, no search needed.",
+      "Rooms have a whole new look: posters instead of long lists, a quick count of what's queued and watched, two big buttons to add something, and members shown as avatars. Tapping something you watched together shows its episodes.",
+      "Searching inside a room no longer makes you choose between show and movie first: one search finds both.",
+      "Anything from a room is now outlined in the room's color with its name, in your Watch List, Upcoming, the calendar and your movies To Watch, so you know to wait for the others.",
+      "Rooms update live: what the others add, watch together or remove shows up right away, no need to reopen the room.",
+      "New notification when someone in a room watches a room show without the others and gets 2 or more episodes ahead of you.",
+      "Your movies now sync between devices in real time too, and removing a show from your list shows up on your other devices.",
+      "Streaming platforms now follow the country you're in, not the app's language: in France with the app in English, you see the French catalog.",
+      "Opening a show from a platform or a category is faster.",
+      "In a room, only the person who added something (or the room's owner) can remove it from the list.",
+    ],
+    fr: [
+      "Tes appareils se synchronisent maintenant en temps réel : marque un épisode comme vu sur ton ordi et il apparaît sur ton téléphone en une seconde, sans redémarrer l'app. En revenant sur l'app après un moment, elle vérifie aussi tout ce que tu as fait ailleurs entre-temps.",
+      "Explorer commence maintenant par les plateformes de streaming : touche Netflix, Disney+ ou une autre pour voir tout ce qu'il y a dessus, sans faire de recherche.",
+      "Les rooms ont un tout nouveau look : des affiches au lieu de longues listes, un compteur de ce qui est à voir et déjà vu, deux gros boutons pour ajouter, et les membres en avatars. Toucher quelque chose vu ensemble affiche ses épisodes.",
+      "La recherche dans une room ne t'oblige plus à choisir entre série et film : une seule recherche trouve les deux.",
+      "Tout ce qui vient d'une room est maintenant entouré de la couleur de la room avec son nom, dans ta Watch List, À venir, le calendrier et tes films À voir, pour que tu saches qu'il faut attendre les autres.",
+      "Les rooms se mettent à jour en direct : ce que les autres ajoutent, regardent ensemble ou retirent apparaît tout de suite, sans rouvrir la room.",
+      "Nouvelle notification quand quelqu'un d'une room regarde une série de la room sans les autres et prend 2 épisodes d'avance ou plus sur toi.",
+      "Tes films se synchronisent aussi en temps réel entre tes appareils, et retirer une série de ta liste se voit sur tes autres appareils.",
+      "Les plateformes de streaming suivent maintenant le pays où tu es, pas la langue de l'app : en France avec l'app en anglais, tu vois le catalogue français.",
+      "Ouvrir une série depuis une plateforme ou une catégorie est plus rapide.",
+      "Dans une room, seule la personne qui a ajouté quelque chose (ou le créateur de la room) peut le retirer de la liste.",
+    ],
+  },
+  {
     version: "5.3.19",
     date: "2026-11-07",
     en: [

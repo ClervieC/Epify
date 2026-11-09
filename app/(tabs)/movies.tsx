@@ -9,7 +9,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   useWindowDimensions,
-  Platform,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
@@ -41,7 +40,9 @@ import {
   CalendarItem,
   Granularity as CalendarGranularity,
 } from "../../components/UpcomingCalendar";
-import { useColors, radius, type, Colors } from "../../lib/theme";
+import { useColors, radius, type, hueForTitle, Colors } from "../../lib/theme";
+import { fetchRoomTagsByContent, RoomTag } from "../../lib/rooms";
+import { useLiveSync } from "../../lib/liveSync";
 import { useLanguage } from "../../lib/i18n";
 import { useGrowIn, useMountIn, useScalePress } from "../../lib/animations";
 import { useScrollToTopOnTabPress } from "../../lib/useScrollToTopOnTabPress";
@@ -71,10 +72,6 @@ const MIN_RELOAD_INTERVAL_MS = 10_000;
 // the default AsyncStorage rather than createAsyncStorage's IndexedDB
 // variant — this is a single small boolean, not a cache.
 const SORT_STORAGE_KEY = "movies_to_watch_sort_asc_v1";
-// How long a web browser tab has to have been hidden before coming back to
-// it triggers a reload — see the visibilitychange effect below and its
-// twin in app/(tabs)/index.tsx for the full reasoning.
-const STALE_TAB_REFRESH_MS = 5 * 60 * 1000;
 
 export default function MoviesScreen() {
   const router = useRouter();
@@ -205,30 +202,25 @@ export default function MoviesScreen() {
     }, [reload]),
   );
 
-  // Web only: useFocusEffect above only fires on *in-app* navigation focus
-  // (switching between this app's own tabs) — it has no idea whether the
-  // browser tab itself has been sitting hidden in the background for days.
-  // Without this, a long-lived Movies tab left open keeps showing whatever
-  // it looked like the last time it actually gained in-app focus, even
-  // though a movie was marked watched from another device since. Mirrors
-  // lib/versionCheck.ts's own visibilitychange listener, and its twin in
-  // app/(tabs)/index.tsx.
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
-    let hiddenAt: number | null = null;
-    function onVisibilityChange() {
-      if (document.visibilityState === "hidden") {
-        hiddenAt = Date.now();
-        return;
-      }
-      if (hiddenAt !== null && Date.now() - hiddenAt > STALE_TAB_REFRESH_MS) {
-        reload();
-      }
-      hiddenAt = null;
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [reload]);
+  // Movies on one of the viewer's rooms' lists — flagged in To Watch so
+  // they read as "watch with the room", same as the Shows tab's Watch List.
+  const [roomByMovie, setRoomByMovie] = useState<Map<number, RoomTag>>(new Map());
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      fetchRoomTagsByContent().then(({ movies }) => active && setRoomByMovie(movies));
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  // Changes made on another device (or while this one sat in the
+  // background) — see lib/liveSync.ts. Replaces the old web-only "reload if
+  // the browser tab was hidden 5+ minutes" listener.
+  useLiveSync(() => {
+    reload();
+  }, "movies");
 
   // Stable references (empty deps, functional setState) so MovieCard's
   // memo() can actually skip re-rendering every other card in the grid when
@@ -463,12 +455,13 @@ export default function MoviesScreen() {
           router.push(`/movie/tmdb/${item.movie.tmdb_id}`)
         }
         onMarkWatched={() => handleMarkWatched(item.movie)}
+        room={item.movie.tmdb_id ? roomByMovie.get(item.movie.tmdb_id) : undefined}
         colors={colors}
         styles={styles}
         t={t}
       />
     ),
-    [router, handleMarkWatched, colors, styles, t],
+    [router, handleMarkWatched, colors, styles, t, roomByMovie],
   );
 
   if (!loaded) {
@@ -738,6 +731,7 @@ function UpcomingRow({
   entry,
   onPress,
   onMarkWatched,
+  room,
   colors,
   styles,
   t,
@@ -745,6 +739,7 @@ function UpcomingRow({
   entry: UpcomingEntry;
   onPress: () => void;
   onMarkWatched: () => void;
+  room?: RoomTag;
   colors: Colors;
   styles: MoviesStyles;
   t: ReturnType<typeof useLanguage>["t"];
@@ -765,12 +760,14 @@ function UpcomingRow({
   // mark watched yet; the checkmark returns once it's actually out.
   const daysUntil =
     isFuture && entry.tmdb ? diffDaysFromToday(entry.tmdb.release_date) : null;
+  const roomHue = room ? colors[hueForTitle(room.name)] : null;
 
   return (
     <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={onPress}>
       <Animated.View
         style={[
           styles.upcomingRow,
+          roomHue && [styles.upcomingRowRoom, { borderColor: roomHue }],
           {
             opacity: mountIn.opacity,
             transform: [...mountIn.transform, { scale }],
@@ -803,6 +800,14 @@ function UpcomingRow({
             <Text style={styles.upcomingRelease}>
               {t.movies.releasesOn(releaseDate)}
             </Text>
+          )}
+          {room && roomHue && (
+            <View style={[styles.roomTag, { backgroundColor: roomHue }]}>
+              <Text style={styles.roomTagText} numberOfLines={1}>
+                {room.emoji ? `${room.emoji} ` : ""}
+                {t.rooms.watchWithRoom(room.name)}
+              </Text>
+            </View>
           )}
         </View>
         {daysUntil !== null ? (
@@ -904,6 +909,16 @@ function createStyles(colors: Colors) {
       padding: 10,
       marginBottom: 10,
     },
+    upcomingRowRoom: { borderWidth: 2 },
+    roomTag: {
+      alignSelf: "flex-start",
+      marginTop: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: radius.pill,
+      maxWidth: "100%",
+    },
+    roomTagText: { color: "#fff", fontSize: type.micro, fontWeight: "800" },
     upcomingPoster: {
       width: 52,
       height: 74,

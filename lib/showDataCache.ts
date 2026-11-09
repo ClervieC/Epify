@@ -205,7 +205,20 @@ function createCache<T>(name: string, ttlMs: number, opts: { mustRevalidate?: bo
     }
   }
 
-  return { get, set, invalidate, getOrFetch, primeMany, clearMemory };
+  // In-memory entries only (what this session has loaded) — for lookups
+  // across every cached id, see findShowIdForWatchedRow below.
+  function memoryEntries(): [number, T][] {
+    return [...map.entries()].map(([id, e]) => [id, e.data]);
+  }
+
+  // Forgets every in-memory entry without touching disk or invalidatedAt,
+  // so the next read goes back to disk — and for a mustRevalidate cache,
+  // from there to a live fetch, with the disk copy as offline fallback.
+  function dropMemory() {
+    map.clear();
+  }
+
+  return { get, set, invalidate, getOrFetch, primeMany, clearMemory, memoryEntries, dropMemory };
 }
 
 // Show metadata and episode lists are effectively static day-to-day, and
@@ -299,12 +312,40 @@ export function patchCachedWatchedEpisodes(
   updater: (prev: WatchedEpisode[]) => WatchedEpisode[]
 ) {
   recentlyTouchedShowIds.add(showId);
+  localWriteAt.set(showId, Date.now());
   const current = watchedCache.get(showId);
   if (current === null) {
     invalidateWatchedEpisodes(showId);
     return;
   }
   watchedCache.set(showId, updater(current));
+}
+
+// When this device last wrote watched status for a show itself — lib/
+// liveSync.ts uses it to ignore realtime's echo of this device's own
+// write (the cache was already patched with the result; refetching would
+// only add a round trip and could briefly flash the pre-write state).
+const localWriteAt = new Map<number, number>();
+
+export function lastLocalWatchedWrite(showId: number): number {
+  return localWriteAt.get(showId) ?? 0;
+}
+
+// Which show a watched_episodes row belongs to, from what's loaded this
+// session. A realtime DELETE (unwatching) only carries the row's id, not
+// its show — see lib/liveSync.ts.
+export function findShowIdForWatchedRow(rowId: string): number | null {
+  for (const [showId, rows] of watchedCache.memoryEntries()) {
+    if (rows.some((r) => r.id === rowId)) return showId;
+  }
+  return null;
+}
+
+// Watched status may have changed on another device while this one was
+// in the background (where realtime can't deliver anything) — the next
+// read of any show refetches it instead of trusting this session's copy.
+export function revalidateAllWatchedEpisodes() {
+  watchedCache.dropMemory();
 }
 
 export function invalidateShow(showId: number) {

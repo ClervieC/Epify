@@ -28,6 +28,18 @@ export interface UserMovie {
 // user_shows does, so RLS already blocks this today — but every other read
 // in this file filters by user_id explicitly too, and this one shouldn't be
 // the exception a future RLS change quietly turns into a leak).
+// Row ids of this user's own movies seen by any fetch below — lib/
+// liveSync.ts gets only the primary key for a realtime DELETE (and deletes
+// can't be filtered by user server-side), so this is how it tells "one of
+// my movies was removed on another device" apart from someone else's.
+const knownMovieRowIds = new Set<string>();
+function rememberRows(rows: UserMovie[]) {
+  for (const r of rows) knownMovieRowIds.add(r.id);
+}
+export function isKnownMovieRow(id: string): boolean {
+  return knownMovieRowIds.has(id);
+}
+
 export async function fetchUserMovieTmdbMap(): Promise<Map<number, UserMovie>> {
   const userId = await getCurrentUserId();
   if (!userId) return new Map();
@@ -38,6 +50,7 @@ export async function fetchUserMovieTmdbMap(): Promise<Map<number, UserMovie>> {
     .eq("user_id", userId)
     .not("tmdb_id", "is", null);
   if (error) throw error;
+  rememberRows(data as UserMovie[]);
   const map = new Map<number, UserMovie>();
   for (const row of data as UserMovie[]) {
     if (row.tmdb_id) map.set(row.tmdb_id, row);
@@ -56,6 +69,7 @@ export async function fetchUserMovies() {
     .eq("status", "watched")
     .order("watched_at", { ascending: false });
   if (error) throw error;
+  rememberRows(data as UserMovie[]);
   return data as UserMovie[];
 }
 
@@ -109,6 +123,7 @@ export async function fetchMovieWatchlist() {
     .eq("status", "want_to_watch")
     .order("created_at", { ascending: false });
   if (error) throw error;
+  rememberRows(data as UserMovie[]);
   return data as UserMovie[];
 }
 

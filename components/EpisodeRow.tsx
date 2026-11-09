@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import type { SwipeableMethods } from "react-native-gesture-handler/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps";
 import Reanimated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
-import { useColors, radius, type, dropShadow, Colors } from "../lib/theme";
+import { useColors, radius, type, dropShadow, hueForTitle, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useScalePress, useFlashPulse } from "../lib/animations";
 import { WatchedCheck } from "./WatchedCheck";
@@ -40,6 +40,12 @@ interface EpisodeRowProps {
   onRewatch?: () => void;
   onUndoRewatch?: () => void;
   onPress?: () => void;
+  // Set when the show is on one of the viewer's rooms' lists (see
+  // fetchRoomTagsByContent in lib/rooms.ts) — the row is outlined in the
+  // room's color and its poster carries the room's badge, so it reads as
+  // "wait for the others" at a glance rather than one more show to binge.
+  roomName?: string;
+  roomEmoji?: string | null;
 }
 
 // Wrapped in memo() since this app's biggest lists (Watch List, Upcoming)
@@ -75,6 +81,8 @@ export const EpisodeRow = memo(function EpisodeRow({
   onRewatch,
   onUndoRewatch,
   onPress,
+  roomName,
+  roomEmoji,
 }: EpisodeRowProps) {
   const router = useRouter();
   const colors = useColors();
@@ -128,9 +136,18 @@ export const EpisodeRow = memo(function EpisodeRow({
         params: { id: String(episodeId), showId: String(showId) },
       }));
 
+  const roomHue = roomName && !dimmed ? colors[hueForTitle(roomName)] : null;
+
   const row = (
     <Pressable onPressIn={onPressIn} onPressOut={onPressOut} onPress={openEpisode}>
-      <Animated.View style={[styles.row, dimmed && styles.rowDimmed, { transform: [{ scale }] }]}>
+      <Animated.View
+        style={[
+          styles.row,
+          dimmed && styles.rowDimmed,
+          roomHue && [styles.rowRoom, { borderColor: roomHue }],
+          { transform: [{ scale }] },
+        ]}
+      >
       <Pressable
         style={styles.thumbWrap}
         onPress={(e) => {
@@ -142,6 +159,14 @@ export const EpisodeRow = memo(function EpisodeRow({
           <Image source={{ uri: showImage }} style={[styles.thumb, dimmed && styles.thumbDimmed]} contentFit="cover" />
         ) : (
           <View style={[styles.thumb, styles.thumbPlaceholder, dimmed && styles.thumbDimmed]} />
+        )}
+        {roomHue && (
+          <View style={[styles.roomBand, { backgroundColor: roomHue }]}>
+            <Text style={styles.roomBandText} numberOfLines={1}>
+              {roomEmoji ? `${roomEmoji} ` : ""}
+              {roomName}
+            </Text>
+          </View>
         )}
       </Pressable>
       <View style={styles.info}>
@@ -259,6 +284,9 @@ function createStyles(colors: Colors) {
       gap: 4,
     },
     swipeActionText: { color: "#fff", fontSize: 11, fontWeight: "800", textAlign: "center" },
+    rowRoom: { borderWidth: 2 },
+    roomBand: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 5, paddingVertical: 3 },
+    roomBandText: { color: "#fff", fontSize: 10, fontWeight: "800", textAlign: "center" },
     rowDimmed: { backgroundColor: "transparent", ...dropShadow({ opacity: 0, radius: 0 }) },
     thumbWrap: { width: 88, alignSelf: "stretch", position: "relative" },
     thumb: { width: "100%", height: "100%", backgroundColor: colors.backgroundAlt },

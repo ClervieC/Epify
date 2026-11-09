@@ -23,6 +23,7 @@ import {
   regionForLanguage,
   providerLogoUrl,
   findTvmazeShowFromTmdbTv,
+  fetchResolvedTvmazeShows,
   posterUrl,
   TMDBGenre,
   TMDBSearchResult,
@@ -35,6 +36,7 @@ import { fetchUserMovieTmdbMap, addMovieToWatchlist, removeUserMovie, setMovieFa
 import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { useGoBack } from "../lib/useGoBack";
+import { mapWithConcurrency } from "../lib/concurrency";
 import { alert } from "../lib/alert";
 
 type BrowseKind = "movie" | "tv";
@@ -287,10 +289,64 @@ export default function BrowseScreen() {
       .finally(() => setLoadingMore(false));
   }
 
+  // Opening a TV card used to start its TMDB → TVmaze lookup only on tap,
+  // which is what made a platform/category page feel slow to open a show
+  // from. Two head starts now, same idea as Explore's own prefetch (app/
+  // (tabs)/explore.tsx): every loaded page is resolved in the background —
+  // one batched read of the shared cache first, then a low-priority lookup
+  // for the rest — and a card's lookup starts the moment it's touched
+  // (onPressIn), so onPress usually finds it already done.
+  const attemptedResolveIds = useRef<Set<number>>(new Set());
+  const inflightResolves = useRef<Map<number, { priority: "high" | "low"; promise: Promise<TVMazeShow | null> }>>(new Map());
+  useEffect(() => {
+    if (kind !== "tv") return;
+    const toResolve = (items as TMDBTvResult[]).filter((i) => !attemptedResolveIds.current.has(i.id));
+    if (toResolve.length === 0) return;
+    for (const i of toResolve) attemptedResolveIds.current.add(i.id);
+    let cancelled = false;
+    (async () => {
+      const cached = await fetchResolvedTvmazeShows(toResolve.map((i) => i.id)).catch(() => new Map<number, TVMazeShow>());
+      if (cancelled) return;
+      if (cached.size > 0) {
+        setResolvedTvShows((prev) => {
+          const next = new Map(prev);
+          for (const [id, show] of cached) next.set(id, show);
+          return next;
+        });
+      }
+      const missing = toResolve.filter((i) => !cached.has(i.id));
+      await mapWithConcurrency(
+        missing,
+        3,
+        (i) => (cancelled ? Promise.resolve(null) : startResolve(i.id, "low").catch(() => null)),
+        (result, i) => {
+          if (cancelled || !result) return;
+          setResolvedTvShows((prev) => (prev.has(i.id) ? prev : new Map(prev).set(i.id, result)));
+        },
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, kind]);
+
+  function startResolve(tmdbId: number, priority: "high" | "low"): Promise<TVMazeShow | null> {
+    // A background (low) lookup still queued behind others doesn't count
+    // once the card is actually touched — that one jumps the queue.
+    const existing = inflightResolves.current.get(tmdbId);
+    if (existing && (existing.priority === "high" || priority === "low")) return existing.promise;
+    const promise = findTvmazeShowFromTmdbTv(tmdbId, priority).finally(() => {
+      if (inflightResolves.current.get(tmdbId)?.promise === promise) inflightResolves.current.delete(tmdbId);
+    });
+    inflightResolves.current.set(tmdbId, { priority, promise });
+    return promise;
+  }
+
   async function resolveTvmazeShow(item: TMDBTvResult): Promise<TVMazeShow | null> {
     const cached = resolvedTvShows.get(item.id);
     if (cached) return cached;
-    const resolved = await findTvmazeShowFromTmdbTv(item.id, "high");
+    const resolved = await startResolve(item.id, "high");
     if (!resolved) {
       alert(t.explore.noMatchTitle, t.explore.noMatchDesc);
       return null;
@@ -504,6 +560,7 @@ export default function BrowseScreen() {
                   // fires on the initial touch/click itself, before onPress
                   // ever runs, so gating there was already too late.
                   navigatingAwayRef.current = true;
+                  if (isTv(kind, item) && !resolvedTvShows.has(item.id)) startResolve(item.id, "high").catch(() => {});
                 }}
                 onPress={() => openItem(item)}
                 disabled={resolving === item.id}
