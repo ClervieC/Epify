@@ -2793,3 +2793,125 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ============================================================
+-- The slow half of the stats screen (lib/showStats.ts's computeShowStats),
+-- done in one query against the shared TVmaze cache instead of one TVmaze
+-- episode list per show on the client — with hundreds of followed shows
+-- that was hundreds of requests and the screen sat on a spinner for
+-- minutes. Same definitions as the client code it replaces:
+-- - remaining: shows with status 'watching' — aired episodes minus how
+--   many you've watched (count), and the runtime of the aired ones you
+--   haven't (by episode id);
+-- - not started: 'watching' or 'want_to_watch' with nothing watched yet —
+--   every aired episode;
+-- - genres: distinct shows with at least one watched episode, per genre,
+--   top 8.
+-- Runtime falls back to the show's own average runtime, then 42 minutes
+-- (lib/runtime.ts). Shows whose list/info isn't in tvmaze_api_cache are
+-- returned in missing_episodes / missing_shows for the client to fill in
+-- itself — usually none, since the nightly refresh keeps it full.
+-- security definer, reading only the caller's own rows (auth.uid(), taken
+-- once) plus the public cache: as the caller, every watched_episodes /
+-- user_shows row went through their RLS policies one by one, which on the
+-- biggest account turned this into a minutes-long query.
+-- ============================================================
+create or replace function public.my_show_stats_heavy()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with me as materialized (
+    select auth.uid() as uid
+  ),
+  my_watched as materialized (
+    select we.tvmaze_show_id, we.tvmaze_episode_id
+    from public.watched_episodes we
+    where we.user_id = (select uid from me)
+  ),
+  my_shows as materialized (
+    select us.tvmaze_id, us.status, coalesce(w.c, 0) as watched_count
+    from public.user_shows us
+    left join (
+      select tvmaze_show_id, count(*) as c
+      from my_watched
+      group by tvmaze_show_id
+    ) w on w.tvmaze_show_id = us.tvmaze_id
+    where us.user_id = (select uid from me)
+  ),
+  needs_episodes as materialized (
+    select s.*, c.payload as episodes
+    from my_shows s
+    left join public.tvmaze_api_cache c on c.path = '/shows/' || s.tvmaze_id || '/episodes'
+    where s.status = 'watching'
+       or (s.status = 'want_to_watch' and s.watched_count = 0)
+  ),
+  per_show as materialized (
+    select
+      n.tvmaze_id,
+      n.status,
+      n.watched_count,
+      coalesce(
+        (select round(avg((e->>'runtime')::numeric))
+         from jsonb_array_elements(n.episodes) e
+         where coalesce((e->>'runtime')::numeric, 0) > 0),
+        42
+      ) as avg_runtime,
+      n.episodes
+    from needs_episodes n
+    where n.episodes is not null and jsonb_typeof(n.episodes) = 'array'
+  ),
+  aired as materialized (
+    select p.tvmaze_id,
+           (e->>'id')::int as episode_id,
+           coalesce(nullif((e->>'runtime')::numeric, 0), p.avg_runtime) as minutes
+    from per_show p, jsonb_array_elements(p.episodes) e
+    where coalesce(e->>'airdate', '') <> '' and (e->>'airdate') <= to_char(current_date, 'YYYY-MM-DD')
+  ),
+  per_show_aired as (
+    select a.tvmaze_id,
+           count(*) as aired_count,
+           sum(a.minutes) as aired_minutes,
+           coalesce(sum(a.minutes) filter (where w.tvmaze_episode_id is null), 0) as unwatched_minutes
+    from aired a
+    left join (select distinct tvmaze_episode_id from my_watched) w on w.tvmaze_episode_id = a.episode_id
+    group by a.tvmaze_id
+  ),
+  totals as (
+    select
+      coalesce(sum(greatest(0, coalesce(pa.aired_count, 0) - p.watched_count)) filter (where p.status = 'watching'), 0) as remaining_episodes,
+      coalesce(sum(pa.unwatched_minutes) filter (where p.status = 'watching'), 0) as remaining_minutes,
+      coalesce(sum(pa.aired_count) filter (where p.watched_count = 0), 0) as not_started_episodes,
+      coalesce(sum(pa.aired_minutes) filter (where p.watched_count = 0), 0) as not_started_minutes
+    from per_show p
+    left join per_show_aired pa on pa.tvmaze_id = p.tvmaze_id
+  ),
+  history_shows as (
+    select s.tvmaze_id, c.payload as info
+    from my_shows s
+    left join public.tvmaze_api_cache c on c.path = '/shows/' || s.tvmaze_id
+    where s.watched_count > 0
+  ),
+  genres as (
+    select g.genre, count(distinct h.tvmaze_id) as c
+    from history_shows h, jsonb_array_elements_text(coalesce(h.info->'genres', '[]'::jsonb)) as g(genre)
+    where h.info is not null
+    group by g.genre
+    order by c desc, g.genre
+    limit 8
+  )
+  select jsonb_build_object(
+    'remaining_episodes', (select remaining_episodes from totals),
+    'remaining_minutes', (select remaining_minutes from totals),
+    'not_started_episodes', (select not_started_episodes from totals),
+    'not_started_minutes', (select not_started_minutes from totals),
+    'genres', coalesce((select jsonb_agg(jsonb_build_object('genre', genre, 'count', c) order by c desc, genre) from genres), '[]'::jsonb),
+    'missing_episodes', coalesce((select jsonb_agg(tvmaze_id) from needs_episodes where episodes is null), '[]'::jsonb),
+    'missing_shows', coalesce((select jsonb_agg(tvmaze_id) from history_shows where info is null), '[]'::jsonb)
+  );
+$$;
+
+revoke execute on function public.my_show_stats_heavy() from public, anon;
+grant execute on function public.my_show_stats_heavy() to authenticated;

@@ -28,6 +28,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Your movies now sync between devices in real time too, and removing a show from your list shows up on your other devices.",
       "Streaming platforms now follow the country you're in, not the app's language: in France with the app in English, you see the French catalog.",
       "Opening a show from a platform or a category is faster.",
+      "The stats page loads much faster, even with hundreds of shows: charts and totals show up right away, and genres and remaining episodes follow a second later instead of minutes.",
       "In a room, only the person who added something (or the room's owner) can remove it from the list.",
     ],
     fr: [
@@ -41,6 +42,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Tes films se synchronisent aussi en temps réel entre tes appareils, et retirer une série de ta liste se voit sur tes autres appareils.",
       "Les plateformes de streaming suivent maintenant le pays où tu es, pas la langue de l'app : en France avec l'app en anglais, tu vois le catalogue français.",
       "Ouvrir une série depuis une plateforme ou une catégorie est plus rapide.",
+      "La page de stats charge beaucoup plus vite, même avec des centaines de séries : les graphiques et les totaux s'affichent tout de suite, les genres et les épisodes restants arrivent une seconde après au lieu de plusieurs minutes.",
       "Dans une room, seule la personne qui a ajouté quelque chose (ou le créateur de la room) peut le retirer de la liste.",
     ],
   },

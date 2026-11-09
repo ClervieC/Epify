@@ -34,23 +34,44 @@ export default function ShowStatsScreen() {
       // before fetchCachedShowStats() (Supabase) even resolves, and still
       // works offline. Supabase stays authoritative below since it's what
       // syncs across a user's devices; this is just the same-device fast path.
+      let latest: ShowStats | null = null;
       loadLocalShowStats().then((local) => {
-        if (active && local) setStats(local);
+        if (active && local && !latest) {
+          latest = local;
+          setStats(local);
+        }
       });
-      fetchCachedShowStats().then((cached) => {
-        if (!active) return;
-        if (cached) setStats(cached);
-        const isStale = !cached || Date.now() - new Date(cached.computedAt).getTime() > STATS_TTL_MS;
-        if (!isStale) return;
+      function recompute(previous: ShowStats | null) {
         setRefreshing(true);
-        computeShowStats()
+        computeShowStats((partial) => {
+          // Charts, totals and top lists are ready well before genres and
+          // remaining episodes — show them now instead of a spinner.
+          if (!active) return;
+          latest = partial;
+          setStats(partial);
+        }, previous)
           .then((fresh) => {
             if (!active) return;
+            latest = fresh;
             setStats(fresh);
             saveShowStats(fresh).catch(() => {});
           })
+          .catch(() => {})
           .finally(() => active && setRefreshing(false));
-      });
+      }
+      fetchCachedShowStats()
+        .then((cached) => {
+          if (!active) return;
+          if (cached) {
+            latest = cached;
+            setStats(cached);
+          }
+          const isStale = !cached || Date.now() - new Date(cached.computedAt).getTime() > STATS_TTL_MS;
+          if (isStale) recompute(cached ?? latest);
+        })
+        // Couldn't read the saved stats (offline, or a failed request) —
+        // used to leave the screen on its spinner for good.
+        .catch(() => active && recompute(latest));
       return () => {
         active = false;
       };

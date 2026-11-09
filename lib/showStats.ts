@@ -1,7 +1,7 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
 import { fetchUserShows, WatchedEpisode } from "./userShows";
-import { getCachedShow, getCachedEpisodes } from "./showDataCache";
+import { getCachedShow, getCachedEpisodes, peekCachedShow } from "./showDataCache";
 import { getShow, getShowEpisodes } from "./tvmaze";
 import { mapWithConcurrency } from "./concurrency";
 import { todayISODate, realBingeCount } from "./dates";
@@ -100,32 +100,80 @@ function monthStartOf(dateIso: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
-async function fetchAllWatchedEpisodes(): Promise<WatchedEpisode[]> {
+type WatchedRow = Pick<WatchedEpisode, "tvmaze_show_id" | "tvmaze_episode_id" | "watched_at">;
+
+// Only the three columns the stats use, and every page after the first
+// fetched at once — the biggest accounts have 20,000+ rows, which used to
+// be 20+ full-row pages fetched one after another.
+async function fetchAllWatchedEpisodes(): Promise<WatchedRow[]> {
   const userId = await getCurrentUserId();
   if (!userId) return [];
-
-  const all: WatchedEpisode[] = [];
-  let offset = 0;
-  for (;;) {
-    const { data, error } = await supabase
+  const columns = "tvmaze_show_id, tvmaze_episode_id, watched_at";
+  const page = (offset: number) =>
+    supabase
       .from("watched_episodes")
-      .select("*")
+      .select(columns, offset === 0 ? { count: "exact" } : undefined)
       .eq("user_id", userId)
+      .order("id")
       .range(offset, offset + PAGE_SIZE - 1);
+
+  const first = await page(0);
+  if (first.error) throw first.error;
+  const all = [...((first.data as WatchedRow[]) ?? [])];
+  const total = first.count ?? all.length;
+  if (all.length < PAGE_SIZE || total <= PAGE_SIZE) return all;
+  const offsets: number[] = [];
+  for (let o = PAGE_SIZE; o < total; o += PAGE_SIZE) offsets.push(o);
+  const rest = await mapWithConcurrency(offsets, 6, async (o) => {
+    const { data, error } = await page(o);
     if (error) throw error;
-    const page = (data as WatchedEpisode[]) ?? [];
-    all.push(...page);
-    if (page.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
+    return (data as WatchedRow[]) ?? [];
+  });
+  for (const r of rest) all.push(...r);
   return all;
 }
 
-// Recomputes everything from scratch — several TVmaze calls (cached, see
-// showDataCache.ts) plus a full watched_episodes scan, which is exactly why
-// this only runs when fetchCachedShowStats() came back empty/stale rather
-// than on every visit to the stats screen (see app/stats/shows.tsx).
-export async function computeShowStats(): Promise<ShowStats> {
+// The TVmaze-heavy half (genres, remaining / not-started episodes and
+// minutes), computed in Postgres from the shared TVmaze cache — see
+// my_show_stats_heavy in supabase/schema.sql. Returns null when the call
+// fails, so the caller can fall back to doing it all here.
+interface HeavyStats {
+  remaining_episodes: number;
+  remaining_minutes: number;
+  not_started_episodes: number;
+  not_started_minutes: number;
+  genres: GenreCount[];
+  missing_episodes: number[];
+  missing_shows: number[];
+}
+
+async function fetchHeavyStats(): Promise<HeavyStats | null> {
+  try {
+    const { data, error } = await supabase.rpc("my_show_stats_heavy");
+    if (error || !data) return null;
+    return data as HeavyStats;
+  } catch {
+    return null;
+  }
+}
+
+// Recomputes everything from scratch, only when fetchCachedShowStats()
+// came back empty/stale (see app/stats/shows.tsx). Two halves: the charts,
+// totals and top lists come straight from Supabase (watched_episodes,
+// user_shows, user_movies) and are handed to `onPartial` as soon as they're
+// ready — with `previous`'s genre/remaining numbers kept meanwhile — so the
+// screen never waits on the slow half. That half (genres, remaining and
+// not-started episodes/minutes) is one Postgres call over the shared
+// TVmaze cache; only shows missing from that cache are fetched here, one
+// by one. It used to be one TVmaze episode list per followed show, here,
+// for every followed show — minutes of spinner on an account with
+// hundreds of them.
+export async function computeShowStats(
+  onPartial?: (partial: ShowStats) => void,
+  previous?: ShowStats | null,
+): Promise<ShowStats> {
+  const heavyPromise = fetchHeavyStats();
+  const moviePromise = computeMovieStats(new Date());
   const [shows, watched] = await Promise.all([fetchUserShows(), fetchAllWatchedEpisodes()]);
 
   const today = new Date();
@@ -194,49 +242,88 @@ export async function computeShowStats(): Promise<ShowStats> {
   );
   const todayIso = todayISODate();
 
-  const genreTotals = new Map<string, number>();
-  const showInfoById = new Map<number, { name: string; image: string | null }>();
-  let remainingEpisodes = 0;
-  let notStartedEpisodes = 0;
-  let remainingMinutes = 0;
-  let notStartedMinutes = 0;
+  // Most binge-watched shows — ranked by the most episodes watched of that
+  // show in a single day (a real binge session), not lifetime total, so a
+  // show watched steadily for years doesn't outrank one you tore through in
+  // a weekend. episodeCount here is that single-day peak, not a total.
+  // Names/posters come from the user's own list rather than a TVmaze call
+  // per show.
+  const showRowById = new Map(shows.map((s) => [s.tvmaze_id, s]));
+  const topShows: TopShow[] = [...maxDailyByShow.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([showId, episodeCount]) => ({
+      showId,
+      name: showRowById.get(showId)?.show_name ?? peekCachedShow(showId)?.name ?? `#${showId}`,
+      image: showRowById.get(showId)?.show_image ?? peekCachedShow(showId)?.image?.medium ?? null,
+      episodeCount,
+    }));
 
-  await mapWithConcurrency(
-    // Union of both lists (a show can be in both) so each only gets fetched once.
-    [...new Map([...showsWithHistory, ...watchingShows].map((s) => [s.tvmaze_id, s])).values()],
-    STATS_FETCH_CONCURRENCY,
-    async (show) => {
-      const watchedForShow = watchedCountByShow.get(show.tvmaze_id) ?? 0;
-      if (watchedForShow > 0) {
-        try {
-          const info = await getCachedShow(show.tvmaze_id, () => getShow(show.tvmaze_id));
-          for (const genre of info.genres) {
-            genreTotals.set(genre, (genreTotals.get(genre) ?? 0) + 1);
-          }
-          showInfoById.set(show.tvmaze_id, { name: info.name, image: info.image?.medium ?? null });
-        } catch {
-          // Show metadata unavailable — skip it for the genre breakdown.
-        }
-      }
-      if (show.status === "watching") {
-        try {
-          const episodes = await getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id));
-          const aired = episodes.filter((e) => e.airdate && e.airdate <= todayIso);
-          remainingEpisodes += Math.max(0, aired.length - watchedForShow);
-          // By episode id rather than the count above — the minutes need to
-          // be the actual unwatched episodes' own runtimes.
-          remainingMinutes += totalRuntime(
-            aired.filter((e) => !watchedEpisodeIds.has(e.id)),
-            averageRuntime(episodes),
-          );
-        } catch {
-          // Episode list unavailable — skip this show's remaining count.
-        }
-      }
+  const { totalMoviesWatched, moviesPerMonth, averageMoviesPerMonth, topMovies } = await moviePromise;
+
+  const base = {
+    schemaVersion: STATS_SCHEMA_VERSION,
+    episodesPerWeek: buckets,
+    averagePerWeek,
+    episodesPerMonth: monthBuckets,
+    averagePerMonth,
+    totalEpisodesWatched,
+    topShows,
+    totalMoviesWatched,
+    moviesPerMonth,
+    averageMoviesPerMonth,
+    topMovies,
+    computedAt: new Date().toISOString(),
+  };
+  onPartial?.({
+    ...base,
+    remainingEpisodes: previous?.remainingEpisodes ?? 0,
+    notStartedEpisodes: previous?.notStartedEpisodes ?? 0,
+    remainingMinutes: previous?.remainingMinutes ?? 0,
+    notStartedMinutes: previous?.notStartedMinutes ?? 0,
+    genreBreakdown: previous?.genreBreakdown ?? [],
+  });
+
+  const heavy = await heavyPromise;
+  const genreTotals = new Map<string, number>((heavy?.genres ?? []).map((g) => [g.genre, g.count]));
+  let remainingEpisodes = heavy?.remaining_episodes ?? 0;
+  let notStartedEpisodes = heavy?.not_started_episodes ?? 0;
+  let remainingMinutes = heavy?.remaining_minutes ?? 0;
+  let notStartedMinutes = heavy?.not_started_minutes ?? 0;
+
+  // Whatever the server couldn't cover — everything, if the call failed.
+  const missingEpisodeIds = heavy ? new Set(heavy.missing_episodes) : null;
+  const missingShowIds = heavy ? new Set(heavy.missing_shows) : null;
+  const historyToFetch = showsWithHistory.filter((s) => !missingShowIds || missingShowIds.has(s.tvmaze_id));
+  const watchingToFetch = watchingShows.filter((s) => !missingEpisodeIds || missingEpisodeIds.has(s.tvmaze_id));
+  const notStartedToFetch = notStartedShows.filter((s) => !missingEpisodeIds || missingEpisodeIds.has(s.tvmaze_id));
+
+  await mapWithConcurrency(historyToFetch, STATS_FETCH_CONCURRENCY, async (show) => {
+    try {
+      const info = await getCachedShow(show.tvmaze_id, () => getShow(show.tvmaze_id));
+      for (const genre of info.genres) genreTotals.set(genre, (genreTotals.get(genre) ?? 0) + 1);
+    } catch {
+      // Show metadata unavailable — skip it for the genre breakdown.
     }
-  );
+  });
 
-  await mapWithConcurrency(notStartedShows, STATS_FETCH_CONCURRENCY, async (show) => {
+  await mapWithConcurrency(watchingToFetch, STATS_FETCH_CONCURRENCY, async (show) => {
+    try {
+      const episodes = await getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id));
+      const aired = episodes.filter((e) => e.airdate && e.airdate <= todayIso);
+      remainingEpisodes += Math.max(0, aired.length - (watchedCountByShow.get(show.tvmaze_id) ?? 0));
+      // By episode id rather than the count above — the minutes need to
+      // be the actual unwatched episodes' own runtimes.
+      remainingMinutes += totalRuntime(
+        aired.filter((e) => !watchedEpisodeIds.has(e.id)),
+        averageRuntime(episodes),
+      );
+    } catch {
+      // Episode list unavailable — skip this show's remaining count.
+    }
+  });
+
+  await mapWithConcurrency(notStartedToFetch, STATS_FETCH_CONCURRENCY, async (show) => {
     try {
       const episodes = await getCachedEpisodes(show.tvmaze_id, () => getShowEpisodes(show.tvmaze_id));
       const aired = episodes.filter((e) => e.airdate && e.airdate <= todayIso);
@@ -252,45 +339,13 @@ export async function computeShowStats(): Promise<ShowStats> {
     .sort((a, b) => b.count - a.count)
     .slice(0, 8);
 
-  // Most binge-watched shows — ranked by the most episodes watched of that
-  // show in a single day (a real binge session), not lifetime total, so a
-  // show watched steadily for years doesn't outrank one you tore through in
-  // a weekend. episodeCount here is that single-day peak, not a total.
-  const topShows: TopShow[] = [...maxDailyByShow.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([showId, episodeCount]) => ({
-      showId,
-      name: showInfoById.get(showId)?.name ?? `#${showId}`,
-      image: showInfoById.get(showId)?.image ?? null,
-      episodeCount,
-    }));
-
-  const {
-    totalMoviesWatched,
-    moviesPerMonth,
-    averageMoviesPerMonth,
-    topMovies,
-  } = await computeMovieStats(today);
-
   return {
-    schemaVersion: STATS_SCHEMA_VERSION,
-    episodesPerWeek: buckets,
-    averagePerWeek,
-    episodesPerMonth: monthBuckets,
-    averagePerMonth,
-    totalEpisodesWatched,
+    ...base,
     remainingEpisodes,
     notStartedEpisodes,
     remainingMinutes,
     notStartedMinutes,
     genreBreakdown,
-    topShows,
-    totalMoviesWatched,
-    moviesPerMonth,
-    averageMoviesPerMonth,
-    topMovies,
-    computedAt: new Date().toISOString(),
   };
 }
 
