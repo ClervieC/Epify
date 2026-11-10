@@ -32,6 +32,7 @@ import {
   fetchFavorites,
   fetchLists,
   fetchUserShows,
+  fetchWatchTimeMinutes,
   moveListItemsAndDeleteList,
   removeShowFromList,
   ListItem,
@@ -79,10 +80,10 @@ import { AvatarCropper } from "../../components/AvatarCropper";
 import { ChoiceDialog } from "../../components/ChoiceDialog";
 import { EmptyState } from "../../components/EmptyState";
 
-const AVG_EPISODE_MINUTES = 42;
 // TMDB runtime per movie isn't fetched in bulk here (that's up to 700+ calls
-// just for a stat) — a flat feature-length estimate mirrors how show watch
-// time already estimates from AVG_EPISODE_MINUTES rather than exact runtimes.
+// just for a stat), so movies stay a flat feature-length estimate — unlike
+// show watch time, which sums each episode's real runtime server-side
+// (fetchWatchTimeMinutes).
 const AVG_MOVIE_MINUTES = 110;
 
 // Mirrors app/(tabs)/_layout.tsx's own refetch throttle — this screen's
@@ -132,6 +133,7 @@ export default function ProfileScreen() {
   const [lists, setLists] = useState<ShowList[]>([]);
   const [listItems, setListItems] = useState<ListItem[]>([]);
   const [episodeCount, setEpisodeCount] = useState(0);
+  const [watchMinutes, setWatchMinutes] = useState(0);
   const [creatingList, setCreatingList] = useState(false);
   const [newListName, setNewListName] = useState("");
   // The list currently targeted by the "..." menu (rename/delete) — see
@@ -214,6 +216,7 @@ export default function ProfileScreen() {
       setLists(snapshot.lists);
       setListItems(snapshot.listItems);
       setEpisodeCount(snapshot.episodeCount);
+      if (snapshot.watchMinutes != null) setWatchMinutes(snapshot.watchMinutes);
     });
     return () => {
       active = false;
@@ -248,6 +251,7 @@ export default function ProfileScreen() {
       fetchLists(),
       fetchAllListItems(),
       fetchEpisodeCount(),
+      fetchWatchTimeMinutes(),
     ]).then(
       ([
         shows,
@@ -257,6 +261,7 @@ export default function ProfileScreen() {
         lists,
         listItems,
         episodeCount,
+        watchMinutes,
       ]) => {
         // Snapshotting still happens even if a newer load/mutation has since
         // landed — it's just disk persistence for next launch's instant
@@ -270,6 +275,7 @@ export default function ProfileScreen() {
           lists,
           listItems,
           episodeCount,
+          watchMinutes: watchMinutes ?? undefined,
         });
         if (!stillCurrent()) return;
         setShows(shows);
@@ -279,6 +285,8 @@ export default function ProfileScreen() {
         setLists(lists);
         setListItems(listItems);
         setEpisodeCount(episodeCount);
+        // Null = the RPC failed; keep the snapshot's value instead of 0.
+        if (watchMinutes != null) setWatchMinutes(watchMinutes);
       },
     );
     fetchMyProfile().then((p) => {
@@ -516,7 +524,7 @@ export default function ProfileScreen() {
 
   const email = session?.user.email ?? "";
   const displayName = profile?.username ?? email.split("@")[0] ?? "Moi";
-  const tvTime = formatTvTime(episodeCount * AVG_EPISODE_MINUTES);
+  const tvTime = formatTvTime(watchMinutes);
   const movieWatchCount = useMemo(
     () => movies.reduce((sum, m) => sum + m.times_watched, 0),
     [movies],

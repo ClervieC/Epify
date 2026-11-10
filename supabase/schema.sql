@@ -2915,3 +2915,50 @@ $$;
 
 revoke execute on function public.my_show_stats_heavy() from public, anon;
 grant execute on function public.my_show_stats_heavy() to authenticated;
+
+-- ============================================================
+-- Profile / recap watch time from each watched episode's real TVmaze
+-- runtime (times rewatches) instead of a flat 42 minutes per episode —
+-- lib/userShows.ts's fetchWatchTimeMinutes. Same shared-cache join as
+-- my_show_stats_heavy above. An episode with no runtime falls back to its
+-- show's own average, and 42 only when the show's list isn't cached at all.
+-- Takes any user id: watched_episodes is already readable by every
+-- authenticated user (see its select policy), so this exposes nothing new;
+-- security definer only skips the per-row RLS cost on large accounts.
+-- [p_from, p_to) bounds watched_at for app/recap.tsx's year/month periods.
+-- ============================================================
+create or replace function public.watch_time_minutes(
+  p_user_id uuid,
+  p_from timestamptz default null,
+  p_to timestamptz default null
+)
+returns bigint
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with my_watched as materialized (
+    select tvmaze_show_id, tvmaze_episode_id, times_watched
+    from public.watched_episodes
+    where user_id = p_user_id
+      and (p_from is null or watched_at >= p_from)
+      and (p_to is null or watched_at < p_to)
+  ),
+  runtimes as materialized (
+    select s.tvmaze_show_id, (e->>'id')::int as episode_id, nullif((e->>'runtime')::numeric, 0) as runtime
+    from (select distinct tvmaze_show_id from my_watched) s
+    join public.tvmaze_api_cache c on c.path = '/shows/' || s.tvmaze_show_id || '/episodes'
+    cross join lateral jsonb_array_elements(case when jsonb_typeof(c.payload) = 'array' then c.payload else '[]'::jsonb end) e
+  ),
+  show_avg as (
+    select tvmaze_show_id, avg(runtime) as avg_runtime from runtimes group by tvmaze_show_id
+  )
+  select coalesce(round(sum(coalesce(r.runtime, a.avg_runtime, 42) * w.times_watched)), 0)::bigint
+  from my_watched w
+  left join runtimes r on r.episode_id = w.tvmaze_episode_id
+  left join show_avg a on a.tvmaze_show_id = w.tvmaze_show_id;
+$$;
+
+revoke execute on function public.watch_time_minutes(uuid, timestamptz, timestamptz) from public, anon;
+grant execute on function public.watch_time_minutes(uuid, timestamptz, timestamptz) to authenticated;

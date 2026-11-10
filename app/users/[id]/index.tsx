@@ -19,6 +19,7 @@ import {
   fetchEpisodeCount,
   fetchFavorites,
   fetchUserShows,
+  fetchWatchTimeMinutes,
   upsertUserShow,
   removeUserShow,
   setShowFavorite,
@@ -46,10 +47,10 @@ import { Tooltip } from "../../../components/Tooltip";
 import { Pill } from "../../../components/Pill";
 import { useGoBack } from "../../../lib/useGoBack";
 
-const AVG_EPISODE_MINUTES = 42;
 // Matches app/(tabs)/profile.tsx's own constant — same rough estimate used
 // for a logged-in user's own movie watch time, reused here so the two
-// screens' numbers are computed the same way.
+// screens' numbers are computed the same way. Show watch time uses real
+// episode runtimes on both (fetchWatchTimeMinutes).
 const AVG_MOVIE_MINUTES = 110;
 
 function formatTvTime(totalMinutes: number) {
@@ -91,6 +92,7 @@ export default function UserProfileScreen() {
   const [movies, setMovies] = useState<PublicMovie[]>([]);
   const [favoriteMovies, setFavoriteMovies] = useState<PublicMovie[]>([]);
   const [episodeCount, setEpisodeCount] = useState(0);
+  const [watchMinutes, setWatchMinutes] = useState(0);
   const [movieCount, setMovieCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -133,7 +135,8 @@ export default function UserProfileScreen() {
         fetchPublicWatchedMovies(id),
         fetchPublicWatchedMovieCount(id),
         fetchPublicFavoriteMovies(id),
-      ]).then(async ([p, c, following, favs, allShows, count, myId, watchedMovies, watchedMovieCount, favMovies]) => {
+        fetchWatchTimeMinutes(id),
+      ]).then(async ([p, c, following, favs, allShows, count, myId, watchedMovies, watchedMovieCount, favMovies, minutes]) => {
         if (!active) return;
         setProfile(p);
         setCounts(c);
@@ -141,6 +144,7 @@ export default function UserProfileScreen() {
         setFavorites(favs);
         setShows(allShows);
         setEpisodeCount(count);
+        setWatchMinutes(minutes ?? 0);
         setMovies(watchedMovies);
         setMovieCount(watchedMovieCount);
         setFavoriteMovies(favMovies);
@@ -185,7 +189,7 @@ export default function UserProfileScreen() {
     }, [id])
   );
 
-  const tvTime = formatTvTime(episodeCount * AVG_EPISODE_MINUTES);
+  const tvTime = formatTvTime(watchMinutes);
   const movieTime = formatTvTime(movieCount * AVG_MOVIE_MINUTES);
 
   async function toggleFollow() {

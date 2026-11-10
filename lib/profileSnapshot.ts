@@ -23,6 +23,9 @@ export interface ProfileSnapshot {
   lists: ShowList[];
   listItems: ListItem[];
   episodeCount: number;
+  // Missing on snapshots written before real runtimes replaced the
+  // 42-minute estimate.
+  watchMinutes?: number;
 }
 
 export async function saveProfileSnapshot(snapshot: ProfileSnapshot): Promise<void> {

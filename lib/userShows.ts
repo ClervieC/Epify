@@ -446,6 +446,27 @@ export async function fetchEpisodeCount(userId?: string) {
   return count ?? 0;
 }
 
+// Real watch time from each episode's own TVmaze runtime (times rewatches),
+// summed in Postgres over the shared TVmaze cache — see watch_time_minutes in
+// supabase/schema.sql. Optional [from, to) bounds on watched_at for the
+// recap. Null when the call fails, so a screen keeps whatever it already
+// shows rather than dropping to 0.
+export async function fetchWatchTimeMinutes(
+  userId?: string,
+  range?: { from: string; to: string },
+): Promise<number | null> {
+  const targetUserId = userId ?? (await getCurrentUserId());
+  if (!targetUserId) return 0;
+
+  const { data, error } = await supabase.rpc("watch_time_minutes", {
+    p_user_id: targetUserId,
+    p_from: range?.from ?? null,
+    p_to: range?.to ?? null,
+  });
+  if (error) return null;
+  return Number(data ?? 0);
+}
+
 export async function fetchWatchedEpisodes(showId: number) {
   const userId = await getCurrentUserId();
   if (!userId) return [];

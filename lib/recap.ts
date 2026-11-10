@@ -2,6 +2,7 @@ import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
 import { getCachedShow } from "./showDataCache";
 import { getShow } from "./tvmaze";
+import { fetchWatchTimeMinutes } from "./userShows";
 import { mapWithConcurrency } from "./concurrency";
 import { posterUrl } from "./tmdb";
 
@@ -28,8 +29,10 @@ const recapCache = createAsyncStorage("recap_cache");
 // version is missing fields the UI now assumes exist (e.g. topMovies before
 // it was added), so a version mismatch is treated as a cache miss instead of
 // returning a shape the screen can't render. Shared by both cache layers —
-// an old Supabase row fails the same check as an old local one.
-const RECAP_CACHE_SCHEMA_VERSION = 2;
+// an old Supabase row fails the same check as an old local one. Also bumped
+// when a field's meaning changes (3: real episode runtimes instead of the
+// 42-minute estimate in totalWatchTimeMinutes).
+const RECAP_CACHE_SCHEMA_VERSION = 3;
 interface CachedRecapEntry {
   schemaVersion: number;
   data: RecapData;
@@ -105,7 +108,6 @@ export async function clearLocalRecapCache(): Promise<void> {
   }
 }
 
-const AVG_EPISODE_MINUTES = 42;
 const AVG_MOVIE_MINUTES = 110;
 // How many of the top shows (by episode count) get their TVmaze metadata
 // (name/image/genres) fetched at all — needs to cover both the displayed
@@ -378,7 +380,11 @@ export async function computeRecap(period: RecapPeriod): Promise<RecapData> {
   const topGenre = [...genreTotals.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const totalEpisodesWatched = episodes.length;
   const totalMoviesWatched = movies.length;
-  const totalWatchTimeMinutes = totalEpisodesWatched * AVG_EPISODE_MINUTES + totalMoviesWatched * AVG_MOVIE_MINUTES;
+  // Throws rather than falling back to an estimate — this result is cached
+  // for good, so a failed call must not bake a guessed number in.
+  const episodeMinutes = totalEpisodesWatched > 0 ? await fetchWatchTimeMinutes(userId, { from: start, to: end }) : 0;
+  if (episodeMinutes == null) throw new Error("watch_time_minutes failed");
+  const totalWatchTimeMinutes = episodeMinutes + totalMoviesWatched * AVG_MOVIE_MINUTES;
 
   const result: RecapData = {
     period,
