@@ -37,6 +37,7 @@ import { RoomBadge } from "../../components/RoomBadge";
 import { RoomFormFields, ExpiryChoice, LinkedShowChoice } from "../../components/RoomFormFields";
 import { AddWatchTogetherSheet } from "../../components/AddWatchTogetherSheet";
 import { AddToWatchlistSheet } from "../../components/AddToWatchlistSheet";
+import { ReportModal } from "../../components/ReportModal";
 import { Sheet } from "../../components/Sheet";
 import { ChoiceDialog } from "../../components/ChoiceDialog";
 import { HorizontalScrollRow } from "../../components/HorizontalScrollRow";
@@ -54,6 +55,7 @@ export default function RoomDetailScreen() {
   const [watchlist, setWatchlist] = useState<RoomWatchlistEntry[]>([]);
   const [addToWatchlistOpen, setAddToWatchlistOpen] = useState(false);
   const [showsProgress, setShowsProgress] = useState<LinkedShowProgress[]>([]);
+  const [reporting, setReporting] = useState(false);
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [inviteQuery, setInviteQuery] = useState("");
   const [inviteResults, setInviteResults] = useState<Profile[]>([]);
@@ -303,6 +305,15 @@ export default function RoomDetailScreen() {
   // already live on in "Watched together" below.
   const inProgress = showsProgress.filter((p) => !p.finished);
 
+  // Anything the room has started watching together is no longer "to watch"
+  // — it's in "Currently watching"/"Watched together" now. Filtered here
+  // rather than deleted from room_watchlist, so an undo of the share brings
+  // the entry straight back.
+  const watchedKeys = new Set(watchLog.map((g) => g.key));
+  const toWatch = watchlist.filter((e) =>
+    e.content_type === "show" ? !watchedKeys.has(`show:${e.tvmaze_show_id}`) : !watchedKeys.has(`movie:${e.tmdb_id}`),
+  );
+
   function renderShowProgress(p: LinkedShowProgress, compact: boolean) {
     const myWatchedCount = p.memberProgress.find((m) => m.user_id === myUserId)?.watchedCount ?? 0;
     return (
@@ -433,6 +444,15 @@ export default function RoomDetailScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <View style={{ flex: 1 }} />
+        <Pressable
+          onPress={() => setReporting(true)}
+          hitSlop={10}
+          style={{ marginRight: 16 }}
+          accessibilityRole="button"
+          accessibilityLabel={t.report.reportRoom}
+        >
+          <Ionicons name="flag-outline" size={20} color={colors.textFaint} />
+        </Pressable>
         {isOwner ? (
           <Pressable onPress={openEdit} hitSlop={10} accessibilityRole="button" accessibilityLabel={t.rooms.editRoom}>
             <Ionicons name="pencil-outline" size={20} color={colors.text} />
@@ -441,6 +461,11 @@ export default function RoomDetailScreen() {
           <View style={{ width: 24 }} />
         )}
       </View>
+      <ReportModal
+        visible={reporting}
+        onClose={() => setReporting(false)}
+        target={{ targetType: "room", targetRoomId: room.id, targetRoomName: room.name }}
+      />
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.hero}>
@@ -468,7 +493,7 @@ export default function RoomDetailScreen() {
           </View>
           <View style={styles.heroStats}>
             <View style={styles.heroStat}>
-              <Text style={styles.heroStatValue}>{watchlist.length}</Text>
+              <Text style={styles.heroStatValue}>{toWatch.length}</Text>
               <Text style={styles.heroStatLabel}>{t.rooms.statToWatch}</Text>
             </View>
             <View style={styles.heroStatDivider} />
@@ -523,15 +548,15 @@ export default function RoomDetailScreen() {
           )}
 
           <View style={styles.section}>
-            {renderSectionHeader(t.rooms.wantToWatch, watchlist.length, watchlistExpanded, () => setWatchlistExpanded((v) => !v))}
-            {watchlist.length === 0 ? (
+            {renderSectionHeader(t.rooms.wantToWatch, toWatch.length, watchlistExpanded, () => setWatchlistExpanded((v) => !v))}
+            {toWatch.length === 0 ? (
               <Pressable style={styles.emptyCard} onPress={() => setAddToWatchlistOpen(true)} accessibilityRole="button">
                 <Ionicons name="bookmark-outline" size={20} color={colors.textFaint} />
                 <Text style={styles.emptyText}>{t.rooms.noWantToWatch}</Text>
               </Pressable>
             ) : (
               renderTiles(
-                watchlist.map((entry) => {
+                toWatch.map((entry) => {
                   const adder = membersById.get(entry.added_by);
                   return renderPosterTile({
                     key: entry.id,

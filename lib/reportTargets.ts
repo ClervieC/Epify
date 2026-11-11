@@ -23,6 +23,7 @@ export const TARGET_ICON: Record<ReportTargetType, keyof typeof Ionicons.glyphMa
   episode: "film-outline",
   movie: "videocam-outline",
   general: "alert-circle-outline",
+  room: "people-outline",
 };
 
 export const TARGET_COLOR: Record<ReportTargetType, string> = {
@@ -33,6 +34,7 @@ export const TARGET_COLOR: Record<ReportTargetType, string> = {
   episode: C.yellow,
   movie: C.yellow,
   general: C.textMuted,
+  room: C.red,
 };
 
 export interface EpisodeInfo {
@@ -138,7 +140,7 @@ function commentSummary(label: string, info: CommentInfo | undefined, fallbackId
 }
 
 export function targetSummary(
-  t: { targetUser: string; targetComment: string; targetMovieComment: string; targetShow: string; targetEpisode: string; targetMovie: string; targetGeneral: string },
+  t: { targetUser: string; targetComment: string; targetMovieComment: string; targetShow: string; targetEpisode: string; targetMovie: string; targetGeneral: string; targetRoom: string },
   r: Report,
   targets: ResolvedReportTargets,
 ): string {
@@ -168,6 +170,8 @@ export function targetSummary(
       return `${t.targetMovie} #${r.target_tmdb_id}`;
     case "general":
       return t.targetGeneral;
+    case "room":
+      return `${t.targetRoom} · ${r.target_room_name ?? r.target_room_id?.slice(0, 8)}`;
   }
 }
 
@@ -198,7 +202,9 @@ export function targetHref(r: Report, targets: ResolvedReportTargets): ReportTar
       const info = r.target_movie_comment_id ? targets.movieCommentInfo.get(r.target_movie_comment_id) : undefined;
       return info?.movieTmdbId ? `/movie/tmdb/${info.movieTmdbId}` : null;
     }
+    // An admin usually isn't a member, so the room screen wouldn't load.
     case "general":
+    case "room":
       return null;
   }
 }

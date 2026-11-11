@@ -3100,3 +3100,13 @@ begin
   where room_id = p_room_id and content_type = 'episode' and tvmaze_episode_id = p_tvmaze_episode_id;
 end;
 $$;
+
+-- ============================================================
+-- Rooms are reportable (the flag in app/rooms/[id].tsx's header).
+-- target_room_name is a snapshot taken at report time: admins usually
+-- aren't members of the room, so the rooms RLS wouldn't let them read its
+-- name afterwards. set null on delete so the report outlives the room.
+-- ============================================================
+alter type report_target add value if not exists 'room';
+alter table public.reports add column if not exists target_room_id uuid references public.rooms (id) on delete set null;
+alter table public.reports add column if not exists target_room_name text;

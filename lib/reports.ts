@@ -12,7 +12,7 @@ export function clearOpenReportCountCache() {
   openReportCountCache.invalidate();
 }
 
-export type ReportTargetType = "user" | "comment" | "movie_comment" | "show" | "episode" | "movie" | "general";
+export type ReportTargetType = "user" | "comment" | "movie_comment" | "show" | "episode" | "movie" | "general" | "room";
 export type ReportStatus = "open" | "resolved" | "dismissed";
 
 export interface Report {
@@ -25,6 +25,10 @@ export interface Report {
   target_tvmaze_show_id: number | null;
   target_tvmaze_episode_id: number | null;
   target_tmdb_id: number | null;
+  target_room_id: string | null;
+  // Snapshot at report time — an admin usually isn't a member of the room,
+  // so RLS wouldn't let them read its name later.
+  target_room_name: string | null;
   reason: string;
   image_urls: string[];
   status: ReportStatus;
@@ -84,6 +88,8 @@ export interface CreateReportParams {
   targetTvmazeShowId?: number;
   targetTvmazeEpisodeId?: number;
   targetTmdbId?: number;
+  targetRoomId?: string;
+  targetRoomName?: string;
 }
 
 export async function createReport(params: CreateReportParams): Promise<void> {
@@ -101,6 +107,8 @@ export async function createReport(params: CreateReportParams): Promise<void> {
     target_tvmaze_show_id: params.targetTvmazeShowId ?? null,
     target_tvmaze_episode_id: params.targetTvmazeEpisodeId ?? null,
     target_tmdb_id: params.targetTmdbId ?? null,
+    target_room_id: params.targetRoomId ?? null,
+    target_room_name: params.targetRoomName ?? null,
   });
   if (error) throw error;
 }
