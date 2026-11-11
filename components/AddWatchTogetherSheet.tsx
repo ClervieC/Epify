@@ -6,9 +6,13 @@ import { useColors, radius, type, Colors } from "../lib/theme";
 import { useLanguage } from "../lib/i18n";
 import { getShowEpisodes, TVMazeShow, TVMazeEpisode } from "../lib/tvmaze";
 import { TMDBSearchResult } from "../lib/tmdb";
-import { setEpisodeWatched, markEpisodeWatchedForRoom } from "../lib/userShows";
+import { setEpisodeWatched, markEpisodeWatchedForRoom, fetchWatchedEpisodes, incrementRewatch } from "../lib/userShows";
 import { setMovieWatched, markMovieWatchedForRoom } from "../lib/userMovies";
 import { MediaSearch } from "./MediaSearch";
+
+// Same window as mark_episodes_watched_for_room in supabase/schema.sql: a
+// row marked more recently than this is the same viewing, not a rewatch.
+const SAME_VIEWING_MS = 12 * 60 * 60 * 1000;
 
 interface AddWatchTogetherSheetProps {
   roomId: string;
@@ -57,13 +61,20 @@ export function AddWatchTogetherSheet({ roomId, otherMemberUserIds, onAdded, onC
     if (!selectedShow || submitting) return;
     setSubmitting(true);
     try {
-      await setEpisodeWatched({
-        tvmaze_show_id: selectedShow.id,
-        tvmaze_episode_id: ep.id,
-        season: ep.season,
-        number: ep.number,
-        watched: true,
-      });
+      // Already seen it before → this is a rewatch for me too, the same way
+      // the rest of the room gets one below.
+      const mine = (await fetchWatchedEpisodes(selectedShow.id)).find((w) => w.tvmaze_episode_id === ep.id);
+      if (mine?.watched && Date.now() - new Date(mine.watched_at).getTime() > SAME_VIEWING_MS) {
+        await incrementRewatch(ep.id, mine.times_watched);
+      } else {
+        await setEpisodeWatched({
+          tvmaze_show_id: selectedShow.id,
+          tvmaze_episode_id: ep.id,
+          season: ep.season,
+          number: ep.number,
+          watched: true,
+        });
+      }
       if (otherMemberUserIds.length > 0) {
         await markEpisodeWatchedForRoom([roomId], otherMemberUserIds, selectedShow.id, ep.id, ep.season, ep.number);
       }

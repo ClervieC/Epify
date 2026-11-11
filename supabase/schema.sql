@@ -2962,3 +2962,141 @@ $$;
 
 revoke execute on function public.watch_time_minutes(uuid, timestamptz, timestamptz) from public, anon;
 grant execute on function public.watch_time_minutes(uuid, timestamptz, timestamptz) to authenticated;
+
+-- ============================================================
+-- Room rewatches count directly again — replaces the Yes/No
+-- room_rewatch_confirm notification above (which mostly went unanswered,
+-- so the rewatch was never counted). A target member who already has the
+-- episode watched gets times_watched + 1 straight away, unless their row
+-- was marked within the last 12 hours: that's the same viewing (they
+-- ticked it themselves, or another member already shared it), not a
+-- second one. room_rewatch_confirmations / confirm_room_rewatch stay so
+-- any still-pending notification can be answered.
+--
+-- The undos below take back one viewing instead of deleting the row:
+-- times_watched - 1 when it's above 1, delete only when it was the sole
+-- watch — otherwise undoing a share wiped the history of every member who
+-- had seen the episode before.
+--
+-- Run as supabase_admin (see the ownership note on the block above).
+-- ============================================================
+create or replace function public.mark_episode_watched_for_room(
+  p_room_ids uuid[],
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_tvmaze_episode_id int,
+  p_season int,
+  p_number int
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform public.mark_episodes_watched_for_room(
+    p_room_ids, p_target_user_ids, p_tvmaze_show_id,
+    jsonb_build_array(jsonb_build_object('id', p_tvmaze_episode_id, 'season', p_season, 'number', p_number))
+  );
+end;
+$$;
+
+create or replace function public.mark_episodes_watched_for_room(
+  p_room_ids uuid[],
+  p_target_user_ids uuid[],
+  p_tvmaze_show_id int,
+  p_episodes jsonb
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.room_watch_log (room_id, shared_by, content_type, tvmaze_show_id, tvmaze_episode_id, season, number)
+  select distinct rm1.room_id, auth.uid(), 'episode', p_tvmaze_show_id, (e->>'id')::int, (e->>'season')::int, (e->>'number')::int
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  cross join jsonb_array_elements(p_episodes) as e
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid();
+
+  -- One write per (member, episode) even when several selected rooms share
+  -- the same member — otherwise a member in two of the rooms got +2.
+  insert into public.watched_episodes (user_id, tvmaze_show_id, tvmaze_episode_id, season, number, watched)
+  select distinct rm2.user_id, p_tvmaze_show_id, (e->>'id')::int, (e->>'season')::int, (e->>'number')::int, true
+  from public.room_members rm1
+  join public.room_members rm2 on rm1.room_id = rm2.room_id
+  join public.rooms r on r.id = rm1.room_id
+  cross join jsonb_array_elements(p_episodes) as e
+  where rm1.user_id = auth.uid() and rm1.status = 'accepted' and rm2.status = 'accepted'
+    and rm1.room_id = any(p_room_ids)
+    and (r.expires_at is null or r.expires_at > now())
+    and rm2.user_id = any(p_target_user_ids) and rm2.user_id != auth.uid()
+  on conflict (user_id, tvmaze_episode_id) do update
+    set times_watched = case
+          when not watched_episodes.watched then watched_episodes.times_watched
+          when watched_episodes.watched_at > now() - interval '12 hours' then watched_episodes.times_watched
+          else watched_episodes.times_watched + 1
+        end,
+        watched = true,
+        watched_at = now();
+end;
+$$;
+
+create or replace function public.unmark_episodes_watched_for_room(
+  p_room_id uuid, p_tvmaze_show_id int
+) returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_episode_ids int[];
+begin
+  if not exists (
+    select 1 from public.room_members me
+    where me.room_id = p_room_id and me.user_id = auth.uid() and me.status = 'accepted'
+  ) then
+    raise exception 'not a member of this room';
+  end if;
+
+  select array_agg(distinct tvmaze_episode_id) into v_episode_ids
+  from public.room_watch_log
+  where room_id = p_room_id and content_type = 'episode' and tvmaze_show_id = p_tvmaze_show_id;
+
+  if v_episode_ids is null then
+    return;
+  end if;
+
+  -- Delete before decrementing, so a row just taken from 2 to 1 isn't then
+  -- caught by the delete.
+  delete from public.watched_episodes
+  where tvmaze_episode_id = any(v_episode_ids) and times_watched <= 1
+    and user_id in (select rm.user_id from public.room_members rm where rm.room_id = p_room_id and rm.status = 'accepted');
+
+  update public.watched_episodes
+  set times_watched = times_watched - 1
+  where tvmaze_episode_id = any(v_episode_ids) and times_watched > 1
+    and user_id in (select rm.user_id from public.room_members rm where rm.room_id = p_room_id and rm.status = 'accepted');
+
+  delete from public.room_watch_log
+  where room_id = p_room_id and content_type = 'episode' and tvmaze_show_id = p_tvmaze_show_id;
+end;
+$$;
+
+create or replace function public.unmark_episode_watched_for_room(
+  p_room_id uuid, p_tvmaze_episode_id int
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (
+    select 1 from public.room_members me
+    where me.room_id = p_room_id and me.user_id = auth.uid() and me.status = 'accepted'
+  ) then
+    raise exception 'not a member of this room';
+  end if;
+
+  -- Delete before decrementing, so a row just taken from 2 to 1 isn't then
+  -- caught by the delete.
+  delete from public.watched_episodes
+  where tvmaze_episode_id = p_tvmaze_episode_id and times_watched <= 1
+    and user_id in (select rm.user_id from public.room_members rm where rm.room_id = p_room_id and rm.status = 'accepted');
+
+  update public.watched_episodes
+  set times_watched = times_watched - 1
+  where tvmaze_episode_id = p_tvmaze_episode_id and times_watched > 1
+    and user_id in (select rm.user_id from public.room_members rm where rm.room_id = p_room_id and rm.status = 'accepted');
+
+  delete from public.room_watch_log
+  where room_id = p_room_id and content_type = 'episode' and tvmaze_episode_id = p_tvmaze_episode_id;
+end;
+$$;
