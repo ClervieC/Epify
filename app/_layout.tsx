@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { View } from "react-native";
-import { Stack, useGlobalSearchParams, usePathname, useRouter, useSegments } from "expo-router";
+import { Stack, useGlobalSearchParams, usePathname, useRootNavigationState, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import { initAds } from "../lib/adsInit";
@@ -23,6 +23,10 @@ import { OfflineBanner } from "../components/OfflineBanner";
 import { NewMonthRecapToast } from "../components/NewMonthRecapToast";
 import { WatchActivityPrompt } from "../components/WatchActivityPrompt";
 import { PullToRefresh } from "../components/PullToRefresh";
+import { BottomTabBar, getLastTab, useAdminAlerts } from "../components/BottomTabBar";
+import { switchTabFromStack } from "../lib/tabHistory";
+import { useNotifications } from "../context/NotificationsContext";
+import { useActivityUnseen } from "../context/ActivityContext";
 import * as Sentry from '@sentry/react-native';
 
 Sentry.init({
@@ -58,6 +62,32 @@ Sentry.init({
 // is ready to take over. Called eagerly at module scope — per Expo's
 // guidance — so it can't lose the race against the native auto-hide.
 SplashScreen.preventAutoHideAsync();
+
+// The tab bar under every screen pushed on top of (tabs) — show, movie,
+// profile, room, settings… — which used to drop it entirely. Tapping a tab
+// unwinds back to the tabs navigator on that tab rather than pushing a
+// second copy of it onto the stack, keeping the path just left for when its
+// own tab is picked again (lib/tabHistory.ts).
+function GlobalTabBar() {
+  const rootState = useRootNavigationState();
+  const { unreadCount } = useNotifications();
+  const { hasUnseen } = useActivityUnseen();
+  const hasAdminAlerts = useAdminAlerts();
+  return (
+    <BottomTabBar
+      active={getLastTab()}
+      unreadCount={unreadCount}
+      hasUnseenActivity={hasUnseen}
+      hasAdminAlerts={hasAdminAlerts}
+      onPress={(name) => switchTabFromStack(rootState, getLastTab(), name)}
+    />
+  );
+}
+
+// Screens that keep no bar: (tabs) draws its own, the signed-out /
+// onboarding flows have nowhere to go yet, and episode/[id] opens as a modal
+// over the page it came from — a tab bar under a modal reads as broken.
+const NO_GLOBAL_TAB_BAR = new Set(["(tabs)", "(auth)", "onboarding", "episode"]);
 
 function RootNavigation() {
   const { session, loading, dataReady, setDataReady, needsOnboarding } = useAuth();
@@ -154,40 +184,43 @@ function RootNavigation() {
           behind the status bar, so they get insets.top added to their own
           back-button/title row's position instead (see each one's own
           heroTopRow/loadingBackBtn style), not to the whole screen. */}
-      <Stack screenOptions={{ headerShown: false, contentStyle: { paddingTop: insets.top } }}>
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(tabs)" options={{ contentStyle: { paddingTop: 0 } }} />
-        <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
-        <Stack.Screen name="show/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
-        <Stack.Screen
-          name="episode/[id]"
-          options={{ headerShown: false, presentation: "modal", contentStyle: { paddingTop: 0 } }}
-        />
-        <Stack.Screen name="movie/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
-        <Stack.Screen name="movie/tmdb/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
-        <Stack.Screen name="person/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="users/search" options={{ headerShown: false }} />
-        <Stack.Screen name="users/[id]/index" options={{ headerShown: false }} />
-        <Stack.Screen name="users/[id]/list" options={{ headerShown: false }} />
-        <Stack.Screen name="browse" options={{ headerShown: false }} />
-        <Stack.Screen name="connections/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="notifications" options={{ headerShown: false }} />
-        <Stack.Screen name="rooms/index" options={{ headerShown: false }} />
-        <Stack.Screen name="rooms/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="reports/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="legal/terms" options={{ headerShown: false }} />
-        <Stack.Screen name="legal/privacy" options={{ headerShown: false }} />
-        <Stack.Screen name="admin/index" options={{ headerShown: false }} />
-        <Stack.Screen name="admin/support/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="admin/reports/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="stats/shows" options={{ headerShown: false }} />
-        <Stack.Screen name="recap" options={{ headerShown: false }} />
-        <Stack.Screen name="support" options={{ headerShown: false }} />
-        <Stack.Screen name="support/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="settings" options={{ headerShown: false }} />
-        <Stack.Screen name="whatsnew" options={{ headerShown: false }} />
-        <Stack.Screen name="streaks" options={{ headerShown: false }} />
-      </Stack>
+      <View style={{ flex: 1 }}>
+        <Stack screenOptions={{ headerShown: false, contentStyle: { paddingTop: insets.top } }}>
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(tabs)" options={{ contentStyle: { paddingTop: 0 } }} />
+          <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
+          <Stack.Screen name="show/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
+          <Stack.Screen
+            name="episode/[id]"
+            options={{ headerShown: false, presentation: "modal", contentStyle: { paddingTop: 0 } }}
+          />
+          <Stack.Screen name="movie/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
+          <Stack.Screen name="movie/tmdb/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
+          <Stack.Screen name="person/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="users/search" options={{ headerShown: false }} />
+          <Stack.Screen name="users/[id]/index" options={{ headerShown: false }} />
+          <Stack.Screen name="users/[id]/list" options={{ headerShown: false }} />
+          <Stack.Screen name="browse" options={{ headerShown: false }} />
+          <Stack.Screen name="connections/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="notifications" options={{ headerShown: false }} />
+          <Stack.Screen name="rooms/index" options={{ headerShown: false }} />
+          <Stack.Screen name="rooms/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="reports/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="legal/terms" options={{ headerShown: false }} />
+          <Stack.Screen name="legal/privacy" options={{ headerShown: false }} />
+          <Stack.Screen name="admin/index" options={{ headerShown: false }} />
+          <Stack.Screen name="admin/support/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="admin/reports/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="stats/shows" options={{ headerShown: false }} />
+          <Stack.Screen name="recap" options={{ headerShown: false }} />
+          <Stack.Screen name="support" options={{ headerShown: false }} />
+          <Stack.Screen name="support/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="settings" options={{ headerShown: false }} />
+          <Stack.Screen name="whatsnew" options={{ headerShown: false }} />
+          <Stack.Screen name="streaks" options={{ headerShown: false }} />
+        </Stack>
+      </View>
+      {session && !showSplash && segments.length > 0 && !NO_GLOBAL_TAB_BAR.has(segments[0]) && <GlobalTabBar />}
       <AppSplash visible={showSplash} />
       <OfflineBanner />
       {/* Deliberately NOT mounted on the Shows tab (where NewVersionToast

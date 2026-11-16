@@ -6,11 +6,14 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
+  ScrollView,
   NativeSyntheticEvent,
   NativeScrollEvent,
   useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
+import { Sheet } from "../components/Sheet";
+import { EmptyState } from "../components/EmptyState";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -54,15 +57,71 @@ type CategoryTitleKey =
   | "categoryOnTheAirTv"
   | "categoryNowPlayingMovies"
   | "categoryUpcomingMovies";
-const CATEGORY_PATHS: Record<string, { kind: BrowseKind; path: string; titleKey: CategoryTitleKey }> = {
-  popularTv: { kind: "tv", path: "/tv/popular", titleKey: "categoryPopularMovies" },
-  topRatedTv: { kind: "tv", path: "/tv/top_rated", titleKey: "categoryTopRatedMovies" },
-  onTheAirTv: { kind: "tv", path: "/tv/on_the_air", titleKey: "categoryOnTheAirTv" },
-  popularMovies: { kind: "movie", path: "/movie/popular", titleKey: "categoryPopularMovies" },
-  topRatedMovies: { kind: "movie", path: "/movie/top_rated", titleKey: "categoryTopRatedMovies" },
-  nowPlayingMovies: { kind: "movie", path: "/movie/now_playing", titleKey: "categoryNowPlayingMovies" },
-  upcomingMovies: { kind: "movie", path: "/movie/upcoming", titleKey: "categoryUpcomingMovies" },
+type BrowseSort = "popular" | "top" | "new";
+
+function isoDaysFromToday(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// `sort` is the order the category's own list comes in; `constraints` is
+// what the category means beyond its order (a release window), carried into
+// /discover once a genre/platform/sort is picked — otherwise "Coming soon"
+// filtered to Comedy used to turn into plain popular comedies under the
+// same title.
+interface CategoryConfig {
+  kind: BrowseKind;
+  path: string;
+  titleKey: CategoryTitleKey;
+  sort: BrowseSort;
+  constraints?: () => Record<string, string>;
+  // Only future releases — "new" then means soonest first.
+  futureOnly?: boolean;
+}
+const CATEGORY_PATHS: Record<string, CategoryConfig> = {
+  popularTv: { kind: "tv", path: "/tv/popular", titleKey: "categoryPopularMovies", sort: "popular" },
+  topRatedTv: { kind: "tv", path: "/tv/top_rated", titleKey: "categoryTopRatedMovies", sort: "top" },
+  onTheAirTv: {
+    kind: "tv",
+    path: "/tv/on_the_air",
+    titleKey: "categoryOnTheAirTv",
+    sort: "popular",
+    constraints: () => ({ "air_date.gte": isoDaysFromToday(0), "air_date.lte": isoDaysFromToday(7) }),
+  },
+  popularMovies: { kind: "movie", path: "/movie/popular", titleKey: "categoryPopularMovies", sort: "popular" },
+  topRatedMovies: { kind: "movie", path: "/movie/top_rated", titleKey: "categoryTopRatedMovies", sort: "top" },
+  nowPlayingMovies: {
+    kind: "movie",
+    path: "/movie/now_playing",
+    titleKey: "categoryNowPlayingMovies",
+    sort: "popular",
+    constraints: () => ({ "primary_release_date.gte": isoDaysFromToday(-45), "primary_release_date.lte": isoDaysFromToday(0) }),
+  },
+  upcomingMovies: {
+    kind: "movie",
+    path: "/movie/upcoming",
+    titleKey: "categoryUpcomingMovies",
+    sort: "popular",
+    constraints: () => ({ "primary_release_date.gte": isoDaysFromToday(1) }),
+    futureOnly: true,
+  },
 };
+
+// /discover ordering for each sort. "top" needs a vote floor or it's all
+// obscure titles rated 10 by three people; "new" stops at today so it's
+// what's out, not what's announced — unless the category itself is about
+// future releases.
+function sortParams(kind: BrowseKind, sort: BrowseSort, futureOnly: boolean): Record<string, string> {
+  if (sort === "top") return { sort_by: "vote_average.desc", "vote_count.gte": kind === "movie" ? "300" : "150" };
+  if (sort === "new") {
+    const dateField = kind === "movie" ? "primary_release_date" : "first_air_date";
+    return futureOnly
+      ? { sort_by: `${dateField}.asc` }
+      : { sort_by: `${dateField}.desc`, [`${dateField}.lte`]: isoDaysFromToday(0), "vote_count.gte": "5" };
+  }
+  return { sort_by: "popularity.desc" };
+}
 
 function isTv(kind: BrowseKind, item: BrowseItem): item is TMDBTvResult {
   return kind === "tv";
@@ -80,6 +139,13 @@ function isTv(kind: BrowseKind, item: BrowseItem): item is TMDBTvResult {
 const CARD_WIDTH = 110;
 const GRID_GAP = 12;
 const GRID_PADDING = 12;
+
+// Platform logo strip: 44px logo inside 2px padding + a 2px selection ring
+// on each side, 10px apart — fixed so getItemLayout can scroll straight to
+// the selected one.
+const LOGO_SIZE = 44;
+const LOGO_PITCH = LOGO_SIZE + 2 * 2 + 2 * 2 + 10;
+const LOGO_ROW_PADDING = 16;
 
 // Module-level, not component state — this app's web build remounts a
 // screen from scratch on back-navigation rather than keeping it alive off-
@@ -102,9 +168,10 @@ function browseCacheKey(
   categoryKey: string | undefined,
   kind: BrowseKind,
   genreId: number | null,
-  providerId: number | null
+  providerId: number | null,
+  sort: BrowseSort
 ): string {
-  return `${categoryKey ?? kind}:${genreId ?? "none"}:${providerId ?? "none"}`;
+  return `${categoryKey ?? kind}:${genreId ?? "none"}:${providerId ?? "none"}:${sort}`;
 }
 
 // Scrollable "View all" grid — either an Explore category (?category=...,
@@ -119,7 +186,7 @@ export default function BrowseScreen() {
   const goBack = useGoBack("/(tabs)/explore");
   const colors = useColors();
   const { t, language } = useLanguage();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const styles = useMemo(
     () => createStyles(colors, CARD_WIDTH, GRID_GAP, GRID_PADDING),
     [colors],
@@ -138,8 +205,17 @@ export default function BrowseScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [resolving, setResolving] = useState<number | null>(null);
+  const defaultSort: BrowseSort = categoryConfig?.sort ?? "popular";
+  const [sort, setSort] = useState<BrowseSort>(defaultSort);
+  const [picker, setPicker] = useState<"genre" | "sort" | null>(null);
+  // Hides what's already in my list (added or watched) — for finding
+  // something new rather than scrolling past what I already know.
+  const [hideMine, setHideMine] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const providerRowRef = useRef<FlatList<TMDBWatchProviderOption | null>>(null);
   const listRef = useRef<FlatList<BrowseItem>>(null);
-  const cacheKey = browseCacheKey(params.category, kind, genreId, providerId);
+  const cacheKey = browseCacheKey(params.category, kind, genreId, providerId, sort);
 
   // The viewer's own tracked/favorited shows and movies — same idea as
   // Explore's own cards (app/(tabs)/explore.tsx): favoriting/adding here
@@ -173,7 +249,52 @@ export default function BrowseScreen() {
     };
   }, []);
 
-  const title = categoryConfig ? t.explore[categoryConfig.titleKey] : (params.title as string) || t.explore.viewAll;
+  const selectedGenre = genres.find((g) => g.id === genreId);
+  const selectedProvider = providers.find((p) => p.provider_id === providerId);
+  // Follows the platform picked here, not just the one Explore opened this
+  // screen with (params.title), so switching platforms renames the page.
+  // A category named after its order ("Top rated") stops being that once
+  // another sort is picked; one named after a release window keeps its name,
+  // since the window still applies (see CategoryConfig).
+  const categoryTitleHolds = !!categoryConfig && (!!categoryConfig.constraints || sort === categoryConfig.sort);
+  const title = selectedProvider?.provider_name
+    ?? (providerId !== null ? (params.title as string) : null)
+    ?? (categoryConfig && categoryTitleHolds ? t.explore[categoryConfig.titleKey] : null)
+    ?? (categoryConfig ? (kind === "tv" ? t.tabs.shows : t.tabs.movies) : t.explore.viewAll);
+
+  const sortLabels: Record<BrowseSort, string> = {
+    popular: t.explore.sortPopularity,
+    top: t.explore.sortRating,
+    new: t.explore.sortNewest,
+  };
+
+  // Unreleased films have no votes yet, so "by rating" on Coming soon would
+  // always come back empty.
+  const sortOptions: BrowseSort[] = categoryConfig?.futureOnly ? ["popular", "new"] : ["popular", "top", "new"];
+
+  // Added (or favorited) from this page during this visit — kept on screen
+  // even with "not in my list" on, so tapping + doesn't make the card vanish
+  // from under the finger with no feedback.
+  const [keptIds, setKeptIds] = useState<Set<number>>(new Set());
+  function keep(id: number) {
+    setKeptIds((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }
+
+  function isMine(item: BrowseItem): boolean {
+    if (keptIds.has(item.id)) return false;
+    if (kind === "movie") return movieTmdbMap.has(item.id);
+    const resolvedId = resolvedTvShows.get(item.id)?.id;
+    return resolvedId !== undefined && addedIds.has(resolvedId);
+  }
+  const visibleItems = hideMine ? items.filter((i) => !isMine(i)) : items;
+
+  // Genre ids aren't shared between TMDB's movie and TV lists, so a genre
+  // picked on one side can't carry over; the platform id can.
+  function switchKind(next: BrowseKind) {
+    if (next === kind) return;
+    setGenreId(null);
+    setKind(next);
+  }
 
   // Genre chips — switching one resets to a fresh /discover query for that
   // genre (or back to the category's own list when "All genres" is picked
@@ -193,13 +314,16 @@ export default function BrowseScreen() {
 
   const fetchPage = useCallback(
     async (pageNum: number): Promise<BrowseItem[]> => {
-      const discoverParams: Record<string, string> = { sort_by: "popularity.desc" };
+      const constraints = categoryConfig?.constraints?.() ?? {};
+      const discoverParams: Record<string, string> = { ...constraints, ...sortParams(kind, sort, !!categoryConfig?.futureOnly) };
       if (genreId) discoverParams.with_genres = String(genreId);
       if (providerId) {
         discoverParams.with_watch_providers = String(providerId);
         discoverParams.watch_region = regionForLanguage(language);
       }
-      const useDiscover = genreId !== null || providerId !== null;
+      // The category's own list is used only while nothing about it has
+      // been changed; anything else goes through /discover.
+      const useDiscover = genreId !== null || providerId !== null || sort !== defaultSort;
       if (kind === "movie") {
         if (useDiscover) return fetchMovieListPage("/discover/movie", pageNum, discoverParams);
         return fetchMovieListPage(categoryConfig?.path ?? "/movie/popular", pageNum);
@@ -207,7 +331,7 @@ export default function BrowseScreen() {
       if (useDiscover) return fetchTvListPage("/discover/tv", pageNum, discoverParams);
       return fetchTvListPage(categoryConfig?.path ?? "/tv/popular", pageNum);
     },
-    [kind, genreId, providerId, categoryConfig, language],
+    [kind, genreId, providerId, sort, defaultSort, categoryConfig, language],
   );
 
   // Restores from browseStateCache when this exact browse (same category/
@@ -231,6 +355,7 @@ export default function BrowseScreen() {
 
     let active = true;
     setLoading(true);
+    setLoadError(false);
     setItems([]);
     setPage(1);
     setHasMore(true);
@@ -241,13 +366,17 @@ export default function BrowseScreen() {
         setHasMore(results.length > 0);
         browseStateCache.set(cacheKey, { items: results, page: 1, hasMore: results.length > 0, scrollOffset: 0 });
       })
-      .catch(() => active && setHasMore(false))
+      .catch(() => {
+        if (!active) return;
+        setHasMore(false);
+        setLoadError(true);
+      })
       .finally(() => active && setLoading(false));
     return () => {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey]);
+  }, [cacheKey, retryNonce]);
 
   // The native touch/click on a card (see each card's onPressIn below)
   // fires one spurious scroll-to-0 event on web before onPress even runs —
@@ -288,6 +417,15 @@ export default function BrowseScreen() {
       .catch(() => setHasMore(false))
       .finally(() => setLoadingMore(false));
   }
+
+  // With "hide mine" on, a page can come back mostly or entirely filtered
+  // out, which leaves nothing to scroll and so never triggers onEndReached —
+  // keep fetching until there's at least a few rows' worth to show.
+  useEffect(() => {
+    if (!hideMine || loading || loadingMore || !hasMore) return;
+    if (visibleItems.length < numColumns * 4) loadMore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hideMine, loading, loadingMore, hasMore, visibleItems.length, numColumns]);
 
   // Opening a TV card used to start its TMDB → TVmaze lookup only on tap,
   // which is what made a platform/category page feel slow to open a show
@@ -426,6 +564,7 @@ export default function BrowseScreen() {
   }
 
   async function quickAddTmdbShow(item: TMDBTvResult) {
+    keep(item.id);
     setActionPending(item.id);
     try {
       const resolved = await resolveTvmazeShow(item);
@@ -436,6 +575,7 @@ export default function BrowseScreen() {
   }
 
   async function toggleFavoriteTmdbShow(item: TMDBTvResult) {
+    keep(item.id);
     setActionPending(item.id);
     try {
       const resolved = await resolveTvmazeShow(item);
@@ -449,6 +589,7 @@ export default function BrowseScreen() {
   // — no resolution step needed, same reasoning as explore.tsx's own
   // quickAddMovie/toggleFavoriteMovie, which these mirror.
   async function quickAddMovie(item: TMDBSearchResult) {
+    keep(item.id);
     const existing = movieTmdbMap.get(item.id);
     if (existing?.status === "want_to_watch") {
       await removeUserMovie(existing.id);
@@ -466,6 +607,7 @@ export default function BrowseScreen() {
   }
 
   async function toggleFavoriteMovie(item: TMDBSearchResult) {
+    keep(item.id);
     const year = item.release_date ? Number(item.release_date.slice(0, 4)) : null;
     const existing = movieTmdbMap.get(item.id);
     const row = existing ?? (await addMovieToWatchlist(item.id, item.title, year, item.poster_path));
@@ -479,48 +621,159 @@ export default function BrowseScreen() {
         <Pressable onPress={goBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {title}
-        </Text>
+        <View style={styles.headerTitleRow}>
+          {selectedProvider?.logo_path && (
+            <Image source={{ uri: providerLogoUrl(selectedProvider.logo_path)! }} style={styles.headerLogo} contentFit="cover" />
+          )}
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {title}
+          </Text>
+        </View>
         <View style={{ width: 24 }} />
       </View>
 
+      {/* Platforms as a strip of logos — recognisable at a glance, 7-8 fit
+          across a phone, and the selected one is scrolled into view (it
+          used to sit off-screen at the end of a row of named chips). null
+          is "all platforms". */}
       <FlatList
+        ref={providerRowRef}
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={styles.chipRowOuter}
-        data={[{ id: null as number | null, name: t.explore.allGenres }, ...genres.map((g) => ({ id: g.id as number | null, name: g.name }))]}
-        keyExtractor={(g) => String(g.id)}
-        contentContainerStyle={styles.chipRow}
-        renderItem={({ item: g }) => (
-          <Pressable style={[styles.chip, genreId === g.id && styles.chipActive]} onPress={() => setGenreId(g.id)}>
-            <Text style={[styles.chipText, genreId === g.id && styles.chipTextActive]}>{g.name}</Text>
-          </Pressable>
-        )}
+        style={styles.logoRowOuter}
+        contentContainerStyle={styles.logoRow}
+        data={[null, ...providers]}
+        keyExtractor={(p) => String(p?.provider_id ?? "all")}
+        getItemLayout={(_, index) => ({ length: LOGO_PITCH, offset: LOGO_ROW_PADDING + LOGO_PITCH * index, index })}
+        onContentSizeChange={() => {
+          const index = providerId === null ? 0 : providers.findIndex((p) => p.provider_id === providerId) + 1;
+          if (index > 0) providerRowRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: false });
+        }}
+        renderItem={({ item: p }) => {
+          const selected = (p?.provider_id ?? null) === providerId;
+          return (
+            <Pressable
+              style={[styles.logoItem, selected && styles.logoItemActive]}
+              onPress={() => setProviderId(p?.provider_id ?? null)}
+              accessibilityRole="button"
+              accessibilityLabel={p?.provider_name ?? t.explore.allPlatforms}
+              accessibilityState={{ selected }}
+            >
+              {p?.logo_path ? (
+                <Image source={{ uri: providerLogoUrl(p.logo_path)! }} style={styles.logoImage} contentFit="cover" />
+              ) : (
+                <View style={[styles.logoImage, styles.logoAll]}>
+                  <Ionicons name="apps-outline" size={20} color={selected ? colors.accent : colors.textMuted} />
+                </View>
+              )}
+            </Pressable>
+          );
+        }}
       />
 
-      <FlatList
+      {/* Under the logos, since the platform is what this page is usually
+          opened for. Scrolls sideways rather than squeezing: on a phone the
+          four controls don't fit in one row, and shrinking them truncated
+          the labels. */}
+      <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={styles.chipRowOuter}
-        data={[{ provider_id: null as number | null, provider_name: t.explore.allPlatforms, logo_path: null }, ...providers]}
-        keyExtractor={(p) => String(p.provider_id)}
-        contentContainerStyle={styles.chipRow}
-        renderItem={({ item: p }) => (
-          <Pressable
-            style={[styles.chip, styles.providerChip, providerId === p.provider_id && styles.chipActive]}
-            onPress={() => setProviderId(p.provider_id)}
-          >
-            {p.logo_path && (
-              <Image source={{ uri: providerLogoUrl(p.logo_path)! }} style={styles.providerChipLogo} contentFit="cover" />
-            )}
-            <Text style={[styles.chipText, providerId === p.provider_id && styles.chipTextActive]}>{p.provider_name}</Text>
-          </Pressable>
+        style={styles.filterBarOuter}
+        contentContainerStyle={styles.filterBar}
+      >
+        {!categoryConfig && (
+          <View style={styles.segment}>
+            {(["tv", "movie"] as const).map((k) => (
+              <Pressable
+                key={k}
+                style={[styles.segmentItem, kind === k && styles.segmentItemActive]}
+                onPress={() => switchKind(k)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: kind === k }}
+              >
+                <Text style={[styles.segmentText, kind === k && styles.segmentTextActive]}>
+                  {k === "tv" ? t.tabs.shows : t.tabs.movies}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         )}
-      />
+        <Pressable
+          style={[styles.filterBtn, genreId !== null && styles.filterBtnActive]}
+          onPress={() => setPicker("genre")}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.filterBtnText, genreId !== null && styles.filterBtnTextActive]} numberOfLines={1}>
+            {selectedGenre?.name ?? t.explore.filterGenre}
+          </Text>
+          <Ionicons name="chevron-down" size={14} color={genreId !== null ? colors.onAccent : colors.textMuted} />
+        </Pressable>
+        {/* Icon only — the current sort is shown ticked in the sheet it
+            opens, and the button turns accent once it's not the default. */}
+        <Pressable
+          style={[styles.filterBtn, styles.sortBtn, sort !== defaultSort && styles.filterBtnActive]}
+          onPress={() => setPicker("sort")}
+          accessibilityRole="button"
+          accessibilityLabel={`${t.explore.sortBy} : ${sortLabels[sort]}`}
+        >
+          <Ionicons name="swap-vertical" size={16} color={sort !== defaultSort ? colors.onAccent : colors.textMuted} />
+        </Pressable>
+        <Pressable
+          style={[styles.filterBtn, hideMine && styles.filterBtnActive]}
+          onPress={() => setHideMine((v) => !v)}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: hideMine }}
+        >
+          {hideMine && <Ionicons name="checkmark" size={14} color={colors.onAccent} />}
+          <Text style={[styles.filterBtnText, hideMine && styles.filterBtnTextActive]} numberOfLines={1}>
+            {t.explore.notInMyList}
+          </Text>
+        </Pressable>
+      </ScrollView>
+
+      <Sheet visible={picker !== null} onClose={() => setPicker(null)}>
+        <Text style={styles.pickerTitle}>{picker === "sort" ? t.explore.sortBy : t.explore.filterGenre}</Text>
+        <ScrollView style={{ maxHeight: windowHeight * 0.6 }} contentContainerStyle={styles.pickerList}>
+          {picker === "sort"
+            ? sortOptions.map((k) => (
+                <Pressable
+                  key={k}
+                  style={[styles.chip, sort === k && styles.chipActive]}
+                  onPress={() => {
+                    setSort(k);
+                    setPicker(null);
+                  }}
+                >
+                  <Text style={[styles.chipText, sort === k && styles.chipTextActive]}>{sortLabels[k]}</Text>
+                </Pressable>
+              ))
+            : [{ id: null as number | null, name: t.explore.allGenres }, ...genres.map((g) => ({ id: g.id as number | null, name: g.name }))].map((g) => (
+                <Pressable
+                  key={String(g.id)}
+                  style={[styles.chip, genreId === g.id && styles.chipActive]}
+                  onPress={() => {
+                    setGenreId(g.id);
+                    setPicker(null);
+                  }}
+                >
+                  <Text style={[styles.chipText, genreId === g.id && styles.chipTextActive]}>{g.name}</Text>
+                </Pressable>
+              ))}
+        </ScrollView>
+      </Sheet>
 
       {loading ? (
-        <ActivityIndicator color={colors.accent} style={{ marginTop: 32 }} />
+        // Grey cards in the grid's own shape rather than a lone spinner, so
+        // the page reads as "filling in" instead of "blank".
+        <View style={[styles.grid, styles.skeletonGrid]}>
+          {Array.from({ length: numColumns * 4 }, (_, i) => (
+            <View key={i} style={styles.card}>
+              <View style={styles.poster} />
+              <View style={styles.skeletonLine} />
+              <View style={[styles.skeletonLine, styles.skeletonLineShort]} />
+            </View>
+          ))}
+        </View>
       ) : (
         <FlatList
           // numColumns can't change on an already-mounted FlatList (RN warns
@@ -529,7 +782,7 @@ export default function BrowseScreen() {
           // keeping a stale column count.
           key={`grid-${numColumns}`}
           ref={listRef}
-          data={items}
+          data={visibleItems}
           keyExtractor={(item, index) => `${item.id}-${index}`}
           numColumns={numColumns}
           columnWrapperStyle={styles.row}
@@ -539,6 +792,33 @@ export default function BrowseScreen() {
           onScroll={onScroll}
           scrollEventThrottle={16}
           ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} /> : null}
+          ListEmptyComponent={
+            loadingMore ? null : loadError ? (
+              <EmptyState
+                icon="cloud-offline-outline"
+                title={t.explore.loadErrorTitle}
+                subtitle={t.explore.loadErrorDesc}
+                actionLabel={t.explore.retry}
+                onAction={() => {
+                  browseStateCache.delete(cacheKey);
+                  setRetryNonce((n) => n + 1);
+                }}
+              />
+            ) : (
+              <EmptyState
+                icon="search-outline"
+                title={t.explore.noResultsTitle}
+                subtitle={hideMine && items.length > 0 ? t.explore.noResultsAllMine : t.explore.noResultsDesc}
+                {...(hideMine && items.length > 0
+                  ? { actionLabel: t.explore.showMine, onAction: () => setHideMine(false) }
+                  : genreId !== null
+                    ? { actionLabel: t.explore.clearGenre, onAction: () => setGenreId(null) }
+                    : providerId !== null
+                      ? { actionLabel: t.explore.allPlatforms, onAction: () => setProviderId(null) }
+                      : {})}
+              />
+            )
+          }
           renderItem={({ item }) => {
             const name = isTv(kind, item) ? item.name : (item as TMDBSearchResult).title;
             const date = isTv(kind, item) ? item.first_air_date : (item as TMDBSearchResult).release_date;
@@ -644,20 +924,52 @@ function createStyles(colors: Colors, CARD_WIDTH: number, GRID_GAP: number, GRID
       alignItems: "center",
       justifyContent: "space-between",
       paddingHorizontal: 16,
-      paddingTop: 56,
+      paddingTop: 16,
       paddingBottom: 12,
     },
-    headerTitle: { flex: 1, textAlign: "center", fontSize: type.subtitle, fontWeight: "800", color: colors.text },
-    // Without this, the FlatList's outer wrapper (as opposed to
-    // contentContainerStyle, which only sizes the inner scrollable content)
-    // has no height of its own to fall back on — found live: switching
-    // genres drops this screen into its loading state (spinner instead of
-    // the results grid below), and with nothing else in this flex:1 column
-    // claiming the leftover vertical space, the chip row's ScrollView
-    // stretched to fill the entire remaining screen height, turning every
-    // pill into a giant vertical bar for as long as the grid was loading.
-    chipRowOuter: { flexGrow: 0, flexShrink: 0 },
-    chipRow: { paddingHorizontal: 16, gap: 8, paddingBottom: 12 },
+    headerTitleRow: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 8 },
+    headerLogo: { width: 24, height: 24, borderRadius: 6 },
+    headerTitle: { flexShrink: 1, fontSize: type.title, fontWeight: "800", color: colors.text },
+    filterBarOuter: { flexGrow: 0, flexShrink: 0 },
+    filterBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
+    sortBtn: { paddingHorizontal: 9 },
+    segment: {
+      flexDirection: "row",
+      padding: 3,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    segmentItem: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: radius.pill },
+    segmentItemActive: { backgroundColor: colors.accent },
+    segmentText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
+    segmentTextActive: { color: colors.onAccent },
+    filterBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    filterBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    filterBtnText: { color: colors.text, fontSize: 12, fontWeight: "700" },
+    filterBtnTextActive: { color: colors.onAccent },
+    logoRowOuter: { flexGrow: 0, flexShrink: 0 },
+    logoRow: { paddingHorizontal: LOGO_ROW_PADDING, gap: 10, paddingBottom: 12 },
+    logoItem: { padding: 2, borderRadius: 14, borderWidth: 2, borderColor: "transparent" },
+    logoItemActive: { borderColor: colors.accent },
+    logoImage: { width: LOGO_SIZE, height: LOGO_SIZE, borderRadius: 11 },
+    logoAll: { alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+    skeletonGrid: { flexDirection: "row", flexWrap: "wrap", gap: GRID_GAP, justifyContent: "center" },
+    skeletonLine: { height: 10, borderRadius: 5, marginTop: 8, backgroundColor: colors.backgroundAlt },
+    skeletonLineShort: { width: "50%" },
+    pickerTitle: { fontSize: type.subtitle, fontWeight: "800", color: colors.text, marginBottom: 12 },
+    pickerList: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 8 },
     chip: {
       paddingHorizontal: 14,
       paddingVertical: 7,
@@ -669,8 +981,6 @@ function createStyles(colors: Colors, CARD_WIDTH: number, GRID_GAP: number, GRID
     chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
     chipText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
     chipTextActive: { color: colors.onAccent },
-    providerChip: { flexDirection: "row", alignItems: "center", gap: 6 },
-    providerChipLogo: { width: 16, height: 16, borderRadius: 4 },
     grid: { paddingHorizontal: GRID_PADDING, paddingBottom: 32 },
     row: { gap: GRID_GAP, justifyContent: "center" },
     card: { width: CARD_WIDTH, marginBottom: 16 },

@@ -33,6 +33,7 @@ import {
   fetchLists,
   fetchUserShows,
   fetchWatchTimeMinutes,
+  getUserShowsVersion,
   moveListItemsAndDeleteList,
   removeShowFromList,
   ListItem,
@@ -186,6 +187,7 @@ export default function ProfileScreen() {
   const { t } = useLanguage();
 
   const lastLoadedAt = useRef(0);
+  const loadedShowsVersion = useRef(0);
   // Bumped at the start of every load() run and by every mutation handler
   // below (list rename/delete, avatar change, movie unwatch/rewatch, ...) —
   // load()'s own several Supabase round trips can still be in flight when
@@ -241,6 +243,7 @@ export default function ProfileScreen() {
 
   const load = useCallback(() => {
     lastLoadedAt.current = Date.now();
+    loadedShowsVersion.current = getUserShowsVersion();
     const myVersion = ++profileVersionRef.current;
     const stillCurrent = () => profileVersionRef.current === myVersion;
     Promise.all([
@@ -367,7 +370,10 @@ export default function ProfileScreen() {
       // arrived while the user was on another tab. Cheap enough (one count
       // query) not to need its own throttle.
       refreshNotifications();
-      if (Date.now() - lastLoadedAt.current < MIN_RELOAD_INTERVAL_MS) return;
+      // The throttle only skips a reload when nothing changed — a show added
+      // or removed elsewhere (see getUserShowsVersion) always reloads.
+      const showsChanged = loadedShowsVersion.current !== getUserShowsVersion();
+      if (!showsChanged && Date.now() - lastLoadedAt.current < MIN_RELOAD_INTERVAL_MS) return;
       load();
     }, [load, refreshNotifications]),
   );

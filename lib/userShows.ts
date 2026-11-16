@@ -1,6 +1,6 @@
 import { createAsyncStorage } from "@react-native-async-storage/async-storage";
 import { supabase, getCurrentUserId } from "./supabase";
-import { patchCachedWatchedEpisodes } from "./showDataCache";
+import { patchCachedWatchedEpisodes, markShowTouched } from "./showDataCache";
 import { checkBadgesNow } from "./badgeNotify";
 import { fetchFollowingIdsCached } from "./follows";
 
@@ -15,6 +15,16 @@ const userShowsCache = createAsyncStorage("user_shows_cache");
 const USER_SHOWS_CACHE_KEY = "user_shows_v1";
 
 export type ShowStatus = "watching" | "want_to_watch" | "watched" | "dropped" | "paused";
+
+// Bumped by every write below that changes what the Profile tab lists (a
+// show added/removed, its status or favorite, a custom list's items).
+// app/(tabs)/profile.tsx throttles its reload to once per 10s, so without
+// this a show added from its detail page didn't appear on going straight
+// back to the profile.
+let userShowsVersion = 0;
+export function getUserShowsVersion() {
+  return userShowsVersion;
+}
 
 // Marking an episode watched/unwatched, or adding a show to a custom list,
 // means the user is actively engaging with it again — leaving its status
@@ -172,12 +182,15 @@ export async function upsertUserShow(params: {
     .select()
     .single();
   if (error) throw error;
+  userShowsVersion++;
+  markShowTouched(params.tvmaze_id);
   return data as UserShow;
 }
 
 export async function removeUserShow(tvmazeId: number) {
   const { error } = await supabase.from("user_shows").delete().eq("tvmaze_id", tvmazeId);
   if (error) throw error;
+  userShowsVersion++;
 }
 
 export async function setShowStatus(tvmazeId: number, status: ShowStatus) {
@@ -192,6 +205,8 @@ export async function setShowStatus(tvmazeId: number, status: ShowStatus) {
     .select()
     .single();
   if (error) throw error;
+  userShowsVersion++;
+  markShowTouched(tvmazeId);
   // Only "watched" (fully completed) moves the "shows"/genre badge counts —
   // see showsCompleted in lib/streaks.ts — so no point rechecking for any
   // other status transition.
@@ -221,6 +236,7 @@ export async function setShowFavorite(tvmazeId: number, isFavorite: boolean) {
     .select()
     .single();
   if (error) throw error;
+  userShowsVersion++;
   return data as UserShow;
 }
 
@@ -357,6 +373,7 @@ export async function addShowToList(
     { onConflict: "list_id,tvmaze_id" }
   );
   if (error) throw error;
+  userShowsVersion++;
   await resumeIfNotActivelyWatching(show.tvmaze_id);
 }
 
@@ -374,6 +391,7 @@ export async function removeShowFromList(listId: string, tvmazeId: number) {
     .eq("tvmaze_id", tvmazeId)
     .eq("user_id", userId);
   if (error) throw error;
+  userShowsVersion++;
 }
 
 // Deletes a custom list and everything in it. Callers are expected to have

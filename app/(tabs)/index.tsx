@@ -900,12 +900,20 @@ export default function ShowsScreen() {
       // up, leaving its row showing stale pre-mutation data in the
       // meantime. Bumping it to the front of whichever phase it belongs to
       // means the correction lands in that phase's very first flush instead
-      // of trailing in "after a while."
+      // of trailing in "after a while." Fetched ahead of both phases, not
+      // just at the front of their own: a show just added to the watchlist
+      // is want_to_watch, and the front of Not Started still meant waiting
+      // for every Watch Next show first.
       const touched = new Set(takeRecentlyTouchedShowIds());
-      function prioritizeTouched(group: UserShow[]): UserShow[] {
-        if (touched.size === 0) return group;
-        return [...group.filter((s) => touched.has(s.tvmaze_id)), ...group.filter((s) => !touched.has(s.tvmaze_id))];
+      const touchedFirst = followed.filter((s) => touched.has(s.tvmaze_id));
+      if (touchedFirst.length > 0) {
+        await mapWithConcurrency(touchedFirst, TRACKED_SHOW_FETCH_CONCURRENCY, fetchTrackedShow, (result) => {
+          byId.set(result.show.tvmaze_id, result);
+          scheduleFlush();
+        });
+        flush();
       }
+      const notTouched = (group: UserShow[]) => group.filter((s) => !touched.has(s.tvmaze_id));
 
       // Render shows as their data arrives instead of blocking on the very
       // last one to resolve — with a couple hundred tracked shows, the
@@ -920,7 +928,7 @@ export default function ShowsScreen() {
       // show — fetchTrackedShow's own getCachedWatchedEpisodes call below
       // then resolves from the now-warm cache for each show instead of
       // firing its own request.
-      const watchingOrdered = prioritizeTouched(watching);
+      const watchingOrdered = notTouched(watching);
       await primeWatchedEpisodes(watchingOrdered.map((s) => s.tvmaze_id), fetchWatchedEpisodesForShows);
       await mapWithConcurrency(
         watchingOrdered,
@@ -938,7 +946,7 @@ export default function ShowsScreen() {
       flush();
       setFollowedShowsSettled(true);
 
-      const wantToWatchOrdered = prioritizeTouched(wantToWatch);
+      const wantToWatchOrdered = notTouched(wantToWatch);
       await primeWatchedEpisodes(wantToWatchOrdered.map((s) => s.tvmaze_id), fetchWatchedEpisodesForShows);
       await mapWithConcurrency(
         wantToWatchOrdered,

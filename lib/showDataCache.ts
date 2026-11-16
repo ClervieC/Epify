@@ -293,6 +293,14 @@ export function invalidateWatchedEpisodes(showId: number) {
 // instant refetch to the front of the queue instead.
 const recentlyTouchedShowIds = new Set<number>();
 
+// For mutations that don't go through patchCachedWatchedEpisodes below —
+// adding a show or changing its status (lib/userShows.ts), so a show just
+// added to the watchlist shows up on the Shows tab right away instead of
+// after every other followed show has been refetched.
+export function markShowTouched(showId: number) {
+  recentlyTouchedShowIds.add(showId);
+}
+
 export function takeRecentlyTouchedShowIds(): number[] {
   const ids = Array.from(recentlyTouchedShowIds);
   recentlyTouchedShowIds.clear();

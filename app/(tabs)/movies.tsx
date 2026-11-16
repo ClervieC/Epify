@@ -105,6 +105,16 @@ export default function MoviesScreen() {
       return next;
     });
   }
+  const [listLayout, setListLayout] = useState<"grid" | "list">("grid");
+  useEffect(() => {
+    AsyncStorage.getItem("movies_list_layout").then((value) => {
+      if (value === "grid" || value === "list") setListLayout(value);
+    });
+  }, []);
+  function changeListLayout(mode: "grid" | "list") {
+    setListLayout(mode);
+    AsyncStorage.setItem("movies_list_layout", mode).catch(() => {});
+  }
   const [upcomingViewMode, setUpcomingViewMode] = useState<"list" | "calendar">("list");
   useEffect(() => {
     AsyncStorage.getItem("movies_upcoming_view_mode").then((value) => {
@@ -386,6 +396,8 @@ export default function MoviesScreen() {
   // Movies already arrive sorted by watched_at descending, so grouping by
   // year and chunking each group into rows of `columns` is a single pass —
   // no re-sorting needed.
+  // One movie per row in list layout, `columns` per row in the grid.
+  const rowSize = listLayout === "list" ? 1 : columns;
   const blocks = useMemo(() => {
     const result: Block[] = [];
     let currentYear: number | null = null;
@@ -404,11 +416,11 @@ export default function MoviesScreen() {
         currentYear = year;
       }
       row.push(movie);
-      if (row.length === columns) flushRow();
+      if (row.length === rowSize) flushRow();
     }
     flushRow();
     return result;
-  }, [movies, columns]);
+  }, [movies, rowSize]);
 
   // Stable renderItem references — an inline arrow recreated every render
   // (e.g. every underline-animation tick when switching tabs) forces
@@ -422,9 +434,10 @@ export default function MoviesScreen() {
           <Pill uppercase>{block.year}</Pill>
         </View>
       ) : (
-        <View style={styles.row}>
+        <View style={[styles.row, listLayout === "list" && styles.listRow]}>
           {block.items.map((m) => (
             <MovieCard
+              layout={listLayout === "list" ? "row" : "grid"}
               key={m.id}
               id={m.id}
               title={m.title}
@@ -438,12 +451,12 @@ export default function MoviesScreen() {
           ))}
           {/* Pad an incomplete last row so its cards stay left-aligned
               and the same width as a full row, instead of stretching. */}
-          {Array.from({ length: columns - block.items.length }, (_, i) => (
+          {Array.from({ length: rowSize - block.items.length }, (_, i) => (
             <View key={`spacer-${i}`} style={{ flex: 1 }} />
           ))}
         </View>
       ),
-    [styles, columns, handleUnwatched, handleRewatched],
+    [styles, rowSize, listLayout, handleUnwatched, handleRewatched],
   );
 
   const renderUpcomingEntry = useCallback(
@@ -483,7 +496,30 @@ export default function MoviesScreen() {
         {/* accent tone rather than the default neutral pillBg — neutral was
             close enough to the header gradient's own tint to nearly vanish
             into it. */}
-        {tab === "list" && <Pill tone="accent">{movies.length}</Pill>}
+        {tab === "list" && (
+          <View style={styles.headerRightGroup}>
+            {movies.length > 0 &&
+              (["grid", "list"] as const).map((mode) => (
+                <Pressable
+                  key={mode}
+                  style={[styles.viewModeBtn, listLayout === mode && styles.viewModeBtnActive]}
+                  onPress={() => changeListLayout(mode)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={mode === "grid" ? "Grid view" : "List view"}
+                >
+                  <Ionicons
+                    // Not list-outline: Upcoming's list/calendar toggle
+                    // already uses it right next door, for a different switch.
+                    name={mode === "grid" ? "grid-outline" : "reorder-four-outline"}
+                    size={15}
+                    color={listLayout === mode ? colors.onAccent : colors.textMuted}
+                  />
+                </Pressable>
+              ))}
+            <Pill tone="accent">{movies.length}</Pill>
+          </View>
+        )}
         {tab === "toWatch" && (
           <View style={styles.headerRightGroup}>
             <Pressable
@@ -893,6 +929,7 @@ function createStyles(colors: Colors) {
     list: { padding: 16, paddingTop: 4 },
     yearHeaderRow: { paddingTop: 20, paddingBottom: 12 },
     row: { flexDirection: "row", gap: 12, marginBottom: 20 },
+    listRow: { marginBottom: 12 },
     empty: {
       flex: 1,
       backgroundColor: colors.background,

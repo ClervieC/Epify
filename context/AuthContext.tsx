@@ -9,6 +9,7 @@ import { clearAllShowDataCaches } from "../lib/showDataCache";
 import { resetPrefetchState } from "../lib/backgroundPrefetch";
 import { clearLocalShowStats } from "../lib/showStats";
 import { clearProfileSnapshot } from "../lib/profileSnapshot";
+import { clearTabStacks } from "../lib/tabHistory";
 import { clearLocalStreakData, clearWatchedDaysCache } from "../lib/streaks";
 import { clearUserShowsCache } from "../lib/userShows";
 import { clearUnreadNotificationCountCache } from "../lib/notifications";
@@ -35,6 +36,7 @@ function clearUserScopedCaches() {
   resetPrefetchState();
   clearLocalShowStats();
   clearProfileSnapshot();
+  clearTabStacks();
   clearLocalStreakData();
   clearWatchedDaysCache();
   clearUserShowsCache();

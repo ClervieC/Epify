@@ -1,11 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { Tabs, useFocusEffect } from "expo-router";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
 import { AdBanner } from "../../components/AdBanner";
-import { useColors, Colors } from "../../lib/theme";
-import { useLanguage, Translations } from "../../lib/i18n";
+import { BottomTabBar, TabName, setLastTab, setAdminAlerts, useAdminAlerts } from "../../components/BottomTabBar";
+import { restoreTabStack } from "../../lib/tabHistory";
+import { useLanguage } from "../../lib/i18n";
 import { useNotifications } from "../../context/NotificationsContext";
 import { useActivityUnseen } from "../../context/ActivityContext";
 import { fetchMyProfile } from "../../lib/profiles";
@@ -20,88 +20,35 @@ interface TabBarProps {
   hasAdminAlerts: boolean;
 }
 
-const ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
-  index: "tv-outline",
-  movies: "film-outline",
-  explore: "search-outline",
-  activity: "pulse-outline",
-  profile: "person-outline",
-};
-
-function tabLabels(t: Translations): Record<string, string> {
-  return {
-    index: t.tabs.shows,
-    movies: t.tabs.movies,
-    explore: t.tabs.explore,
-    activity: t.tabs.activity,
-    profile: t.tabs.profile,
-  };
-}
-
 function CustomTabBar({ state, navigation, unreadCount, hasUnseenActivity, hasAdminAlerts }: TabBarProps) {
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const { t } = useLanguage();
-  const labels = tabLabels(t);
+  const activeRoute = state.routes[state.index];
+  setLastTab(activeRoute.name as TabName);
 
   return (
     <View>
       <AdBanner />
-      {/* paddingBottom is the LARGER of 20 (room for the tap targets, the
-          original fixed value on any screen with no home-indicator inset to
-          worry about) and the inset itself — NOT the sum of both. Summing
-          them (an earlier version of this fix) double-counted: a standard
-          iOS tab bar's own clearance below its labels already *is* the
-          home-indicator inset, not that inset stacked on top of its own
-          separate padding, and stacking both measured out to a visibly
-          oversized blank strip below the bar on a real phone (confirmed
-          live via a temporary on-screen diagnostic overlay: #root's own
-          rendered height exactly matched the screen, so the page itself
-          was never the wrong size — this padding was just larger than it
-          needed to be). insets.bottom is 0 anywhere a home indicator isn't
-          in play (web tab, Android, older iPhones), where this is just 20,
-          unchanged from before. */}
-      <View style={[styles.bar, { paddingBottom: Math.max(20, insets.bottom) }]}>
-        {state.routes.map((route, index) => {
-          const focused = state.index === index;
-          const color = focused ? colors.accent : colors.textFaint;
-
-          return (
-            <Pressable
-              key={route.key}
-              style={styles.item}
-              accessibilityRole="tab"
-              accessibilityLabel={labels[route.name]}
-              accessibilityState={{ selected: focused }}
-              onPress={() => {
-                const event = navigation.emit({
-                  type: "tabPress",
-                  target: route.key,
-                  canPreventDefault: true,
-                });
-                // Already on this tab — block the navigator's default action
-                // entirely so it doesn't reset/refocus the screen (which was
-                // re-triggering that screen's focus-effect data reload).
-                if (focused) {
-                  event.preventDefault();
-                  return;
-                }
-                if (!event.defaultPrevented) {
-                  navigation.navigate(route.name);
-                }
-              }}
-            >
-              <View>
-                <Ionicons name={ICONS[route.name]} size={22} color={color} />
-                {route.name === "profile" && (unreadCount > 0 || hasAdminAlerts) && <View style={styles.badge} />}
-                {route.name === "activity" && hasUnseenActivity && <View style={styles.badge} />}
-              </View>
-              <Text style={[styles.label, { color }]}>{labels[route.name]}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <BottomTabBar
+        active={activeRoute.name as TabName}
+        unreadCount={unreadCount}
+        hasUnseenActivity={hasUnseenActivity}
+        hasAdminAlerts={hasAdminAlerts}
+        onPress={(name) => {
+          const route = state.routes.find((r) => r.name === name);
+          if (!route) return;
+          const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
+          // Already on this tab — block the navigator's default action
+          // entirely so it doesn't reset/refocus the screen (which was
+          // re-triggering that screen's focus-effect data reload).
+          if (route.key === activeRoute.key) {
+            event.preventDefault();
+            return;
+          }
+          if (!event.defaultPrevented) {
+            navigation.navigate(name);
+            restoreTabStack(name);
+          }
+        }}
+      />
     </View>
   );
 }
@@ -113,7 +60,7 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const { unreadCount, refresh } = useNotifications();
   const { hasUnseen: hasUnseenActivity, refresh: refreshActivity } = useActivityUnseen();
-  const [hasAdminAlerts, setHasAdminAlerts] = useState(false);
+  const hasAdminAlerts = useAdminAlerts();
   const lastFetchedAt = useRef(0);
 
   // Only admins ever see this (fetchMyProfile()'s own is_admin check gates
@@ -124,11 +71,11 @@ export default function TabsLayout() {
   const refreshAdminAlerts = useCallback(() => {
     fetchMyProfile().then((profile) => {
       if (!profile?.is_admin) {
-        setHasAdminAlerts(false);
+        setAdminAlerts(false);
         return;
       }
       Promise.all([fetchOpenReportCount(), fetchSupportNeedsResponseCount()])
-        .then(([reports, support]) => setHasAdminAlerts(reports > 0 || support > 0))
+        .then(([reports, support]) => setAdminAlerts(reports > 0 || support > 0))
         .catch(() => {});
     });
   }, []);
@@ -188,35 +135,4 @@ export default function TabsLayout() {
       <Tabs.Screen name="profile" options={{ title: t.tabs.profile }} />
     </Tabs>
   );
-}
-
-function createStyles(colors: Colors) {
-  return StyleSheet.create({
-    bar: {
-      flexDirection: "row",
-      backgroundColor: colors.background,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      paddingTop: 8,
-    },
-    item: {
-      flex: 1,
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 4,
-    },
-    label: {
-      fontSize: 11,
-      fontWeight: "600",
-    },
-    badge: {
-      position: "absolute",
-      top: -2,
-      right: -4,
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-      backgroundColor: colors.red,
-    },
-  });
 }

@@ -122,13 +122,14 @@ export async function fetchFollowingActivity(before?: string): Promise<Following
     .in("user_id", followingIds)
     .order("watched_at", { ascending: false })
     .limit(PAGE_SIZE);
-  let watchedMoviesQuery = supabase
-    .from("user_movies")
-    .select("*")
-    .in("user_id", followingIds)
-    .eq("status", "watched")
-    .order("watched_at", { ascending: false })
-    .limit(PAGE_SIZE);
+  // Not a plain select: user_movies has no cross-user SELECT policy, so
+  // that query only ever came back with nothing and movies never showed up
+  // here. following_watched_movies (supabase/schema.sql) returns just the
+  // columns this feed renders, for people the viewer follows.
+  const watchedMoviesQuery = supabase.rpc("following_watched_movies", {
+    p_before: before ?? null,
+    p_limit: PAGE_SIZE,
+  });
   let showCommentsQuery = supabase
     .from("comments")
     .select("*")
@@ -143,7 +144,6 @@ export async function fetchFollowingActivity(before?: string): Promise<Following
     .limit(PAGE_SIZE);
   if (before) {
     watchedEpisodesQuery = watchedEpisodesQuery.lt("watched_at", before);
-    watchedMoviesQuery = watchedMoviesQuery.lt("watched_at", before);
     showCommentsQuery = showCommentsQuery.lt("created_at", before);
     movieCommentsQuery = movieCommentsQuery.lt("created_at", before);
   }
@@ -414,14 +414,7 @@ async function fetchLatestFollowingActivityAtLive(): Promise<string | null> {
       .order("watched_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    supabase
-      .from("user_movies")
-      .select("watched_at")
-      .in("user_id", followingIds)
-      .eq("status", "watched")
-      .order("watched_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    supabase.rpc("following_watched_movies", { p_before: null, p_limit: 1 }).maybeSingle<{ watched_at: string }>(),
     supabase
       .from("comments")
       .select("created_at")

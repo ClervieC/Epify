@@ -3110,3 +3110,39 @@ $$;
 alter type report_target add value if not exists 'room';
 alter table public.reports add column if not exists target_room_id uuid references public.rooms (id) on delete set null;
 alter table public.reports add column if not exists target_room_name text;
+
+-- ============================================================
+-- Movies in the Social feed (lib/activity.ts). user_movies keeps its
+-- owner-only RLS; this hands followers the same columns the feed already
+-- shows for episodes (which are readable by any signed-in user) — title,
+-- poster, when, rating, feeling — and nothing else (no is_favorite, no
+-- times_watched, no notes), only for people the caller follows.
+-- ============================================================
+create or replace function public.following_watched_movies(p_before timestamptz default null, p_limit integer default 20)
+returns table (
+  id uuid,
+  user_id uuid,
+  tmdb_id integer,
+  title text,
+  poster_path text,
+  watched_at timestamptz,
+  rating smallint,
+  feeling text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select m.id, m.user_id, m.tmdb_id, m.title, m.poster_path, m.watched_at, m.rating, m.feeling
+  from public.user_movies m
+  where m.user_id in (select f.followed_id from public.follows f where f.follower_id = auth.uid())
+    and m.status = 'watched'
+    and m.watched_at is not null
+    and (p_before is null or m.watched_at < p_before)
+  order by m.watched_at desc
+  limit least(greatest(p_limit, 1), 100);
+$$;
+
+revoke execute on function public.following_watched_movies(timestamptz, integer) from public, anon;
+grant execute on function public.following_watched_movies(timestamptz, integer) to authenticated;

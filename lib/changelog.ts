@@ -15,6 +15,32 @@ export const CHANGELOG: ChangelogEntry[] = [
   // Newest entry first — CHANGELOG[0] drives the version shown in Settings
   // (see the file-level comment above for everything else to keep in sync).
   {
+    version: "5.3.21",
+    date: "2026-11-16",
+    en: [
+      "The tab bar now stays at the bottom of every screen — a show, a movie, a profile, a room, settings — so you can jump to another tab from anywhere. Each tab also remembers where you were: open a show from Explore, switch to Shows, come back to Explore and you're back on that show.",
+      "Your watch time now uses each episode's real runtime instead of a flat 42 minutes, on your profile, other people's profiles and your recap. Rewatches count too.",
+      "Watching an episode again with a room now counts as a rewatch for anyone who'd already seen it, no question asked. Undoing a room share takes back just that viewing instead of removing the episode from everyone's history.",
+      "Movies now show up in Social: see what the people you follow watched, with their rating and feeling, just like episodes.",
+      "The platform page is all new: platforms as logos you can tap at the top, a Shows/Movies switch, a genre picker, sorting by popularity, rating or newest, and a \"Not in my list\" filter to find something new. Categories like Coming soon keep their meaning when you filter them, and you get a clear message when nothing matches or the connection drops.",
+      "Your watched movies can now be shown as a list, one movie per line, instead of a grid — switch with the buttons next to the count.",
+      "A show you add to your list now appears right away on your profile and in your Shows tab, instead of after a while.",
+      "Rooms can be reported, with the flag at the top of the room.",
+      "In a room, what you've already watched together no longer stays in \"To watch together\".",
+    ],
+    fr: [
+      "La barre d'onglets reste maintenant en bas de chaque écran — une série, un film, un profil, une room, les réglages — pour passer à un autre onglet de n'importe où. Chaque onglet se souvient aussi d'où tu étais : ouvre une série depuis Explorer, passe sur Séries, reviens sur Explorer et tu retrouves la série.",
+      "Ton temps de visionnage utilise maintenant la vraie durée de chaque épisode au lieu de 42 minutes pour tous, sur ton profil, celui des autres et ton bilan. Les revisionnages comptent aussi.",
+      "Revoir un épisode avec une room compte maintenant comme un revisionnage pour ceux qui l'avaient déjà vu, sans question. Annuler un partage dans une room retire juste ce visionnage au lieu de supprimer l'épisode de l'historique de tout le monde.",
+      "Les films apparaissent maintenant dans Social : vois ce qu'ont regardé les gens que tu suis, avec leur note et leur ressenti, comme pour les épisodes.",
+      "La page d'une plateforme a été refaite : les plateformes en logos à toucher en haut, un choix Séries/Films, un sélecteur de genre, un tri par popularité, note ou plus récent, et un filtre \"Hors de ma liste\" pour découvrir du nouveau. Les catégories comme Prochainement gardent leur sens quand tu les filtres, et un message clair s'affiche quand rien ne correspond ou que la connexion coupe.",
+      "Tes films vus peuvent maintenant s'afficher en liste, un film par ligne, au lieu d'une grille — bascule avec les boutons à côté du compteur.",
+      "Une série ajoutée à ta liste apparaît maintenant tout de suite sur ton profil et dans l'onglet Séries, au lieu d'après un moment.",
+      "Les rooms peuvent être signalées, avec le drapeau en haut de la room.",
+      "Dans une room, ce que vous avez déjà regardé ensemble ne reste plus dans \"À regarder ensemble\".",
+    ],
+  },
+  {
     version: "5.3.20",
     date: "2026-11-09",
     en: [

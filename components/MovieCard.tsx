@@ -30,6 +30,9 @@ interface MovieCardProps {
   // used to trigger a full reload + full-grid re-render.
   onUnwatched: (id: string) => void;
   onRewatched: (updated: UserMovie) => void;
+  // "row": one movie per line (small poster, title, check on the right),
+  // like the Shows tab's rows — the Movies tab's list/grid toggle.
+  layout?: "grid" | "row";
 }
 
 export const MovieCard = memo(function MovieCard({
@@ -41,6 +44,7 @@ export const MovieCard = memo(function MovieCard({
   timesWatched,
   onUnwatched,
   onRewatched,
+  layout = "grid",
 }: MovieCardProps) {
   const router = useRouter();
   const colors = useColors();
@@ -88,6 +92,43 @@ export const MovieCard = memo(function MovieCard({
     onRewatched(updated);
   }
 
+  const check = (
+    <WatchedCheck
+      watched
+      timesWatched={timesWatched}
+      onToggle={handleUnwatch}
+      onRewatch={handleRewatch}
+      onUndoRewatch={handleUndoRewatch}
+      size={26}
+    />
+  );
+
+  if (layout === "row") {
+    return (
+      <Pressable style={styles.rowCard} onPressIn={onPressIn} onPressOut={onPressOut} onPress={() => router.push(`/movie/${id}`)}>
+        <Animated.View style={[styles.rowInner, { opacity: mountIn.opacity, transform: [...mountIn.transform, { scale }] }]}>
+          <View style={[styles.image, styles.rowImage]}>
+            {poster ? (
+              <Image source={{ uri: poster }} style={styles.posterImage} contentFit="cover" />
+            ) : (
+              <Text style={styles.rowPlaceholderText}>{title[0]?.toUpperCase()}</Text>
+            )}
+          </View>
+          <View style={styles.rowText}>
+            <Text style={styles.rowName} numberOfLines={2}>
+              {title}
+              {year ? ` (${year})` : ""}
+            </Text>
+            <Text style={styles.subtitle} numberOfLines={1}>
+              {t.movies.watchedOn(watchedDate)}
+            </Text>
+          </View>
+          {check}
+        </Animated.View>
+      </Pressable>
+    );
+  }
+
   return (
     <Pressable
       // flex:1 has to be on the Pressable itself, not just the Animated.View
@@ -107,16 +148,7 @@ export const MovieCard = memo(function MovieCard({
           ) : (
             <Text style={styles.placeholderText}>{title[0]?.toUpperCase()}</Text>
           )}
-          <View style={styles.watchedCheckWrap}>
-            <WatchedCheck
-              watched
-              timesWatched={timesWatched}
-              onToggle={handleUnwatch}
-              onRewatch={handleRewatch}
-              onUndoRewatch={handleUndoRewatch}
-              size={26}
-            />
-          </View>
+          <View style={styles.watchedCheckWrap}>{check}</View>
         </View>
         <View style={styles.titleBox}>
           <Text style={styles.name} numberOfLines={2}>
@@ -157,5 +189,11 @@ function createStyles(colors: Colors, hue: string) {
     titleBox: { height: 34, marginTop: 8, justifyContent: "flex-start", overflow: "hidden" },
     name: { color: colors.text, fontSize: type.bodySm, fontWeight: "700", lineHeight: 17 },
     subtitle: { color: colors.textMuted, fontSize: type.micro, marginTop: 2 },
+    rowCard: { flex: 1, minWidth: 0 },
+    rowInner: { flexDirection: "row", alignItems: "center", gap: 12 },
+    rowImage: { width: 48 },
+    rowPlaceholderText: { color: hue, fontSize: type.subtitle, fontWeight: "800" },
+    rowText: { flex: 1, minWidth: 0 },
+    rowName: { color: colors.text, fontSize: type.body, fontWeight: "700" },
   });
 }
