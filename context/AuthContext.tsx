@@ -66,6 +66,11 @@ interface AuthContextValue {
   // check below resolves.
   needsOnboarding: boolean | null;
   setNeedsOnboarding: (needs: boolean) => void;
+  // Signed in but no profiles row — no username, so the account is missing
+  // from search, the admin list and every follow/room feature. null = not
+  // checked yet, same reasoning as needsOnboarding. See app/choose-username.tsx.
+  needsUsername: boolean | null;
+  setNeedsUsername: (needs: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -75,6 +80,8 @@ const AuthContext = createContext<AuthContextValue>({
   setDataReady: () => {},
   needsOnboarding: null,
   setNeedsOnboarding: () => {},
+  needsUsername: null,
+  setNeedsUsername: () => {},
 });
 
 export function AuthProvider({ children }: PropsWithChildren) {
@@ -82,6 +89,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
   const [dataReady, setDataReady] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
+  const [needsUsername, setNeedsUsername] = useState<boolean | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -151,26 +159,36 @@ export function AuthProvider({ children }: PropsWithChildren) {
   // lib/pendingUsername.ts) — signUp() had no session yet to attach the
   // typed username to at that point, so it was stashed locally instead.
   // First real session on this device (confirming the email, then logging
-  // in) is what completes it; a no-op for every other login since there's
-  // nothing pending by then.
+  // in) is what completes it. That stash only exists on the signup device,
+  // though, and a username taken in the meantime fails the insert — either
+  // way the account used to stay profile-less for good, invisible in search
+  // and the admin list. Whatever is still missing after this is asked for
+  // on app/choose-username.tsx instead.
   useEffect(() => {
-    if (!session) return;
+    if (!session) {
+      setNeedsUsername(null);
+      return;
+    }
     let active = true;
     (async () => {
       const pendingUsername = await consumePendingUsername();
-      if (!pendingUsername || !active) return;
-      const existing = await fetchMyProfile();
-      if (existing) return;
-      await createProfile(pendingUsername).catch(() => {});
+      let profile = await fetchMyProfile().catch(() => undefined);
+      if (profile === null && pendingUsername) {
+        profile = await createProfile(pendingUsername).catch(() => null);
+        clearMyProfileCache();
+      }
+      // undefined = the lookup itself failed (offline…) — don't lock the
+      // user out of the app over that.
+      if (active) setNeedsUsername(profile === null);
     })();
     return () => {
       active = false;
     };
-  }, [session]);
+  }, [session?.user.id]);
 
   return (
     <AuthContext.Provider
-      value={{ session, loading, dataReady, setDataReady, needsOnboarding, setNeedsOnboarding }}
+      value={{ session, loading, dataReady, setDataReady, needsOnboarding, setNeedsOnboarding, needsUsername, setNeedsUsername }}
     >
       {children}
     </AuthContext.Provider>

@@ -109,6 +109,12 @@ const en = {
     usernameTaken: "That username is already taken.",
     passwordTooShort: "Password must be at least 6 characters.",
   },
+  chooseUsername: {
+    title: "Pick a username",
+    body: "It's how friends find and follow you. You can change it later in Settings.",
+    save: "Continue",
+    signOut: "Sign out",
+  },
   tabs: {
     shows: "Shows",
     movies: "Movies",
@@ -886,6 +892,12 @@ const fr: typeof en = {
     usernameInvalid: "3 à 20 lettres, chiffres ou underscores.",
     usernameTaken: "Ce pseudo est déjà pris.",
     passwordTooShort: "Le mot de passe doit faire au moins 6 caractères.",
+  },
+  chooseUsername: {
+    title: "Choisis ton pseudo",
+    body: "C'est comme ça que tes amis te trouvent et te suivent. Tu pourras le changer plus tard dans les Réglages.",
+    save: "Continuer",
+    signOut: "Se déconnecter",
   },
   tabs: {
     shows: "Séries",

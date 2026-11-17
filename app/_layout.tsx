@@ -87,10 +87,10 @@ function GlobalTabBar() {
 // Screens that keep no bar: (tabs) draws its own, the signed-out /
 // onboarding flows have nowhere to go yet, and episode/[id] opens as a modal
 // over the page it came from — a tab bar under a modal reads as broken.
-const NO_GLOBAL_TAB_BAR = new Set(["(tabs)", "(auth)", "onboarding", "episode"]);
+const NO_GLOBAL_TAB_BAR = new Set(["(tabs)", "(auth)", "onboarding", "choose-username", "episode"]);
 
 function RootNavigation() {
-  const { session, loading, dataReady, setDataReady, needsOnboarding } = useAuth();
+  const { session, loading, dataReady, setDataReady, needsOnboarding, needsUsername } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const nativeSplashHidden = useRef(false);
@@ -110,6 +110,7 @@ function RootNavigation() {
     // and it's a reasonable thing to want to check before signing up.
     const isLegalRoute = segments[0] === "legal";
     const isOnboardingRoute = segments[0] === "onboarding";
+    const isUsernameRoute = segments[0] === "choose-username";
 
     if (!session && !inAuthGroup && !isLegalRoute) {
       if (pathname !== "/" && !isOnboardingRoute) {
@@ -126,13 +127,18 @@ function RootNavigation() {
     } else if (session && inAuthGroup) {
       const target = redirectAfterLogin.current;
       redirectAfterLogin.current = null;
-      if (needsOnboarding) router.replace("/onboarding");
+      if (needsUsername) router.replace("/choose-username");
+      else if (needsOnboarding) router.replace("/onboarding");
       else if (target) router.replace({ pathname: target.pathname as never, params: target.params });
       else router.replace("/(tabs)");
-    } else if (session && needsOnboarding && !isOnboardingRoute && !isLegalRoute) {
+    } else if (session && needsUsername && !isUsernameRoute && !isLegalRoute) {
+      router.replace("/choose-username");
+    } else if (session && needsUsername === false && isUsernameRoute) {
+      router.replace(needsOnboarding ? "/onboarding" : "/(tabs)");
+    } else if (session && !needsUsername && needsOnboarding && !isOnboardingRoute && !isLegalRoute) {
       router.replace("/onboarding");
     }
-  }, [session, loading, segments, needsOnboarding]);
+  }, [session, loading, segments, needsOnboarding, needsUsername]);
 
   // Universal fallback for the splash gate below: the Shows tab's own
   // loadData() (app/(tabs)/index.tsx) normally flips dataReady itself, but
@@ -189,6 +195,7 @@ function RootNavigation() {
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs)" options={{ contentStyle: { paddingTop: 0 } }} />
           <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
+          <Stack.Screen name="choose-username" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen name="show/[id]" options={{ headerShown: false, contentStyle: { paddingTop: 0 } }} />
           <Stack.Screen
             name="episode/[id]"
