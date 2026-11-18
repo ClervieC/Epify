@@ -9,11 +9,13 @@ import { createProfile, clearMyProfileCache, USERNAME_REGEX } from "../lib/profi
 import { useAuth } from "../context/AuthContext";
 
 // For a signed-in account with no profiles row (see needsUsername in
-// context/AuthContext.tsx) — typically one that confirmed its email on a
-// different device than the one it signed up on, so the username typed at
-// signup never made it to the database. Without a row the account can't be
-// searched, followed or seen in the admin list, so app/_layout.tsx keeps
-// every other screen behind this one until it's done.
+// context/AuthContext.tsx). Signup normally creates the row along with the
+// account (handle_new_user in supabase/schema.sql), so this is the fallback:
+// accounts from before that trigger, or whose username got taken in the
+// split second between the form's check and the insert. Without a row the
+// account can't be searched, followed or seen in the admin list, so
+// app/_layout.tsx shows this right after the intro and keeps the rest of the
+// app behind it until it's done.
 export default function ChooseUsernameScreen() {
   const colors = useColors();
   const styles = useMemo(() => createStyles(colors), [colors]);

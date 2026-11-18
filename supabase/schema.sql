@@ -3146,3 +3146,54 @@ $$;
 
 revoke execute on function public.following_watched_movies(timestamptz, integer) from public, anon;
 grant execute on function public.following_watched_movies(timestamptz, integer) to authenticated;
+
+-- ============================================================
+-- Profile created with the account
+-- ============================================================
+-- The username typed at signup rides along in the auth user's metadata
+-- (signUp options.data) and becomes the profiles row right here, in the same
+-- transaction that creates the account. Doing it from the app instead needed
+-- a session, which email confirmation withholds until first login — and only
+-- the signup device remembered the username until then, so confirming on
+-- another device left the account without a profile for good. Never fails the
+-- signup itself: a missing, invalid or just-taken username leaves no row, and
+-- app/choose-username.tsx asks for one after the intro instead.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_username text := new.raw_user_meta_data->>'username';
+begin
+  if v_username ~ '^[a-zA-Z0-9_]{3,20}$' then
+    insert into public.profiles (user_id, username)
+    values (new.id, v_username)
+    on conflict do nothing;
+  end if;
+  return new;
+exception when others then
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- Lets the signup form say "already taken" before creating the account —
+-- profiles is only readable once signed in. Case-insensitive like a human
+-- reading the name would be, so "Bob" can't sit next to "bob".
+create or replace function public.username_available(p_username text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select not exists (select 1 from public.profiles where lower(username) = lower(p_username));
+$$;
+
+grant execute on function public.username_available(text) to anon, authenticated;

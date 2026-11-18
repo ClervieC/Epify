@@ -127,16 +127,17 @@ function RootNavigation() {
     } else if (session && inAuthGroup) {
       const target = redirectAfterLogin.current;
       redirectAfterLogin.current = null;
-      if (needsUsername) router.replace("/choose-username");
-      else if (needsOnboarding) router.replace("/onboarding");
+      if (needsOnboarding) router.replace("/onboarding");
+      else if (needsUsername) router.replace("/choose-username");
       else if (target) router.replace({ pathname: target.pathname as never, params: target.params });
       else router.replace("/(tabs)");
-    } else if (session && needsUsername && !isUsernameRoute && !isLegalRoute) {
+    } else if (session && needsOnboarding && !isOnboardingRoute && !isLegalRoute) {
+      router.replace("/onboarding");
+    } else if (session && needsOnboarding === false && needsUsername && !isUsernameRoute && !isLegalRoute) {
+      // Right after the intro, never before it — see app/choose-username.tsx.
       router.replace("/choose-username");
     } else if (session && needsUsername === false && isUsernameRoute) {
-      router.replace(needsOnboarding ? "/onboarding" : "/(tabs)");
-    } else if (session && !needsUsername && needsOnboarding && !isOnboardingRoute && !isLegalRoute) {
-      router.replace("/onboarding");
+      router.replace("/(tabs)");
     }
   }, [session, loading, segments, needsOnboarding, needsUsername]);
 

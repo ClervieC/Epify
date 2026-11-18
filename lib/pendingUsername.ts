@@ -1,3 +1,6 @@
+// Legacy: signup now sends the username with the account itself (see
+// handle_new_user in supabase/schema.sql) and no longer saves here. Kept so a
+// username stashed by an older build still gets used on its first login.
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const KEY = "pending_username";

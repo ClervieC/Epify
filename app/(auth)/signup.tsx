@@ -12,8 +12,6 @@ import { Link } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { useColors, radius, type, Colors } from "../../lib/theme";
 import { useLanguage } from "../../lib/i18n";
-import { createProfile } from "../../lib/profiles";
-import { savePendingUsername } from "../../lib/pendingUsername";
 import { LanguagePicker } from "../../components/LanguagePicker";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
@@ -46,27 +44,21 @@ export default function SignupScreen() {
     }
 
     setLoading(true);
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    // Checked before the account exists — the profile row is created with
+    // it (handle_new_user in supabase/schema.sql), and a taken name there
+    // would just leave the account without one.
+    const { data: available } = await supabase.rpc("username_available", { p_username: username });
+    if (available === false) {
+      setLoading(false);
+      setError(t.signup.usernameTaken);
+      return;
+    }
+
+    const { error } = await supabase.auth.signUp({ email, password, options: { data: { username } } });
     if (error) {
       setLoading(false);
       setError(error.message);
       return;
-    }
-
-    if (data.session) {
-      try {
-        await createProfile(username);
-      } catch {
-        setLoading(false);
-        setError(t.signup.usernameTaken);
-        return;
-      }
-    } else {
-      // No session yet (email confirmation required) — nothing can create
-      // the profile row until one exists. Stashed locally so AuthContext
-      // finishes the job automatically on first login instead of asking
-      // for the username again (see lib/pendingUsername.ts).
-      await savePendingUsername(username);
     }
 
     setLoading(false);

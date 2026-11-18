@@ -27,7 +27,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "A show you add to your list now appears right away on your profile and in your Shows tab, instead of after a while.",
       "Rooms can be reported, with the flag at the top of the room.",
       "In a room, what you've already watched together no longer stays in \"To watch together\".",
-      "Accounts that confirmed their email on another device never got their username saved, which left them missing from search. They're now asked to pick one when they open the app.",
+      "The username you choose when signing up is now saved with the account, even if you confirm your email on another device — before, those accounts ended up with no username and missing from search. Accounts already in that case are asked to pick one when they open the app.",
     ],
     fr: [
       "La barre d'onglets reste maintenant en bas de chaque écran — une série, un film, un profil, une room, les réglages — pour passer à un autre onglet de n'importe où. Chaque onglet se souvient aussi d'où tu étais : ouvre une série depuis Explorer, passe sur Séries, reviens sur Explorer et tu retrouves la série.",
@@ -39,7 +39,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Une série ajoutée à ta liste apparaît maintenant tout de suite sur ton profil et dans l'onglet Séries, au lieu d'après un moment.",
       "Les rooms peuvent être signalées, avec le drapeau en haut de la room.",
       "Dans une room, ce que vous avez déjà regardé ensemble ne reste plus dans \"À regarder ensemble\".",
-      "Les comptes qui avaient confirmé leur email sur un autre appareil n'avaient jamais eu leur pseudo enregistré, et n'apparaissaient donc pas dans la recherche. On leur demande maintenant d'en choisir un à l'ouverture de l'app.",
+      "Le pseudo choisi à l'inscription est maintenant enregistré avec le compte, même si tu confirmes ton email sur un autre appareil — avant, ces comptes se retrouvaient sans pseudo et introuvables dans la recherche. Les comptes déjà dans ce cas doivent en choisir un à l'ouverture de l'app.",
     ],
   },
   {
